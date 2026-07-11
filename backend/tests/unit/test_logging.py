@@ -1,0 +1,53 @@
+import structlog
+
+from app.core.logging import configure_logging, redact_value, sanitize_text
+
+
+def test_structured_redaction_covers_nested_credentials_and_community() -> None:
+    value = {
+        "username": "visible-metadata",
+        "password": "secret-password",
+        "nested": {
+            "authorization": "Bearer token-value",
+            "snmp_community": "public",
+            "community": "private",
+        },
+    }
+
+    redacted = redact_value(value)
+
+    assert redacted["username"] == "visible-metadata"
+    assert redacted["password"] == "[REDACTED]"
+    assert redacted["nested"]["authorization"] == "[REDACTED]"
+    assert redacted["nested"]["snmp_community"] == "[REDACTED]"
+    assert redacted["nested"]["community"] == "[REDACTED]"
+
+
+def test_text_redaction_covers_cisco_secrets_and_url_passwords() -> None:
+    text = (
+        "enable secret 9 HASHVALUE\n"
+        "snmp-server community public RO\n"
+        "https://admin:password@example.invalid/path"
+    )
+    sanitized = sanitize_text(text)
+
+    assert "HASHVALUE" not in sanitized
+    assert "public" not in sanitized
+    assert "password" not in sanitized
+    assert sanitized.count("[REDACTED]") == 3
+
+
+def test_exception_traceback_is_redacted_after_rendering(capsys) -> None:
+    configure_logging("INFO")
+    logger = structlog.get_logger("redaction-test")
+    try:
+        raise RuntimeError("password hunter2 token abc123 community public")
+    except RuntimeError:
+        logger.exception("fixture_failure", api_key="key-value")
+
+    output = capsys.readouterr().out
+    assert "hunter2" not in output
+    assert "abc123" not in output
+    assert "public" not in output
+    assert "key-value" not in output
+    assert output.count("[REDACTED]") >= 4

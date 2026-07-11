@@ -1,0 +1,2 @@
+"""Validated API contracts."""
+

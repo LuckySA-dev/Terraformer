@@ -1,0 +1,216 @@
+name: ${COMPOSE_PROJECT_NAME:-terraformer}
+
+x-backend-build: &backend-build
+  context: ../backend
+  dockerfile: Dockerfile
+
+x-backend-environment: &backend-environment
+  APP_ENV: ${APP_ENV:-production}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  DATABASE_HOST: postgres
+  DATABASE_PORT: "5432"
+  DATABASE_NAME: terraformer
+  DATABASE_USER: terraformer
+  DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
+  REDIS_URL: redis://redis:6379/0
+  MASTER_KEY_FILE: /run/secrets/terraformer_master_key
+  SNAPSHOT_DIR: /data/snapshots
+  DEVICE_CONNECTION_LIMIT: "${DEVICE_CONNECTION_LIMIT:-10}"
+  SSH_CONNECT_TIMEOUT_SECONDS: "${SSH_CONNECT_TIMEOUT_SECONDS:-10}"
+  SSH_COMMAND_TIMEOUT_SECONDS: "${SSH_COMMAND_TIMEOUT_SECONDS:-30}"
+  SSH_STRICT_HOST_KEY: "${SSH_STRICT_HOST_KEY:-false}"
+  SESSION_COOKIE_SECURE: "${SESSION_COOKIE_SECURE:-false}"
+  SESSION_COOKIE_SAMESITE: ${SESSION_COOKIE_SAMESITE:-lax}
+  CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS:-http://127.0.0.1:8080}
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUNBUFFERED: "1"
+
+x-backend-secrets: &backend-secrets
+  - source: master_key
+    target: terraformer_master_key
+  - source: postgres_password
+    target: postgres_password
+
+x-backend-volumes: &backend-volumes
+  - snapshots_data:/data/snapshots
+
+x-service-security: &service-security
+  security_opt:
+    - no-new-privileges:true
+
+services:
+  web:
+    <<: *service-security
+    image: terraformer-web:${APP_IMAGE_TAG:-local}
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    init: true
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${HOST_BIND:-127.0.0.1}:${WEB_PORT:-8080}:8080"
+    networks:
+      - edge
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+      - /var/run
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  api:
+    <<: *service-security
+    image: terraformer-backend:${APP_IMAGE_TAG:-local}
+    build: *backend-build
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    init: true
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    environment: *backend-environment
+    secrets: *backend-secrets
+    volumes: *backend-volumes
+    expose:
+      - "8000"
+    networks:
+      - edge
+      - application
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).read()
+      interval: 10s
+      timeout: 5s
+      retries: 8
+      start_period: 20s
+
+  worker:
+    <<: *service-security
+    image: terraformer-backend:${APP_IMAGE_TAG:-local}
+    command: ["python", "-m", "app.jobs.worker"]
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment: *backend-environment
+    secrets: *backend-secrets
+    volumes: *backend-volumes
+    networks:
+      - application
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.jobs.health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  migrate:
+    <<: *service-security
+    image: terraformer-backend:${APP_IMAGE_TAG:-local}
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment: *backend-environment
+    secrets: *backend-secrets
+    volumes: *backend-volumes
+    networks:
+      - application
+    read_only: true
+    tmpfs:
+      - /tmp
+
+  postgres:
+    <<: *service-security
+    image: postgres:17.10-alpine3.23
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: terraformer
+      POSTGRES_USER: terraformer
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256 --auth-local=scram-sha-256
+      PGDATA: /var/lib/postgresql/data/pgdata
+    secrets:
+      - postgres_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - application
+    shm_size: 256mb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    <<: *service-security
+    image: redis:7.4.9-alpine3.21
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --save
+      - "60"
+      - "1"
+      - --loglevel
+      - warning
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    networks:
+      - application
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+networks:
+  edge:
+    driver: bridge
+  application:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  snapshots_data:
+
+secrets:
+  master_key:
+    file: ${MASTER_KEY_FILE_HOST:-../.secrets/master.key}
+  postgres_password:
+    file: ${POSTGRES_PASSWORD_FILE_HOST:-../.secrets/postgres.password}

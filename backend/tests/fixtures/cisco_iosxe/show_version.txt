@@ -1,0 +1,7 @@
+Cisco IOS XE Software, Version 17.09.04a
+Cisco IOS Software [Cupertino], Virtual XE Software
+edge-rtr-01 uptime is 2 weeks, 3 days, 4 hours, 5 minutes
+System returned to ROM by reload
+cisco C8000V (VXE) processor (revision VXE) with 2097152K/3075K bytes of memory.
+Processor board ID 9ABCDEF0123
+

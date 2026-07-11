@@ -1,0 +1,157 @@
+from __future__ import annotations
+
+from uuid import UUID
+
+from fastapi import APIRouter, Response, status
+
+from app.api.dependencies import Authenticated, ContainerDependency, SessionDependency
+from app.models import JobType
+from app.schemas.devices import (
+    ConnectionTestView,
+    DeviceConnectionFields,
+    DeviceCreate,
+    DeviceUpdate,
+    DeviceView,
+    FactsView,
+    InterfaceView,
+)
+from app.schemas.jobs import JobView
+from app.services.devices import DeviceService
+from app.services.jobs import JobService
+
+router = APIRouter(prefix="/devices", tags=["devices"])
+
+
+def _service(session: SessionDependency, container: ContainerDependency) -> DeviceService:
+    return DeviceService(
+        session,
+        settings=container.settings,
+        drivers=container.drivers,
+        vault=container.credential_vault,
+    )
+
+
+@router.get("", response_model=list[DeviceView])
+def list_devices(
+    _auth: Authenticated,
+    session: SessionDependency,
+    container: ContainerDependency,
+):
+    return _service(session, container).list()
+
+
+@router.post("", response_model=DeviceView, status_code=status.HTTP_201_CREATED)
+def create_device(
+    request: DeviceCreate,
+    _auth: Authenticated,
+    session: SessionDependency,
+    container: ContainerDependency,
+):
+    return _service(session, container).create(request)
+
+
+@router.post("/connection-test", response_model=ConnectionTestView)
+def test_connection(
+    request: DeviceConnectionFields,
+    _auth: Authenticated,
+    session: SessionDependency,
+    container: ContainerDependency,
+):
+    return _service(session, container).test_connection(request)
+
+
+@router.get("/{device_id}", response_model=DeviceView)
+def get_device(
+    device_id: UUID,
+    _auth: Authenticated,
+    session: SessionDependency,
+    container: ContainerDependency,
+):
+    return _service(session, container).get(device_id)
+
+
+@router.patch("/{device_id}", response_model=DeviceView)
+def update_device(
+    device_id: UUID,
+    request: DeviceUpdate,
+    _auth: Authenticated,
+    session: SessionDependency,
+    container: ContainerDependency,
+):
+    return _service(session, container).update(device_id, request)
+
+
+@router.delete(
+    "/{device_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+def delete_device(
+    device_id: UUID,
+    _auth: Authenticated,
+    session: SessionDependency,
+    container: ContainerDependency,
+) -> Response:
+    _service(session, container).delete(device_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/{device_id}/test-connection", response_model=ConnectionTestView)
+def test_registered_device(
+    device_id: UUID,
+    _auth: Authenticated,
+    session: SessionDependency,
+    container: ContainerDependency,
+):
+    return _service(session, container).test_registered_device(device_id)
+
+
+@router.post("/{device_id}/refresh", response_model=JobView, status_code=status.HTTP_202_ACCEPTED)
+def refresh_device(
+    device_id: UUID,
+    _auth: Authenticated,
+    session: SessionDependency,
+    container: ContainerDependency,
+):
+    return JobService(session, container.queue).enqueue(
+        job_type=JobType.REFRESH_DEVICE,
+        device_id=device_id,
+    )
+
+
+@router.get("/{device_id}/facts", response_model=FactsView)
+def get_facts(
+    device_id: UUID,
+    _auth: Authenticated,
+    session: SessionDependency,
+    container: ContainerDependency,
+) -> FactsView:
+    device = _service(session, container).get(device_id)
+    return FactsView(device_id=device.id, facts=device.facts, last_seen_at=device.last_seen_at)
+
+
+@router.get("/{device_id}/interfaces", response_model=list[InterfaceView])
+def get_interfaces(
+    device_id: UUID,
+    _auth: Authenticated,
+    session: SessionDependency,
+    container: ContainerDependency,
+):
+    return _service(session, container).list_interfaces(device_id)
+
+
+@router.post(
+    "/{device_id}/config-snapshots",
+    response_model=JobView,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def capture_config(
+    device_id: UUID,
+    _auth: Authenticated,
+    session: SessionDependency,
+    container: ContainerDependency,
+):
+    return JobService(session, container.queue).enqueue(
+        job_type=JobType.CAPTURE_CONFIG,
+        device_id=device_id,
+    )

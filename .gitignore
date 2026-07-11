@@ -1,0 +1,64 @@
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+.secrets/
+.docker-secrets/
+deploy/secrets/
+.agents/
+.npm-cache/
+frontend/.npm-cache/
+frontend/.npm-cache-install/
+.local/
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+.python-version
+.venv/
+venv/
+.tooling/
+.uv-cache/
+.pytest_cache/
+.mypy_cache/
+.pyright/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# JavaScript / frontend
+node_modules/
+frontend/dist/
+frontend/coverage/
+*.tsbuildinfo
+.vite/
+playwright-report/
+test-results/
+
+# Runtime artifacts and local data
+*.log
+logs/
+data/
+snapshots/
+backups/
+*.sqlite
+*.sqlite3
+
+# Editors and operating systems
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+Desktop.ini

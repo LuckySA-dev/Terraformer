@@ -1,0 +1,19 @@
+# Development-only override. It publishes dependency ports on the configured
+# HOST_BIND address (loopback by default). Never use this override on an
+# untrusted or shared network.
+services:
+  api:
+    ports:
+      - "${HOST_BIND:-127.0.0.1}:${API_PORT:-8000}:8000"
+    environment:
+      APP_ENV: development
+      LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
+
+  postgres:
+    ports:
+      - "${HOST_BIND:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
+
+  redis:
+    ports:
+      - "${HOST_BIND:-127.0.0.1}:${REDIS_PORT:-6379}:6379"
+

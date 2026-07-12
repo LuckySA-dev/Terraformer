@@ -5,14 +5,17 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from time import monotonic
 
+from app.core.errors import DriverCommandRejectedError
 from app.drivers.base import (
     ConnectionParameters,
     ConnectionTestResult,
     DeviceDriver,
     DeviceFacts,
+    DeviceObservations,
     DriverCapability,
     DriverCapabilitySet,
     InterfaceFacts,
+    NeighborFacts,
     NetworkTransport,
     TransportFactory,
 )
@@ -41,6 +44,7 @@ class CiscoIOSXEDriver(DeviceDriver):
                     DriverCapability.CONNECT,
                     DriverCapability.FACTS,
                     DriverCapability.INTERFACES,
+                    DriverCapability.NEIGHBORS,
                     DriverCapability.RUNNING_CONFIG,
                 }
             ),
@@ -70,6 +74,42 @@ class CiscoIOSXEDriver(DeviceDriver):
         output = self._command(parameters, "show interfaces")
         return parse_show_interfaces(output)
 
+    def get_neighbors(self, parameters: ConnectionParameters) -> list[NeighborFacts]:
+        with self._session(parameters) as transport:
+            return self._read_neighbors(transport)
+
+    def collect_observations(self, parameters: ConnectionParameters) -> DeviceObservations:
+        with self._session(parameters) as transport:
+            facts = parse_show_version(transport.send_command("show version"))
+            interfaces = parse_show_interfaces(transport.send_command("show interfaces"))
+            neighbors = self._read_neighbors(transport)
+        return DeviceObservations(
+            facts=facts,
+            interfaces=tuple(interfaces),
+            neighbors=tuple(neighbors),
+        )
+
+    def _read_neighbors(self, transport: NetworkTransport) -> list[NeighborFacts]:
+        observations: list[NeighborFacts] = []
+        for command, parser in (
+            ("show cdp neighbors detail", parse_cdp_neighbors),
+            ("show lldp neighbors detail", parse_lldp_neighbors),
+        ):
+            try:
+                observations.extend(parser(transport.send_command(command)))
+            except DriverCommandRejectedError:
+                continue
+        unique = {
+            (
+                item.protocol,
+                item.local_interface,
+                item.remote_device_name,
+                item.remote_interface,
+            ): item
+            for item in observations
+        }
+        return list(unique.values())
+
     def get_running_config(self, parameters: ConnectionParameters) -> str:
         output = self._command(parameters, "show running-config")
         if not output.strip():
@@ -78,10 +118,7 @@ class CiscoIOSXEDriver(DeviceDriver):
 
     def _command(self, parameters: ConnectionParameters, command: str) -> str:
         with self._session(parameters) as transport:
-            try:
-                return transport.send_command(command)
-            except Exception as exc:
-                raise translate_transport_error(exc) from exc
+            return transport.send_command(command)
 
     @contextmanager
     def _session(self, parameters: ConnectionParameters) -> Iterator[NetworkTransport]:
@@ -90,10 +127,8 @@ class CiscoIOSXEDriver(DeviceDriver):
             transport.open()
             yield transport
         except Exception as exc:
-            if isinstance(exc, ValueError):
-                raise
             translated = translate_transport_error(exc)
-            if isinstance(exc, type(translated)):
+            if translated is exc:
                 raise
             raise translated from exc
         finally:
@@ -144,3 +179,53 @@ def parse_show_interfaces(output: str) -> list[InterfaceFacts]:
             )
         )
     return interfaces
+
+
+def parse_cdp_neighbors(output: str) -> list[NeighborFacts]:
+    neighbors: list[NeighborFacts] = []
+    for block in re.split(r"(?m)^-+\s*$", output):
+        device = re.search(r"(?mi)^Device ID:\s*(\S+)", block)
+        local = re.search(r"(?mi)^Interface:\s*([^,]+)", block)
+        remote = re.search(r"(?mi)Port ID \(outgoing port\):\s*(\S+)", block)
+        if device is None or local is None or remote is None:
+            continue
+        address = re.search(r"(?mi)^\s*IP address:\s*(\S+)", block)
+        platform = re.search(r"(?mi)^Platform:\s*([^,\r\n]+)", block)
+        neighbors.append(
+            NeighborFacts(
+                protocol="cdp",
+                local_interface=local.group(1).strip(),
+                remote_device_name=device.group(1),
+                remote_interface=remote.group(1),
+                management_address=address.group(1) if address else None,
+                platform=platform.group(1).strip() if platform else None,
+            )
+        )
+    return neighbors
+
+
+def parse_lldp_neighbors(output: str) -> list[NeighborFacts]:
+    starts = list(re.finditer(r"(?mi)^Local Intf:\s*(.+)$", output))
+    neighbors: list[NeighborFacts] = []
+    for index, start in enumerate(starts):
+        block_end = starts[index + 1].start() if index + 1 < len(starts) else len(output)
+        block = output[start.start() : block_end]
+        device = re.search(r"(?mi)^System Name:\s*(\S+)", block) or re.search(
+            r"(?mi)^Chassis id:\s*(\S+)", block
+        )
+        remote = re.search(r"(?mi)^Port id:\s*(\S+)", block)
+        if device is None or remote is None:
+            continue
+        address = re.search(r"(?mi)^\s*IP:\s*(\S+)", block)
+        platform = re.search(r"(?mi)^System Description:\s*(.+)$", block)
+        neighbors.append(
+            NeighborFacts(
+                protocol="lldp",
+                local_interface=start.group(1).strip(),
+                remote_device_name=device.group(1),
+                remote_interface=remote.group(1),
+                management_address=address.group(1) if address else None,
+                platform=platform.group(1).strip() if platform else None,
+            )
+        )
+    return neighbors

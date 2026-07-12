@@ -1,0 +1,10 @@
+Local Intf: GigabitEthernet2
+Chassis id: 0011.2233.4455
+Port id: GigabitEthernet1/0/48
+Port Description: uplink
+System Name: access-sw-01.example.test
+System Description: Cisco IOS XE Software
+Time remaining: 95 seconds
+Management Address:
+    IP: 203.0.113.8
+

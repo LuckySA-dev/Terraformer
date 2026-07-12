@@ -7,6 +7,7 @@ import pytest
 
 from app.core.errors import (
     DriverAuthenticationError,
+    DriverCommandRejectedError,
     DriverTimeoutError,
     UnsupportedCapabilityError,
 )
@@ -14,8 +15,14 @@ from app.drivers import (
     CiscoIOSXEDriver,
     ConnectionParameters,
     DriverCapability,
+    GenericReadOnlyDriver,
 )
-from app.drivers.cisco_iosxe import parse_show_interfaces, parse_show_version
+from app.drivers.cisco_iosxe import (
+    parse_cdp_neighbors,
+    parse_lldp_neighbors,
+    parse_show_interfaces,
+    parse_show_version,
+)
 from app.drivers.transport import ScrapliGenericTransport, ScrapliTransport
 from tests.fakes import FakeTransportFactory
 
@@ -34,6 +41,8 @@ def parameters() -> ConnectionParameters:
 def test_cisco_parsers_use_sanitized_golden_fixtures(sanitized_outputs: dict[str, str]) -> None:
     facts = parse_show_version(sanitized_outputs["show version"])
     interfaces = parse_show_interfaces(sanitized_outputs["show interfaces"])
+    cdp_neighbors = parse_cdp_neighbors(sanitized_outputs["show cdp neighbors detail"])
+    lldp_neighbors = parse_lldp_neighbors(sanitized_outputs["show lldp neighbors detail"])
 
     assert facts.hostname == "edge-rtr-01"
     assert facts.model == "C8000V"
@@ -45,6 +54,12 @@ def test_cisco_parsers_use_sanitized_golden_fixtures(sanitized_outputs: dict[str
     assert interfaces[0].oper_up is True
     assert interfaces[0].ipv4_addresses == ("192.0.2.10/24",)
     assert interfaces[1].admin_up is False
+    assert cdp_neighbors[0].protocol == "cdp"
+    assert cdp_neighbors[0].remote_device_name == "dist-sw-01.example.test"
+    assert cdp_neighbors[0].management_address == "198.51.100.2"
+    assert lldp_neighbors[0].protocol == "lldp"
+    assert lldp_neighbors[0].local_interface == "GigabitEthernet2"
+    assert lldp_neighbors[0].remote_interface == "GigabitEthernet1/0/48"
 
 
 def test_cisco_driver_is_read_only_and_closes_connections(
@@ -54,8 +69,10 @@ def test_cisco_driver_is_read_only_and_closes_connections(
     driver = CiscoIOSXEDriver(factory)
 
     assert driver.capabilities.supports(DriverCapability.RUNNING_CONFIG)
+    assert driver.capabilities.supports(DriverCapability.NEIGHBORS)
     assert not driver.capabilities.supports(DriverCapability.APPLY)
     assert driver.get_facts(parameters()).hostname == "edge-rtr-01"
+    assert len(driver.get_neighbors(parameters())) == 2
     assert driver.get_running_config(parameters()).startswith("version 17.9")
     assert all(transport.closed for transport in factory.transports)
     with pytest.raises(UnsupportedCapabilityError):
@@ -92,6 +109,25 @@ def test_connection_and_command_timeouts_are_wired_independently(monkeypatch) ->
     assert captured["platform"] == "cisco_iosxe"
 
 
+def test_scrapli_command_rejection_is_typed(monkeypatch) -> None:
+    class FailedResponse:
+        failed = True
+        result = "sanitized fixture failure"
+
+    class FakeScrapli:
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def send_command(self, _command: str) -> FailedResponse:
+            return FailedResponse()
+
+    monkeypatch.setitem(sys.modules, "scrapli", SimpleNamespace(Scrapli=FakeScrapli))
+    transport = ScrapliTransport(parameters(), strict_host_key=True)
+
+    with pytest.raises(DriverCommandRejectedError):
+        transport.send_command("show version")
+
+
 def test_generic_transport_is_authenticated_but_vendor_neutral(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
@@ -115,3 +151,74 @@ def test_malformed_cli_output_degrades_to_unknown_fields() -> None:
     assert facts.hostname is None
     assert facts.vendor == "Cisco"
     assert parse_show_interfaces("unexpected output") == []
+    assert parse_cdp_neighbors("unexpected output") == []
+    assert parse_lldp_neighbors("unexpected output") == []
+
+
+def test_neighbor_collection_translates_command_timeout(
+    sanitized_outputs: dict[str, str],
+) -> None:
+    error = type("TransportTimeout", (Exception,), {})()
+    driver = CiscoIOSXEDriver(
+        FakeTransportFactory(sanitized_outputs, command_error=error)
+    )
+
+    with pytest.raises(DriverTimeoutError):
+        driver.get_neighbors(parameters())
+
+
+def test_neighbor_collection_deduplicates_and_uses_lldp_chassis_fallback(
+    sanitized_outputs: dict[str, str],
+) -> None:
+    outputs = dict(sanitized_outputs)
+    outputs["show cdp neighbors detail"] *= 2
+    outputs["show lldp neighbors detail"] = outputs["show lldp neighbors detail"].replace(
+        "System Name: access-sw-01.example.test\n", ""
+    )
+
+    neighbors = CiscoIOSXEDriver(FakeTransportFactory(outputs)).get_neighbors(parameters())
+
+    assert len(neighbors) == 2
+    assert neighbors[1].remote_device_name == "0011.2233.4455"
+
+
+def test_observation_batch_uses_one_session_and_tolerates_disabled_neighbors(
+    sanitized_outputs: dict[str, str],
+) -> None:
+    factory = FakeTransportFactory(
+        sanitized_outputs,
+        command_errors={
+            "show cdp neighbors detail": DriverCommandRejectedError(),
+            "show lldp neighbors detail": DriverCommandRejectedError(),
+        },
+    )
+
+    observations = CiscoIOSXEDriver(factory).collect_observations(parameters())
+
+    assert observations.facts.hostname == "edge-rtr-01"
+    assert len(observations.interfaces) == 3
+    assert observations.neighbors == ()
+    assert len(factory.transports) == 1
+    assert factory.transports[0].closed is True
+
+
+def test_required_command_rejection_keeps_typed_error(
+    sanitized_outputs: dict[str, str],
+) -> None:
+    driver = CiscoIOSXEDriver(
+        FakeTransportFactory(
+            sanitized_outputs,
+            command_errors={"show version": DriverCommandRejectedError()},
+        )
+    )
+
+    with pytest.raises(DriverCommandRejectedError):
+        driver.collect_observations(parameters())
+
+
+def test_generic_neighbor_collection_fails_closed() -> None:
+    driver = GenericReadOnlyDriver(FakeTransportFactory({}))
+
+    assert not driver.capabilities.supports(DriverCapability.NEIGHBORS)
+    with pytest.raises(UnsupportedCapabilityError):
+        driver.get_neighbors(parameters())

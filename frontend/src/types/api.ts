@@ -90,6 +90,27 @@ export interface DeviceInput {
   credential_profile_id: string;
 }
 
+export interface DiscoveryInput {
+  cidr: string;
+  port: number;
+  concurrency: number;
+  connect_timeout_seconds: number;
+  probe_delay_ms: number;
+}
+
+export interface DiscoveryCandidate {
+  management_address: string;
+  port: number;
+}
+
+export interface DiscoveryResult {
+  cidr: string;
+  port: number;
+  scanned_count: number;
+  concurrency: number;
+  candidates: DiscoveryCandidate[];
+}
+
 export interface ConnectionTestResult {
   reachable: boolean;
   driver: string;
@@ -107,6 +128,19 @@ export interface DeviceInterface {
   mac_address: string | null;
   speed_mbps: number | null;
   ipv4_addresses: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DeviceNeighbor {
+  id: string;
+  device_id: string;
+  protocol: 'cdp' | 'lldp';
+  local_interface: string;
+  remote_device_name: string;
+  remote_interface: string;
+  management_address: string | null;
+  platform: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -135,7 +169,7 @@ export type JobState = 'queued' | 'started' | 'succeeded' | 'failed' | 'cancelle
 
 export interface Job {
   id: string;
-  type: 'refresh_device' | 'capture_config';
+  type: 'refresh_device' | 'capture_config' | 'discover_ssh';
   state: JobState;
   device_id: string | null;
   result: Record<string, unknown> | null;

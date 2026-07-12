@@ -1,7 +1,7 @@
 # Capability matrix
 
-Last updated: 2026-07-11  
-Scope: phases 0–1
+Last updated: 2026-07-12
+Scope: phases 0–2
 
 ## Status definitions
 
@@ -25,16 +25,21 @@ can promote a capability to **Lab verified**.
 | Running-config snapshot | Implemented, lab unverified | Not Implemented | Not Implemented |
 | Manual-add persistence | Implemented, lab unverified | Not Implemented | Not Implemented |
 | Sanitized event timeline | Implemented, lab unverified | Not Implemented | Not Implemented |
-| CDP/LLDP neighbors | Not Implemented | Not Implemented | Not Implemented |
+| CDP/LLDP neighbors | Implemented, lab unverified | Not Implemented | Not Implemented |
 | Routing table | Not Implemented | Not Implemented | Not Implemented |
 | ARP/MAC tables | Not Implemented | Not Implemented | Not Implemented |
-| CIDR discovery | Not Implemented | Not Implemented | Not Implemented |
+| Bounded IPv4 SSH discovery | Implemented, lab unverified | Not Implemented | Implemented, lab unverified |
 | Web terminal | Not Implemented | Not Implemented | Not Implemented |
 | Ping/traceroute action | Not Implemented | Not Implemented | Not Implemented |
 
 The generic driver authenticates SSH only; facts, interfaces, and configuration
-remain unsupported. The phase 1 entries are deliberately lab-unverified. Before
-release, link each to passing tests and record the first real-device acceptance below.
+remain unsupported. Cisco read entries are deliberately lab-unverified. Before
+release, link each to passing tests and record real-device acceptance below.
+Discovery is vendor-neutral TCP port evidence only; it does not identify a
+platform, authenticate, follow neighbors, or add inventory automatically.
+Only one discovery job may be queued or running at a time. Adding a candidate
+still requires explicit approval and a successful authenticated connection test;
+the resulting device and audit linkage are committed together.
 
 ## Write capabilities
 
@@ -60,6 +65,9 @@ Current write safety classification for every platform: **Level D — Read-only*
 ## Real-lab evidence log
 
 No lab verification has been recorded yet.
+Phase 1 release/exit remains blocked. The fixture-backed Phase 2 neighbor slice
+also remains lab-unverified until an authorized read-only Cisco run supplies
+sanitized evidence for this table.
 
 | Date | Vendor/model | OS version | Capability set | Fixture/test reference | Result | Operator |
 |---|---|---|---|---|---|---|

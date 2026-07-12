@@ -1,10 +1,12 @@
 # Architecture
 
-## Phase 0–1 boundary
+## Phase 0–2 partial boundary
 
 The system is a single-user local application for 1–50 registered devices. The
-current vertical slice reads one explicitly supplied Cisco IOS/IOS-XE device;
-it does not discover a CIDR, provide a terminal, or change device state.
+current vertical slice supports an operator-started IPv4 SSH-port probe capped at
+64 addresses, explicit candidate approval, and observed Cisco CDP/LLDP neighbors.
+It does not traverse neighbors, add devices automatically, provide a terminal,
+create topology links, or change device state.
 
 ```text
 Browser
@@ -88,7 +90,7 @@ the local session.
 
 | State | Owner | Rule |
 |---|---|---|
-| Devices and interfaces | PostgreSQL | Device secrets are referenced, not embedded |
+| Devices, interfaces, and observed neighbors | PostgreSQL | Device secrets are referenced, not embedded |
 | Credential ciphertext | PostgreSQL | AES-GCM data; key remains outside the database |
 | Running-config snapshots | Snapshot volume + metadata | Immutable observed state |
 | Jobs and events | PostgreSQL | Sanitized, append-oriented history |

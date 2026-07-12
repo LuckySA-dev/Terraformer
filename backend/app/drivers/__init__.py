@@ -3,9 +3,12 @@ from app.drivers.base import (
     ConnectionTestResult,
     DeviceDriver,
     DeviceFacts,
+    DeviceObservations,
     DriverCapability,
     DriverCapabilitySet,
     InterfaceFacts,
+    NeighborFacts,
+    NeighborProtocol,
 )
 from app.drivers.cisco_iosxe import CiscoIOSXEDriver
 from app.drivers.generic_readonly import GenericReadOnlyDriver
@@ -17,10 +20,12 @@ __all__ = [
     "ConnectionTestResult",
     "DeviceDriver",
     "DeviceFacts",
+    "DeviceObservations",
     "DriverCapability",
     "DriverCapabilitySet",
     "DriverRegistry",
     "GenericReadOnlyDriver",
     "InterfaceFacts",
+    "NeighborFacts",
+    "NeighborProtocol",
 ]
-

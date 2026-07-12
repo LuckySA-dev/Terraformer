@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import Field, field_validator, model_validator
@@ -112,5 +112,18 @@ class InterfaceView(APIModel):
     mac_address: str | None
     ipv4_addresses: list[str]
     speed_mbps: int | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class NeighborView(APIModel):
+    id: UUID
+    device_id: UUID
+    protocol: Literal["cdp", "lldp"]
+    local_interface: str
+    remote_device_name: str
+    remote_interface: str
+    management_address: str | None
+    platform: str | None
     created_at: datetime
     updated_at: datetime

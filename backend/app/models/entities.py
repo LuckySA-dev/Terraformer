@@ -46,6 +46,7 @@ class SafetyLevel(StrEnum):
 class JobType(StrEnum):
     REFRESH_DEVICE = "refresh_device"
     CAPTURE_CONFIG = "capture_config"
+    DISCOVER_SSH = "discover_ssh"
 
 
 class JobState(StrEnum):
@@ -133,6 +134,11 @@ class Device(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+    neighbors: Mapped[list[Neighbor]] = relationship(
+        back_populates="device",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
     snapshots: Mapped[list[ConfigSnapshot]] = relationship(back_populates="device")
 
 
@@ -176,6 +182,34 @@ class Interface(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     speed_mbps: Mapped[int | None] = mapped_column(BigInteger)
 
     device: Mapped[Device] = relationship(back_populates="interfaces")
+
+
+class Neighbor(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "neighbors"
+    __table_args__ = (
+        UniqueConstraint(
+            "device_id",
+            "protocol",
+            "local_interface",
+            "remote_device_name",
+            "remote_interface",
+            name="uq_neighbor_observation",
+        ),
+    )
+
+    device_id: Mapped[UUID] = mapped_column(
+        ForeignKey("devices.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    protocol: Mapped[str] = mapped_column(String(16), nullable=False)
+    local_interface: Mapped[str] = mapped_column(String(255), nullable=False)
+    remote_device_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    remote_interface: Mapped[str] = mapped_column(String(255), nullable=False)
+    management_address: Mapped[str | None] = mapped_column(String(255))
+    platform: Mapped[str | None] = mapped_column(String(255))
+
+    device: Mapped[Device] = relationship(back_populates="neighbors")
 
 
 class ConfigSnapshot(UUIDPrimaryKeyMixin, Base):

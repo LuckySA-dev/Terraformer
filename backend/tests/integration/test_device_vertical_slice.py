@@ -38,6 +38,7 @@ def test_first_device_refresh_snapshot_and_event_flow(
     supported = {item["name"]: item["supported"] for item in device["capabilities"]}
     assert supported["facts"] is True
     assert supported["interfaces"] is True
+    assert supported["neighbors"] is True
     assert supported["running_config"] is True
     assert supported["apply"] is False
     assert all(item["safety_level"] == "D" for item in device["capabilities"])
@@ -56,6 +57,14 @@ def test_first_device_refresh_snapshot_and_event_flow(
     monkeypatch.setattr(tasks, "get_default_container", lambda: container)
     refresh_result = tasks.execute_job(refresh_job_id)
     assert refresh_result["interface_count"] == 3
+    assert refresh_result["neighbor_count"] == 2
+    assert len(transport_factory.transports) == 2
+    assert transport_factory.transports[-1].sent_commands == [
+        "show version",
+        "show interfaces",
+        "show cdp neighbors detail",
+        "show lldp neighbors detail",
+    ]
 
     facts = authenticated_client.get(f"/api/devices/{device_id}/facts")
     assert facts.status_code == 200
@@ -67,6 +76,13 @@ def test_first_device_refresh_snapshot_and_event_flow(
         "GigabitEthernet2",
         "Loopback0",
     ]
+    neighbors = authenticated_client.get(f"/api/devices/{device_id}/neighbors")
+    assert neighbors.status_code == 200
+    assert [(item["protocol"], item["remote_device_name"]) for item in neighbors.json()] == [
+        ("cdp", "dist-sw-01.example.test"),
+        ("lldp", "access-sw-01.example.test"),
+    ]
+    assert neighbors.json()[0]["management_address"] == "198.51.100.2"
     completed = authenticated_client.get(f"/api/jobs/{refresh_job_id}")
     assert completed.json()["state"] == "succeeded"
 

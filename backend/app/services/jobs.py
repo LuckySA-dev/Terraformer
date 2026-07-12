@@ -4,7 +4,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.core.errors import QueueUnavailableError
+from app.core.errors import ConflictError, QueueUnavailableError
 from app.jobs.queue import JobQueue
 from app.models import EventSeverity, Job, JobType
 from app.repositories.devices import DeviceRepository
@@ -23,12 +23,25 @@ class JobService:
     def get(self, job_id: UUID) -> Job:
         return self._jobs.get(job_id)
 
-    def enqueue(self, *, job_type: JobType, device_id: UUID) -> Job:
-        self._devices.get(device_id)
-        job = self._jobs.add(job_type=job_type, device_id=device_id)
+    def enqueue(
+        self,
+        *,
+        job_type: JobType,
+        device_id: UUID | None = None,
+        input_data: dict[str, object] | None = None,
+    ) -> Job:
+        if job_type == JobType.DISCOVER_SSH and self._jobs.has_active(job_type):
+            raise ConflictError("A discovery job is already active")
+        if device_id is not None:
+            self._devices.get(device_id)
+        job = self._jobs.add(
+            job_type=job_type,
+            device_id=device_id,
+            input_data=input_data,
+        )
         self._events.record(
             event_type="job.queued",
-            message="A background device-read job was queued",
+            message="A background read job was queued",
             device_id=device_id,
             job_id=job.id,
             details={"job_type": job_type.value},
@@ -53,4 +66,3 @@ class JobService:
         self._jobs.set_rq_id(job, rq_job_id)
         self._session.commit()
         return job
-

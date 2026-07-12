@@ -7,7 +7,9 @@ import type {
   Device,
   FactsResponse,
   DeviceInput,
+  DiscoveryInput,
   DeviceInterface,
+  DeviceNeighbor,
   EventRecord,
   HealthResponse,
   Job,
@@ -75,9 +77,18 @@ export const api = {
     }),
   refreshDevice: (id: string) =>
     apiRequest<Job>(`/devices/${encodeURIComponent(id)}/refresh`, { method: 'POST' }),
+  startDiscovery: (input: DiscoveryInput) =>
+    apiRequest<Job>('/discovery-jobs', { method: 'POST', body: json(input) }),
+  approveDiscoveryCandidate: (jobId: string, input: DeviceInput) =>
+    apiRequest<Device>(`/discovery-jobs/${encodeURIComponent(jobId)}/approve`, {
+      method: 'POST',
+      body: json(input),
+    }),
   facts: (id: string) => apiRequest<FactsResponse>(`/devices/${encodeURIComponent(id)}/facts`),
   interfaces: (id: string) =>
     apiRequest<DeviceInterface[]>(`/devices/${encodeURIComponent(id)}/interfaces`),
+  neighbors: (id: string) =>
+    apiRequest<DeviceNeighbor[]>(`/devices/${encodeURIComponent(id)}/neighbors`),
   captureSnapshot: (id: string) =>
     apiRequest<Job>(`/devices/${encodeURIComponent(id)}/config-snapshots`, { method: 'POST' }),
   snapshots: (deviceId: string) =>

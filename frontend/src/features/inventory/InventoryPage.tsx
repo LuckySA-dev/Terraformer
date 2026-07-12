@@ -7,6 +7,7 @@ import {
   KeyRound,
   MoreHorizontal,
   Plus,
+  Radar,
   Router,
   Search,
   ShieldCheck,
@@ -14,7 +15,7 @@ import {
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { api } from '../../api/network';
-import type { CredentialProfileInput, Device, DeviceInput } from '../../types/api';
+import type { CredentialProfileInput, Device, DeviceInput, DiscoveryCandidate } from '../../types/api';
 import { AppState, QueryErrorState } from '../../components/ui/AppState';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
@@ -23,8 +24,13 @@ import { formatRelativeTime } from '../../lib/format';
 import { CredentialForm } from './CredentialForm';
 import { DeviceForm } from './DeviceForm';
 import { DeviceInspector } from './DeviceInspector';
+import { DiscoveryDialog } from './DiscoveryDialog';
 
-type DeviceDialog = { mode: 'create' } | { mode: 'edit'; device: Device } | null;
+type DeviceDialog =
+  | { mode: 'create' }
+  | { mode: 'edit'; device: Device }
+  | { mode: 'approve'; jobId: string; candidate: DiscoveryCandidate }
+  | null;
 
 function deviceTone(status: string): 'success' | 'danger' | 'warning' | 'neutral' {
   if (status === 'reachable') return 'success';
@@ -131,6 +137,7 @@ export function InventoryPage() {
   const [selectedId, setSelectedId] = useState<string>();
   const [deviceDialog, setDeviceDialog] = useState<DeviceDialog>(null);
   const [credentialOpen, setCredentialOpen] = useState(false);
+  const [discoveryOpen, setDiscoveryOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Device>();
 
   const devices = useQuery({ queryKey: ['devices'], queryFn: api.devices, retry: false });
@@ -140,8 +147,12 @@ export function InventoryPage() {
     retry: false,
   });
   const saveDevice = useMutation({
-    mutationFn: ({ input, current }: { input: DeviceInput; current?: Device }) =>
-      current === undefined ? api.createDevice(input) : api.updateDevice(current.id, input),
+    mutationFn: ({ input, current, discoveryJobId }: { input: DeviceInput; current?: Device; discoveryJobId?: string }) =>
+      current !== undefined
+        ? api.updateDevice(current.id, input)
+        : discoveryJobId !== undefined
+          ? api.approveDiscoveryCandidate(discoveryJobId, input)
+          : api.createDevice(input),
     onSuccess: async (saved) => {
       await queryClient.invalidateQueries({ queryKey: ['devices'] });
       setSelectedId(saved.id);
@@ -189,11 +200,14 @@ export function InventoryPage() {
       <main className="workspace-main">
         <header className="page-header">
           <div>
-            <span className="eyebrow">PHASE 1 · FIRST REAL DEVICE</span>
+            <span className="eyebrow">PHASE 2 · SAFE DISCOVERY</span>
             <h1>Device inventory</h1>
             <p>Register and inspect Cisco devices through explicit, read-only connections.</p>
           </div>
           <div className="page-header__actions">
+            <Button onClick={() => setDiscoveryOpen(true)}>
+              <Radar size={16} /> Discover
+            </Button>
             <Button onClick={() => setCredentialOpen(true)}>
               <KeyRound size={16} /> Credential profile
             </Button>
@@ -280,6 +294,14 @@ export function InventoryPage() {
         ) : (
           <DeviceForm
             {...(deviceDialog?.mode === 'edit' ? { device: deviceDialog.device } : {})}
+            {...(deviceDialog?.mode === 'approve'
+              ? {
+                  initial: {
+                    management_address: deviceDialog.candidate.management_address,
+                    port: deviceDialog.candidate.port,
+                  },
+                }
+              : {})}
             credentials={credentials.data}
             onCancel={() => setDeviceDialog(null)}
             onCreateCredential={() => setCredentialOpen(true)}
@@ -287,11 +309,27 @@ export function InventoryPage() {
               await saveDevice.mutateAsync({
                 input,
                 ...(deviceDialog?.mode === 'edit' ? { current: deviceDialog.device } : {}),
+                ...(deviceDialog?.mode === 'approve' ? { discoveryJobId: deviceDialog.jobId } : {}),
               });
             }}
             error={saveDevice.error?.message}
           />
         )}
+      </Modal>
+
+      <Modal
+        open={discoveryOpen}
+        title="Discover SSH candidates"
+        description="A bounded port probe only. Every candidate requires review and a successful connection test."
+        onClose={() => setDiscoveryOpen(false)}
+        size="large"
+      >
+        <DiscoveryDialog
+          onApprove={(jobId, candidate) => {
+            setDiscoveryOpen(false);
+            setDeviceDialog({ mode: 'approve', jobId, candidate });
+          }}
+        />
       </Modal>
 
       <Modal

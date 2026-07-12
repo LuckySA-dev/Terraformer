@@ -10,6 +10,7 @@ vi.mock('../src/api/network', () => ({
   api: {
     facts: vi.fn(),
     interfaces: vi.fn(),
+    neighbors: vi.fn(),
     snapshots: vi.fn(),
     snapshot: vi.fn(),
     events: vi.fn(),
@@ -69,6 +70,7 @@ describe('DeviceInspector API contract and safety states', () => {
       last_seen_at: '2026-07-11T09:00:00Z',
     });
     vi.mocked(api.interfaces).mockResolvedValue([]);
+    vi.mocked(api.neighbors).mockResolvedValue([]);
     vi.mocked(api.snapshots).mockResolvedValue([]);
     vi.mocked(api.events).mockResolvedValue([]);
   });
@@ -125,5 +127,41 @@ describe('DeviceInspector API contract and safety states', () => {
     expect(await screen.findByText('Sensitive local configuration')).toBeVisible();
     expect(screen.getByText(/Do not copy it into logs, support tickets, or Git/)).toBeVisible();
     expect(screen.getByText(/hostname edge-01/)).toBeVisible();
+  });
+
+  it('labels CDP and LLDP records as observed neighbor evidence', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.neighbors).mockResolvedValue([
+      {
+        id: '641d8b94-79a5-469a-ab6d-7793e331f93c',
+        device_id: device.id,
+        protocol: 'cdp',
+        local_interface: 'GigabitEthernet1',
+        remote_device_name: 'dist-sw-01.example.test',
+        remote_interface: 'GigabitEthernet0/1',
+        management_address: '198.51.100.2',
+        platform: 'cisco C9300-24T',
+        created_at: '2026-07-12T01:00:00Z',
+        updated_at: '2026-07-12T01:00:00Z',
+      },
+    ]);
+    renderInspector();
+
+    await user.click(screen.getByRole('button', { name: 'Neighbors' }));
+
+    expect(await screen.findByText('dist-sw-01.example.test')).toBeVisible();
+    expect(screen.getByText('CDP · OBSERVED')).toBeVisible();
+    expect(screen.getByText('198.51.100.2')).toBeVisible();
+  });
+
+  it('renders a retryable neighbor error state', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.neighbors).mockRejectedValue(new Error('Neighbor read unavailable'));
+    renderInspector();
+
+    await user.click(screen.getByRole('button', { name: 'Neighbors' }));
+
+    expect(await screen.findByText('Neighbor read unavailable')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeVisible();
   });
 });

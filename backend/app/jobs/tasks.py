@@ -9,7 +9,9 @@ from app.core.errors import AppError
 from app.models import EventSeverity, JobType
 from app.repositories.events import EventRepository
 from app.repositories.jobs import JobRepository
+from app.schemas.discovery import DiscoveryRequest
 from app.services.devices import DeviceService
+from app.services.discovery import run_discovery
 from app.services.snapshots import SnapshotService
 
 logger = structlog.get_logger(__name__)
@@ -44,6 +46,11 @@ def execute_job(job_id: str) -> dict[str, object]:
                 )
                 snapshot = snapshots.capture(job.device_id, job_id=job.id)
                 result = {"snapshot_id": str(snapshot.id), "device_id": str(snapshot.device_id)}
+            elif job.type == JobType.DISCOVER_SSH and job.device_id is None:
+                result = run_discovery(
+                    DiscoveryRequest.model_validate(job.input),
+                    connection_limit=container.settings.max_device_connections,
+                )
             else:
                 raise ValueError("Unsupported or incomplete job")
         with container.session_factory() as session:

@@ -13,10 +13,12 @@ class FakeTransport(NetworkTransport):
         *,
         open_error: Exception | None = None,
         command_error: Exception | None = None,
+        command_errors: Mapping[str, Exception] | None = None,
     ) -> None:
         self.commands = dict(commands)
         self.open_error = open_error
         self.command_error = command_error
+        self.command_errors = dict(command_errors or {})
         self.opened = False
         self.closed = False
         self.sent_commands: list[str] = []
@@ -33,6 +35,8 @@ class FakeTransport(NetworkTransport):
         self.sent_commands.append(command)
         if self.command_error is not None:
             raise self.command_error
+        if command in self.command_errors:
+            raise self.command_errors[command]
         return self.commands[command]
 
 
@@ -43,10 +47,12 @@ class FakeTransportFactory:
         *,
         open_error: Exception | None = None,
         command_error: Exception | None = None,
+        command_errors: Mapping[str, Exception] | None = None,
     ) -> None:
         self.commands = dict(commands)
         self.open_error = open_error
         self.command_error = command_error
+        self.command_errors = dict(command_errors or {})
         self.parameters: list[ConnectionParameters] = []
         self.transports: list[FakeTransport] = []
 
@@ -56,6 +62,7 @@ class FakeTransportFactory:
             self.commands,
             open_error=self.open_error,
             command_error=self.command_error,
+            command_errors=self.command_errors,
         )
         self.transports.append(transport)
         return transport
@@ -80,4 +87,3 @@ class FakeQueue:
 
     def has_workers(self) -> bool:
         return self.available and self.workers
-

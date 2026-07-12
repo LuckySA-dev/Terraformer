@@ -1546,7 +1546,7 @@ p {
 
 .inspector-tabs {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   padding: 0 6px;
   border-bottom: 1px solid var(--border);
 }
@@ -1729,6 +1729,72 @@ p {
   display: flex;
   flex-direction: column;
   gap: 3px;
+}
+
+.neighbor-list {
+  display: grid;
+  gap: 10px;
+}
+
+.neighbor-row {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.neighbor-row__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.neighbor-row__heading strong {
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-size: 11px;
+}
+
+.discovery-results {
+  display: grid;
+  gap: 7px;
+}
+
+.discovery-results > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 8px;
+}
+
+.discovery-results button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--ink);
+  background: #fff;
+  cursor: pointer;
+}
+
+.discovery-results button:hover {
+  border-color: var(--teal);
+  background: var(--teal-soft);
+}
+
+.discovery-results button span:last-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--teal);
+  font-size: 8px;
+  font-weight: 700;
 }
 
 .interface-row__main strong {

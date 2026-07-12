@@ -9,7 +9,7 @@ from app.core.config import Settings
 from app.core.errors import AppError, ConflictError
 from app.core.time import utc_now
 from app.drivers import ConnectionParameters, ConnectionTestResult, DriverRegistry
-from app.models import Device, DeviceStatus, EventSeverity
+from app.models import Device, DeviceStatus, EventSeverity, Interface, Neighbor
 from app.repositories.credentials import CredentialProfileRepository
 from app.repositories.devices import DeviceRepository
 from app.repositories.events import EventRepository
@@ -40,7 +40,7 @@ class DeviceService:
     def get(self, device_id: UUID) -> Device:
         return self._devices.get(device_id)
 
-    def create(self, request: DeviceCreate) -> Device:
+    def create(self, request: DeviceCreate, *, job_id: UUID | None = None) -> Device:
         if self._devices.find_by_endpoint(request.management_address, request.port) is not None:
             raise ConflictError("A device with this management endpoint already exists")
         result = self.test_connection(request)
@@ -62,6 +62,7 @@ class DeviceService:
                 event_type="device.created",
                 message="Device was registered after a successful connection test",
                 device_id=device.id,
+                job_id=job_id,
                 details={"vendor": device.vendor.value, "driver": driver.name},
             )
             self._session.commit()
@@ -180,8 +181,7 @@ class DeviceService:
             port=device.port,
         )
         try:
-            facts = driver.get_facts(parameters)
-            interfaces = driver.get_interfaces(parameters)
+            observations = driver.collect_observations(parameters)
         except AppError as exc:
             device.status = DeviceStatus.UNREACHABLE
             device.last_error_code = exc.code
@@ -195,23 +195,34 @@ class DeviceService:
             )
             self._session.commit()
             raise
-        device.facts = facts.as_dict()
+        device.facts = observations.facts.as_dict()
         device.status = DeviceStatus.REACHABLE
         device.last_seen_at = utc_now()
         device.last_error_code = None
-        self._devices.replace_interfaces(device, interfaces)
+        self._devices.replace_interfaces(device, list(observations.interfaces))
+        self._devices.replace_neighbors(device, list(observations.neighbors))
         self._events.record(
             event_type="device.refreshed",
-            message="Device facts and interfaces were refreshed",
+            message="Device facts, interfaces, and neighbors were refreshed",
             device_id=device.id,
             job_id=job_id,
-            details={"interface_count": len(interfaces)},
+            details={
+                "interface_count": len(observations.interfaces),
+                "neighbor_count": len(observations.neighbors),
+            },
         )
         self._session.commit()
-        return {"device_id": str(device.id), "interface_count": len(interfaces)}
+        return {
+            "device_id": str(device.id),
+            "interface_count": len(observations.interfaces),
+            "neighbor_count": len(observations.neighbors),
+        }
 
-    def list_interfaces(self, device_id: UUID):
+    def list_interfaces(self, device_id: UUID) -> list[Interface]:
         return self._devices.list_interfaces(device_id)
+
+    def list_neighbors(self, device_id: UUID) -> list[Neighbor]:
+        return self._devices.list_neighbors(device_id)
 
     def connection_parameters(
         self,

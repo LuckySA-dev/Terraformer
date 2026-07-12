@@ -3,6 +3,7 @@ from __future__ import annotations
 from time import monotonic
 
 from app.core.errors import (
+    AppError,
     DriverAuthenticationError,
     DriverConnectionError,
     DriverTimeoutError,
@@ -19,6 +20,8 @@ from app.models import SafetyLevel, Vendor
 
 
 def translate_transport_error(exc: Exception) -> Exception:
+    if isinstance(exc, AppError):
+        return exc
     class_name = type(exc).__name__.lower()
     if "auth" in class_name:
         return DriverAuthenticationError()

@@ -12,6 +12,7 @@ from app.models.entities import (
     Job,
     JobState,
     JobType,
+    Neighbor,
     SafetyLevel,
     Vendor,
 )
@@ -30,7 +31,7 @@ __all__ = [
     "Job",
     "JobState",
     "JobType",
+    "Neighbor",
     "SafetyLevel",
     "Vendor",
 ]
-

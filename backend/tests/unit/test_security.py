@@ -65,8 +65,7 @@ def test_session_tokens_are_signed_and_expire(tmp_path: Path) -> None:
 
     assert tokens.verify(token) is not None
     payload, signature = token.split(".")
-    replacement = "A" if signature[-1] != "A" else "B"
-    assert tokens.verify(f"{payload}.{signature[:-1]}{replacement}") is None
+    replacement = "A" if signature[0] != "A" else "B"
+    assert tokens.verify(f"{payload}.{replacement}{signature[1:]}") is None
     expired = SessionTokenService(provider(tmp_path), ttl_seconds=-1).issue()
     assert tokens.verify(expired) is None
-

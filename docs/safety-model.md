@@ -5,14 +5,15 @@ capabilities and evidence, not on a vendor name or optimistic fallback.
 
 ## Current enforcement boundary
 
-Phases 0–1 are read-only. Every write capability in the capability matrix is
+Phases 0–2 are read-only. Every write capability in the capability matrix is
 **Not Implemented**, and every driver is treated as Safety Level D for writes.
 An absent write route is intentional defense in depth, not a missing UI shortcut.
 
 Read operations still have side effects on fragile devices. The operator must
-provide the exact target, authorize the connection, and use a lab or approved
-management network. CIDR scanning and implicit neighbor traversal are not part
-of the phase 1 flow.
+provide the exact target or bounded IPv4 range, authorize the operation, and use
+a lab or approved management network. Discovery is capped at 64 addresses, uses
+bounded concurrency/timeouts/rate, stores only open-port candidates, and never
+adds a device automatically. Implicit neighbor traversal is not implemented.
 
 ## Safety levels
 

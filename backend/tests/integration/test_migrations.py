@@ -9,7 +9,7 @@ from sqlalchemy import create_engine, inspect
 from app.core.config import get_settings
 
 
-def test_initial_migration_upgrade_and_downgrade(tmp_path: Path, monkeypatch) -> None:
+def test_migration_chain_upgrade_and_downgrade(tmp_path: Path, monkeypatch) -> None:
     database = tmp_path / "migration.db"
     url = f"sqlite+pysqlite:///{database.as_posix()}"
     monkeypatch.setenv("DATABASE_URL", url)
@@ -29,6 +29,7 @@ def test_initial_migration_upgrade_and_downgrade(tmp_path: Path, monkeypatch) ->
             "devices",
             "device_capabilities",
             "interfaces",
+            "neighbors",
             "config_snapshots",
             "jobs",
             "events",
@@ -41,4 +42,3 @@ def test_initial_migration_upgrade_and_downgrade(tmp_path: Path, monkeypatch) ->
         engine.dispose()
     finally:
         get_settings.cache_clear()
-

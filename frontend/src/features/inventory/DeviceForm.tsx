@@ -28,6 +28,7 @@ type DeviceFields = z.infer<typeof deviceSchema>;
 
 interface DeviceFormProps {
   device?: Device;
+  initial?: Pick<DeviceInput, 'management_address' | 'port'>;
   credentials: CredentialProfile[];
   onSubmit: (input: DeviceInput) => Promise<void>;
   onCancel: () => void;
@@ -45,6 +46,7 @@ const fingerprint = (input: DeviceInput): string =>
 
 export function DeviceForm({
   device,
+  initial,
   credentials,
   onSubmit,
   onCancel,
@@ -59,8 +61,8 @@ export function DeviceForm({
     resolver: zodResolver(deviceSchema),
     defaultValues: {
       name: device?.name ?? '',
-      management_address: device?.management_address ?? '',
-      port: device?.port ?? 22,
+      management_address: device?.management_address ?? initial?.management_address ?? '',
+      port: device?.port ?? initial?.port ?? 22,
       vendor: device?.vendor === 'generic' ? 'generic' : 'cisco_iosxe',
       credential_profile_id: device?.credential_profile_id ?? '',
     },
@@ -116,7 +118,7 @@ export function DeviceForm({
   return (
     <form className="stack-form" onSubmit={form.handleSubmit(submit)} noValidate>
       <InlineNotice tone="safe" title="Read-only connection">
-        A connection happens only when you select Test connection. Phase 0–1 runs show commands only and
+        A connection happens only when you select Test connection. Current phases run show commands only and
         never writes, reloads, or saves configuration.
       </InlineNotice>
       <div className="form-grid form-grid--two">

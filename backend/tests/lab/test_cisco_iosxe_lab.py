@@ -16,7 +16,7 @@ pytestmark = [
 ]
 
 
-def test_read_only_cisco_phase_one_reads_from_opt_in_lab() -> None:
+def test_read_only_cisco_observations_from_opt_in_lab() -> None:
     required = ("LAB_DEVICE_HOST", "LAB_DEVICE_USERNAME", "LAB_DEVICE_PASSWORD")
     missing = [name for name in required if not os.getenv(name)]
     if missing:
@@ -36,13 +36,16 @@ def test_read_only_cisco_phase_one_reads_from_opt_in_lab() -> None:
         command_timeout_seconds=30,
     )
     connection = driver.test_connection(parameters)
-    facts = driver.get_facts(parameters)
-    interfaces = driver.get_interfaces(parameters)
+    observations = driver.collect_observations(parameters)
     running_config = driver.get_running_config(parameters)
 
     assert connection.reachable is True
-    assert facts.vendor == "Cisco"
-    assert facts.hostname
-    assert interfaces
-    assert all(interface.name for interface in interfaces)
+    assert observations.facts.vendor == "Cisco"
+    assert observations.facts.hostname
+    assert observations.interfaces
+    assert all(interface.name for interface in observations.interfaces)
+    assert all(
+        neighbor.local_interface and neighbor.remote_device_name
+        for neighbor in observations.neighbors
+    )
     assert running_config.strip()

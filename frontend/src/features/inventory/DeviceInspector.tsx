@@ -16,6 +16,7 @@ import {
   Server,
   ShieldCheck,
   Trash2,
+  Waypoints,
   WifiOff,
   X,
 } from 'lucide-react';
@@ -26,6 +27,7 @@ import type {
   Device,
   DeviceFacts,
   DeviceInterface,
+  DeviceNeighbor,
   Job,
 } from '../../types/api';
 import { AppState, InlineNotice, QueryErrorState } from '../../components/ui/AppState';
@@ -34,7 +36,7 @@ import { Button } from '../../components/ui/Button';
 import { formatDateTime, formatRelativeTime, formatUptime, titleCase } from '../../lib/format';
 import { EventTimeline } from './EventTimeline';
 
-type InspectorTab = 'overview' | 'interfaces' | 'snapshots' | 'activity';
+type InspectorTab = 'overview' | 'interfaces' | 'neighbors' | 'snapshots' | 'activity';
 
 interface DeviceInspectorProps {
   device: Device | null;
@@ -167,7 +169,7 @@ function OverviewTab({ device }: { device: Device }) {
         <AppState
           kind="unsupported"
           title="Configuration is unavailable"
-          message="Write capabilities are intentionally not implemented in Phase 0–1."
+          message="Device write capabilities are intentionally not implemented."
           compact
         />
       </section>
@@ -211,6 +213,45 @@ function InterfacesTab({ device }: { device: Device }) {
             </Badge>
             <span>{item.speed_mbps === null ? '—' : `${String(item.speed_mbps)} Mb/s`}</span>
           </div>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function NeighborsTab({ device }: { device: Device }) {
+  const neighbors = useQuery({
+    queryKey: ['devices', device.id, 'neighbors'],
+    queryFn: () => api.neighbors(device.id),
+    retry: false,
+  });
+  if (neighbors.isPending) {
+    return <AppState kind="loading" title="Loading neighbors" message="Reading stored CDP and LLDP observations…" />;
+  }
+  if (neighbors.isError) {
+    return <QueryErrorState error={neighbors.error} onRetry={() => void neighbors.refetch()} />;
+  }
+  if (neighbors.data.length === 0) {
+    return (
+      <AppState
+        kind="empty"
+        title="No neighbors observed"
+        message="Refresh this Cisco device to collect read-only CDP and LLDP observations."
+      />
+    );
+  }
+  return (
+    <div className="neighbor-list">
+      {neighbors.data.map((item: DeviceNeighbor) => (
+        <article key={item.id} className="neighbor-row">
+          <div className="neighbor-row__heading">
+            <strong>{item.remote_device_name}</strong>
+            <Badge tone="info">{item.protocol.toUpperCase()} · OBSERVED</Badge>
+          </div>
+          <Detail label="Local interface" value={item.local_interface} mono />
+          <Detail label="Remote interface" value={item.remote_interface} mono />
+          <Detail label="Management address" value={item.management_address ?? 'Unavailable'} mono />
+          <Detail label="Platform" value={item.platform ?? 'Unavailable'} />
         </article>
       ))}
     </div>
@@ -354,6 +395,7 @@ export function DeviceInspector({ device, onClose, onEdit, onDelete }: DeviceIns
     () => [
       { id: 'overview' as const, label: 'Overview', icon: CircleGauge },
       { id: 'interfaces' as const, label: 'Interfaces', icon: Network },
+      { id: 'neighbors' as const, label: 'Neighbors', icon: Waypoints },
       { id: 'snapshots' as const, label: 'Snapshots', icon: FileLock2 },
       { id: 'activity' as const, label: 'Activity', icon: Activity },
     ],
@@ -437,6 +479,7 @@ export function DeviceInspector({ device, onClose, onEdit, onDelete }: DeviceIns
       <div className="inspector__content">
         {tab === 'overview' ? <OverviewTab device={device} /> : null}
         {tab === 'interfaces' ? <InterfacesTab device={device} /> : null}
+        {tab === 'neighbors' ? <NeighborsTab device={device} /> : null}
         {tab === 'snapshots' ? (
           <SnapshotsTab
             device={device}

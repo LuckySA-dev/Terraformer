@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
 from enum import StrEnum
-from typing import Any, Never, Protocol
+from typing import Any, Literal, Never, Protocol
 
 from app.core.errors import UnsupportedCapabilityError
 from app.models import SafetyLevel, Vendor
@@ -104,6 +104,26 @@ class InterfaceFacts:
     speed_mbps: int | None = None
 
 
+type NeighborProtocol = Literal["cdp", "lldp"]
+
+
+@dataclass(frozen=True, slots=True)
+class NeighborFacts:
+    protocol: NeighborProtocol
+    local_interface: str
+    remote_device_name: str
+    remote_interface: str
+    management_address: str | None = None
+    platform: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DeviceObservations:
+    facts: DeviceFacts
+    interfaces: tuple[InterfaceFacts, ...]
+    neighbors: tuple[NeighborFacts, ...]
+
+
 class NetworkTransport(Protocol):
     def open(self) -> None: ...
 
@@ -132,6 +152,16 @@ class DeviceDriver(ABC):
 
     def get_interfaces(self, parameters: ConnectionParameters) -> list[InterfaceFacts]:
         self._unsupported(DriverCapability.INTERFACES)
+
+    def get_neighbors(self, parameters: ConnectionParameters) -> list[NeighborFacts]:
+        self._unsupported(DriverCapability.NEIGHBORS)
+
+    def collect_observations(self, parameters: ConnectionParameters) -> DeviceObservations:
+        return DeviceObservations(
+            facts=self.get_facts(parameters),
+            interfaces=tuple(self.get_interfaces(parameters)),
+            neighbors=tuple(self.get_neighbors(parameters)),
+        )
 
     def get_running_config(self, parameters: ConnectionParameters) -> str:
         self._unsupported(DriverCapability.RUNNING_CONFIG)

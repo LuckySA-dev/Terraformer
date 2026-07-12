@@ -30,6 +30,12 @@ def sanitized_outputs(fixture_dir: Path) -> dict[str, str]:
     return {
         "show version": (fixture_dir / "show_version.txt").read_text(encoding="utf-8"),
         "show interfaces": (fixture_dir / "show_interfaces.txt").read_text(encoding="utf-8"),
+        "show cdp neighbors detail": (fixture_dir / "show_cdp_neighbors_detail.txt").read_text(
+            encoding="utf-8"
+        ),
+        "show lldp neighbors detail": (
+            fixture_dir / "show_lldp_neighbors_detail.txt"
+        ).read_text(encoding="utf-8"),
         "show running-config": (fixture_dir / "running_config.txt").read_text(
             encoding="utf-8"
         ),
@@ -138,4 +144,3 @@ def credential_profile(authenticated_client: TestClient) -> dict[str, object]:
     )
     assert response.status_code == 201, response.text
     return response.json()
-

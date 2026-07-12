@@ -17,8 +17,19 @@ class JobRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    def add(self, *, job_type: JobType, device_id: UUID | None) -> Job:
-        job = Job(type=job_type, device_id=device_id, state=JobState.QUEUED, input={})
+    def add(
+        self,
+        *,
+        job_type: JobType,
+        device_id: UUID | None,
+        input_data: dict[str, object] | None = None,
+    ) -> Job:
+        job = Job(
+            type=job_type,
+            device_id=device_id,
+            state=JobState.QUEUED,
+            input=input_data or {},
+        )
         self._session.add(job)
         self._session.flush()
         return job
@@ -34,6 +45,17 @@ class JobRepository:
                 details={"resource": "job", "id": str(job_id)},
             )
         return job
+
+    def has_active(self, job_type: JobType) -> bool:
+        statement = (
+            select(Job.id)
+            .where(
+                Job.type == job_type,
+                Job.state.in_((JobState.QUEUED, JobState.STARTED)),
+            )
+            .limit(1)
+        )
+        return self._session.scalar(statement) is not None
 
     def set_rq_id(self, job: Job, rq_job_id: str) -> None:
         job.rq_job_id = rq_job_id
@@ -65,4 +87,3 @@ class JobRepository:
         job.error_message = sanitize_text(message)[:4_000]
         job.finished_at = utc_now()
         self._session.flush()
-

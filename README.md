@@ -5,9 +5,11 @@ devices. The current phase establishes the repository, secure local deployment,
 and a read-only Cisco IOS/IOS-XE vertical slice. It is designed for one local
 administrator and a small management network.
 
-> **Implementation boundary:** device write operations, terminal access,
-> discovery, topology editing, and model-assisted features are not available in
-> phases 0–1. Do not treat this repository as a production network controller.
+> **Implementation boundary:** Phase 2 supports bounded, explicit IPv4 SSH-port
+> discovery candidates and read-only Cisco CDP/LLDP observations. Device writes,
+> automatic traversal/addition, topology editing, terminal access, and
+> model-assisted features are not available. Do not treat this repository as a
+> production network controller.
 
 The authoritative product scope is
 [`docs/network-automation-final-plan.md`](docs/network-automation-final-plan.md).

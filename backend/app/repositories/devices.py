@@ -6,8 +6,8 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.errors import NotFoundError
-from app.drivers.base import DriverCapabilitySet, InterfaceFacts
-from app.models import Device, DeviceCapability, Interface
+from app.drivers.base import DriverCapabilitySet, InterfaceFacts, NeighborFacts
+from app.models import Device, DeviceCapability, Interface, Neighbor
 
 
 class DeviceRepository:
@@ -102,3 +102,33 @@ class DeviceRepository:
         )
         self._session.flush()
 
+    def list_neighbors(self, device_id: UUID) -> list[Neighbor]:
+        self.get(device_id)
+        statement = (
+            select(Neighbor)
+            .where(Neighbor.device_id == device_id)
+            .order_by(
+                Neighbor.protocol,
+                Neighbor.local_interface,
+                Neighbor.remote_device_name,
+            )
+        )
+        return list(self._session.scalars(statement))
+
+    def replace_neighbors(self, device: Device, neighbors: list[NeighborFacts]) -> None:
+        self._session.execute(delete(Neighbor).where(Neighbor.device_id == device.id))
+        self._session.add_all(
+            [
+                Neighbor(
+                    device_id=device.id,
+                    protocol=item.protocol,
+                    local_interface=item.local_interface,
+                    remote_device_name=item.remote_device_name,
+                    remote_interface=item.remote_interface,
+                    management_address=item.management_address,
+                    platform=item.platform,
+                )
+                for item in neighbors
+            ]
+        )
+        self._session.flush()

@@ -7,7 +7,8 @@ part of `pytest`, CI, image build, startup health checks, or a default demo.
 
 An opt-in, read-only Cisco harness exists at
 `backend/tests/lab/test_cisco_iosxe_lab.py`. It is skipped by default and covers
-an authenticated connection plus facts, interfaces, and running-config reads.
+an authenticated connection plus facts, interfaces, CDP/LLDP neighbors, and
+running-config reads.
 No real-lab result is recorded in this repository, so every capability remains
 lab-unverified until an operator runs the harness against an approved device and
 records only sanitized evidence.
@@ -27,6 +28,11 @@ The `lab` test suite requires all of the following before it opens a socket:
 
 Optional settings are `LAB_DEVICE_PORT`, `LAB_DEVICE_ENABLE_PASSWORD`, and
 `LAB_SSH_STRICT_HOST_KEY`. `RUN_LAB_TESTS=1` never authorizes writes.
+
+The harness uses one SSH session for the facts/interface/neighbor observation
+batch. Connection testing and the running-config read use separate sessions.
+Rejected optional CDP/LLDP commands produce no neighbor observations; a rejected
+required facts/interface/config command fails the test with a typed error.
 
 Run only after completing the checklist below:
 
@@ -54,7 +60,8 @@ Before the test:
 During the test:
 
 - Connect to one device with concurrency one.
-- Run only the phase 1 connection, facts, interface, and running-config reads.
+- Run only the approved connection, facts, interface, CDP/LLDP neighbor, and
+  running-config reads.
 - Stop on an unknown prompt, privilege escalation request, timeout, malformed
   output, platform mismatch, or unexpected command.
 - Do not retry authentication rapidly or fall back to a different vendor driver.
@@ -69,7 +76,7 @@ After the test:
 
 ## Write-test gate for later phases
 
-There are no authorized write tests in phases 0–1. A future write test requires
+There are no authorized write tests in phases 0–2. A future write test requires
 a second explicit opt-in, exact target allowlist, per-device lock, immutable
 pre-change snapshot, preview/diff, human confirmation, tested post-check, and a
 platform-specific recovery plan. High-risk tests also require a maintenance

@@ -53,7 +53,7 @@ export function AppShell({ health, onLogout }: AppShellProps) {
           <span className="environment-chip__dot" />
           <div>
             <strong>Local workspace</strong>
-            <span>Single-user · Phase 0–1</span>
+            <span>Single-user · Phase 0–2</span>
           </div>
         </div>
         <nav className="sidebar__nav" aria-label="Main navigation">

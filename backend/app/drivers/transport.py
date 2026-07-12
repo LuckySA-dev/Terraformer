@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.core.errors import DriverCommandRejectedError
 from app.drivers.base import ConnectionParameters, NetworkTransport
 
 
@@ -34,7 +35,7 @@ class ScrapliTransport:
     def send_command(self, command: str) -> str:
         response = self._connection.send_command(command)
         if response.failed:
-            raise RuntimeError("The device rejected a read-only command")
+            raise DriverCommandRejectedError()
         return str(response.result)
 
 
@@ -72,7 +73,7 @@ class ScrapliGenericTransport:
     def send_command(self, command: str) -> str:
         response = self._connection.send_command(command)
         if response.failed:
-            raise RuntimeError("The generic device rejected a read-only command")
+            raise DriverCommandRejectedError()
         return str(response.result)
 
 

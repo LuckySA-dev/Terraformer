@@ -5,7 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Response, status
 
 from app.api.dependencies import Authenticated, ContainerDependency, SessionDependency
-from app.models import JobType
+from app.models import Interface, JobType, Neighbor
 from app.schemas.devices import (
     ConnectionTestView,
     DeviceConnectionFields,
@@ -14,6 +14,7 @@ from app.schemas.devices import (
     DeviceView,
     FactsView,
     InterfaceView,
+    NeighborView,
 )
 from app.schemas.jobs import JobView
 from app.services.devices import DeviceService
@@ -136,8 +137,18 @@ def get_interfaces(
     _auth: Authenticated,
     session: SessionDependency,
     container: ContainerDependency,
-):
+) -> list[Interface]:
     return _service(session, container).list_interfaces(device_id)
+
+
+@router.get("/{device_id}/neighbors", response_model=list[NeighborView])
+def get_neighbors(
+    device_id: UUID,
+    _auth: Authenticated,
+    session: SessionDependency,
+    container: ContainerDependency,
+) -> list[Neighbor]:
+    return _service(session, container).list_neighbors(device_id)
 
 
 @router.post(

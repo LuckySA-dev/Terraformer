@@ -82,6 +82,11 @@ class DriverTimeoutError(DriverError):
     default_message = "The device operation timed out"
 
 
+class DriverCommandRejectedError(DriverError):
+    code = "device_command_rejected"
+    default_message = "The device rejected a read-only command"
+
+
 class UnsupportedCapabilityError(AppError):
     code = "unsupported_capability"
     status_code = 422
@@ -107,4 +112,3 @@ class QueueUnavailableError(AppError):
     code = "queue_unavailable"
     status_code = 503
     default_message = "The background job queue is unavailable"
-

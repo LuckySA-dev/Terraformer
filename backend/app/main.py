@@ -13,6 +13,7 @@ from starlette.responses import Response
 from starlette.types import ASGIApp
 
 from app.api.router import api_router
+from app.api.terminal import router as terminal_router
 from app.container import ApplicationContainer, get_default_container
 from app.core.errors import AppError
 from app.core.logging import configure_logging, redact_value
@@ -102,6 +103,7 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
     application.state.container = active_container
     application.add_middleware(SecurityAndRequestContextMiddleware, container=active_container)
     application.include_router(api_router)
+    application.include_router(terminal_router)
 
     @application.exception_handler(AppError)
     async def handle_app_error(  # pyright: ignore[reportUnusedFunction]

@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { api } from '../src/api/network';
 import { DeviceInspector } from '../src/features/inventory/DeviceInspector';
-import type { ConfigSnapshot, Device } from '../src/types/api';
+import type { ConfigSnapshot, Device, Job } from '../src/types/api';
 
 vi.mock('../src/api/network', () => ({
   api: {
@@ -17,6 +17,7 @@ vi.mock('../src/api/network', () => ({
     testDeviceConnection: vi.fn(),
     refreshDevice: vi.fn(),
     captureSnapshot: vi.fn(),
+    runDiagnostic: vi.fn(),
     job: vi.fn(),
   },
 }));
@@ -48,6 +49,20 @@ const snapshot: ConfigSnapshot = {
   encryption: 'AES-256-GCM',
   source: 'running-config',
   created_at: '2026-07-11T09:30:00Z',
+};
+
+const queuedDiagnostic: Job = {
+  id: '4530ef90-e648-4cb6-b72a-14665d0ce350',
+  type: 'run_diagnostic',
+  state: 'queued',
+  device_id: device.id,
+  result: null,
+  error_code: null,
+  error_message: null,
+  created_at: '2026-07-12T02:00:00Z',
+  updated_at: '2026-07-12T02:00:00Z',
+  started_at: null,
+  finished_at: null,
 };
 
 function TestProviders({ children }: { children: ReactNode }) {
@@ -163,5 +178,83 @@ describe('DeviceInspector API contract and safety states', () => {
 
     expect(await screen.findByText('Neighbor read unavailable')).toBeVisible();
     expect(screen.getByRole('button', { name: 'Try again' })).toBeVisible();
+  });
+
+  it('runs an allowlisted diagnostic and renders sanitized output', async () => {
+    const user = userEvent.setup();
+    const ciscoDevice: Device = {
+      ...device,
+      vendor: 'cisco_iosxe',
+      capabilities: [
+        { name: 'routing', supported: true, safety_level: 'D' },
+        { name: 'arp', supported: true, safety_level: 'D' },
+        { name: 'mac', supported: true, safety_level: 'D' },
+      ],
+    };
+    vi.mocked(api.runDiagnostic).mockResolvedValue(queuedDiagnostic);
+    vi.mocked(api.job).mockResolvedValue({
+      ...queuedDiagnostic,
+      state: 'succeeded',
+      result: {
+        device_id: device.id,
+        action: 'routing_table',
+        output: 'C 192.0.2.0/24 is directly connected',
+        truncated: false,
+      },
+    });
+    render(
+      <DeviceInspector
+        device={ciscoDevice}
+        onClose={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+      { wrapper: TestProviders },
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Diagnostics' }));
+    await user.click(screen.getByRole('button', { name: 'Run read-only diagnostic' }));
+
+    expect(api.runDiagnostic).toHaveBeenCalledWith(device.id, 'routing_table', undefined);
+    expect(await screen.findByText(/C 192\.0\.2\.0\/24/)).toBeVisible();
+    expect(screen.getByText('SANITIZED')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Download sanitized output' })).toBeVisible();
+  });
+
+  it('fails closed when the driver has no diagnostic capability', async () => {
+    const user = userEvent.setup();
+    renderInspector();
+
+    await user.click(screen.getByRole('button', { name: 'Diagnostics' }));
+
+    expect(await screen.findByRole('heading', { name: 'Diagnostics unavailable' })).toBeVisible();
+    expect(api.runDiagnostic).not.toHaveBeenCalled();
+  });
+
+  it('requires one exact target for ping', async () => {
+    const user = userEvent.setup();
+    const ciscoDevice: Device = {
+      ...device,
+      vendor: 'cisco_iosxe',
+      capabilities: [{ name: 'ping', supported: true, safety_level: 'D' }],
+    };
+    vi.mocked(api.runDiagnostic).mockResolvedValue(queuedDiagnostic);
+    render(
+      <DeviceInspector
+        device={ciscoDevice}
+        onClose={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+      { wrapper: TestProviders },
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Diagnostics' }));
+    const run = screen.getByRole('button', { name: 'Run read-only diagnostic' });
+    expect(run).toBeDisabled();
+    await user.type(screen.getByRole('textbox', { name: 'Exact IPv4 target' }), '198.51.100.10');
+    await user.click(run);
+
+    expect(api.runDiagnostic).toHaveBeenCalledWith(device.id, 'ping', '198.51.100.10');
   });
 });

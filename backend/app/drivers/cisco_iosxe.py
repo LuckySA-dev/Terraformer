@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterator
 from contextlib import contextmanager
+from ipaddress import ip_address
 from time import monotonic
 
 from app.core.errors import DriverCommandRejectedError
@@ -12,6 +13,7 @@ from app.drivers.base import (
     DeviceDriver,
     DeviceFacts,
     DeviceObservations,
+    DiagnosticAction,
     DriverCapability,
     DriverCapabilitySet,
     InterfaceFacts,
@@ -30,6 +32,11 @@ _INTERFACE_HEADER = re.compile(
 _MAC_ADDRESS = re.compile(r"address is ([0-9a-fA-F.:-]+)")
 _IP_ADDRESS = re.compile(r"Internet address is (\S+)")
 _SPEED = re.compile(r"\bBW\s+(\d+)\s+Kbit", re.IGNORECASE)
+_DIAGNOSTIC_COMMANDS = {
+    DiagnosticAction.ROUTING_TABLE: "show ip route",
+    DiagnosticAction.ARP_TABLE: "show ip arp",
+    DiagnosticAction.MAC_TABLE: "show mac address-table",
+}
 
 
 class CiscoIOSXEDriver(DeviceDriver):
@@ -46,6 +53,11 @@ class CiscoIOSXEDriver(DeviceDriver):
                     DriverCapability.INTERFACES,
                     DriverCapability.NEIGHBORS,
                     DriverCapability.RUNNING_CONFIG,
+                    DriverCapability.ROUTING,
+                    DriverCapability.ARP,
+                    DriverCapability.MAC,
+                    DriverCapability.PING,
+                    DriverCapability.TRACEROUTE,
                 }
             ),
             safety_level=SafetyLevel.READ_ONLY,
@@ -115,6 +127,25 @@ class CiscoIOSXEDriver(DeviceDriver):
         if not output.strip():
             raise ValueError("The device returned an empty running configuration")
         return output.replace("\r\n", "\n")
+
+    def run_diagnostic(
+        self,
+        parameters: ConnectionParameters,
+        action: DiagnosticAction,
+        target: str | None = None,
+    ) -> str:
+        if action in _DIAGNOSTIC_COMMANDS:
+            command = _DIAGNOSTIC_COMMANDS[action]
+        elif target is None:
+            raise ValueError("A diagnostic target is required")
+        else:
+            canonical_target = str(ip_address(target))
+            command = (
+                f"ping {canonical_target} repeat 3 timeout 1"
+                if action == DiagnosticAction.PING
+                else f"traceroute {canonical_target} numeric timeout 1 probe 1"
+            )
+        return self._command(parameters, command)
 
     def _command(self, parameters: ConnectionParameters, command: str) -> str:
         with self._session(parameters) as transport:

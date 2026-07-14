@@ -9,6 +9,7 @@ from app.core.errors import AppError
 from app.models import EventSeverity, JobType
 from app.repositories.events import EventRepository
 from app.repositories.jobs import JobRepository
+from app.schemas.diagnostics import DiagnosticJobInput
 from app.schemas.discovery import DiscoveryRequest
 from app.services.devices import DeviceService
 from app.services.discovery import run_discovery
@@ -50,6 +51,14 @@ def execute_job(job_id: str) -> dict[str, object]:
                 result = run_discovery(
                     DiscoveryRequest.model_validate(job.input),
                     connection_limit=container.settings.max_device_connections,
+                )
+            elif job.type == JobType.RUN_DIAGNOSTIC and job.device_id is not None:
+                diagnostic = DiagnosticJobInput.model_validate(job.input)
+                result = devices.run_diagnostic(
+                    job.device_id,
+                    diagnostic.action,
+                    target=str(diagnostic.target) if diagnostic.target is not None else None,
+                    job_id=job.id,
                 )
             else:
                 raise ValueError("Unsupported or incomplete job")

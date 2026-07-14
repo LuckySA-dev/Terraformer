@@ -6,9 +6,13 @@ and a read-only Cisco IOS/IOS-XE vertical slice. It is designed for one local
 administrator and a small management network.
 
 > **Implementation boundary:** Phase 2 supports bounded, explicit IPv4 SSH-port
-> discovery candidates and read-only Cisco CDP/LLDP observations. Device writes,
-> automatic traversal/addition, topology editing, terminal access, and
-> model-assisted features are not available. Do not treat this repository as a
+> discovery candidates, read-only Cisco CDP/LLDP observations, and an observed
+> topology canvas with browser-local layouts and unverified manual links. Cisco
+> routing, ARP, MAC, ping, and traceroute diagnostics use fixed or bounded
+> commands. The Web terminal is warning-gated Direct Mode and can change a
+> device; it has no rollback or recording. Structured device writes, automatic
+> traversal/addition, and model-assisted features are not available. All device
+> capabilities remain lab-unverified. Do not treat this repository as a
 > production network controller.
 
 The authoritative product scope is

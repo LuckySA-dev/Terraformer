@@ -47,6 +47,7 @@ class JobType(StrEnum):
     REFRESH_DEVICE = "refresh_device"
     CAPTURE_CONFIG = "capture_config"
     DISCOVER_SSH = "discover_ssh"
+    RUN_DIAGNOSTIC = "run_diagnostic"
 
 
 class JobState(StrEnum):
@@ -144,9 +145,7 @@ class Device(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 class DeviceCapability(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "device_capabilities"
-    __table_args__ = (
-        UniqueConstraint("device_id", "name", name="uq_device_capability_name"),
-    )
+    __table_args__ = (UniqueConstraint("device_id", "name", name="uq_device_capability_name"),)
 
     device_id: Mapped[UUID] = mapped_column(
         ForeignKey("devices.id", ondelete="CASCADE"),

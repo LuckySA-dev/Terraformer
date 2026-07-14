@@ -7,13 +7,20 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings
 from app.core.errors import AppError, ConflictError
+from app.core.logging import sanitize_text
 from app.core.time import utc_now
-from app.drivers import ConnectionParameters, ConnectionTestResult, DriverRegistry
+from app.drivers import (
+    ConnectionParameters,
+    ConnectionTestResult,
+    DiagnosticAction,
+    DriverRegistry,
+)
 from app.models import Device, DeviceStatus, EventSeverity, Interface, Neighbor
 from app.repositories.credentials import CredentialProfileRepository
 from app.repositories.devices import DeviceRepository
 from app.repositories.events import EventRepository
 from app.schemas.devices import DeviceConnectionFields, DeviceCreate, DeviceUpdate
+from app.schemas.diagnostics import DiagnosticResult
 from app.services.credentials import CredentialVault
 
 
@@ -201,6 +208,7 @@ class DeviceService:
         device.last_error_code = None
         self._devices.replace_interfaces(device, list(observations.interfaces))
         self._devices.replace_neighbors(device, list(observations.neighbors))
+        self._devices.replace_capabilities(device, driver.capabilities)
         self._events.record(
             event_type="device.refreshed",
             message="Device facts, interfaces, and neighbors were refreshed",
@@ -217,6 +225,44 @@ class DeviceService:
             "interface_count": len(observations.interfaces),
             "neighbor_count": len(observations.neighbors),
         }
+
+    def run_diagnostic(
+        self,
+        device_id: UUID,
+        action: DiagnosticAction,
+        *,
+        target: str | None = None,
+        job_id: UUID,
+    ) -> dict[str, object]:
+        device = self._devices.get(device_id, for_update=True)
+        driver = self._drivers.get(device.vendor)
+        parameters = self.connection_parameters(
+            profile_id=device.credential_profile_id,
+            host=device.management_address,
+            port=device.port,
+        )
+        sanitized = sanitize_text(driver.run_diagnostic(parameters, action, target))
+        output_limit = 65_536
+        result = DiagnosticResult(
+            device_id=device.id,
+            action=action,
+            target=target,
+            output=sanitized[:output_limit],
+            truncated=len(sanitized) > output_limit,
+        )
+        device.status = DeviceStatus.REACHABLE
+        device.last_seen_at = utc_now()
+        device.last_error_code = None
+        self._devices.replace_capabilities(device, driver.capabilities)
+        self._events.record(
+            event_type="diagnostic.completed",
+            message="An allowlisted read-only diagnostic completed",
+            device_id=device.id,
+            job_id=job_id,
+            details={"action": action.value, "truncated": result.truncated},
+        )
+        self._session.commit()
+        return result.model_dump(mode="json")
 
     def list_interfaces(self, device_id: UUID) -> list[Interface]:
         return self._devices.list_interfaces(device_id)

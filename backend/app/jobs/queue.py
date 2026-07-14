@@ -21,7 +21,6 @@ class RQJobQueue:
     def __init__(self, *, redis_url: str, queue_name: str) -> None:
         self._redis: Redis = Redis.from_url(redis_url)
         self._queue = Queue(name=queue_name, connection=self._redis)
-        self._queue_name = queue_name
 
     def enqueue(self, job: Job) -> str:
         try:
@@ -44,8 +43,7 @@ class RQJobQueue:
 
     def has_workers(self) -> bool:
         try:
-            workers = Worker.all(connection=self._redis)
+            workers = Worker.all(connection=self._redis, queue=self._queue)
         except Exception:
             return False
-        return any(self._queue_name in worker.queue_names() for worker in workers)
-
+        return bool(workers)

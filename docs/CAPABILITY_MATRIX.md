@@ -26,11 +26,11 @@ can promote a capability to **Lab verified**.
 | Manual-add persistence | Implemented, lab unverified | Not Implemented | Not Implemented |
 | Sanitized event timeline | Implemented, lab unverified | Not Implemented | Not Implemented |
 | CDP/LLDP neighbors | Implemented, lab unverified | Not Implemented | Not Implemented |
-| Routing table | Not Implemented | Not Implemented | Not Implemented |
-| ARP/MAC tables | Not Implemented | Not Implemented | Not Implemented |
+| Routing table | Implemented, lab unverified | Not Implemented | Not Implemented |
+| ARP/MAC tables | Implemented, lab unverified | Not Implemented | Not Implemented |
 | Bounded IPv4 SSH discovery | Implemented, lab unverified | Not Implemented | Implemented, lab unverified |
-| Web terminal | Not Implemented | Not Implemented | Not Implemented |
-| Ping/traceroute action | Not Implemented | Not Implemented | Not Implemented |
+| Web terminal Direct Mode | Implemented, lab unverified | Not Implemented | Implemented, lab unverified |
+| Ping/traceroute action | Implemented, lab unverified | Not Implemented | Not Implemented |
 
 The generic driver authenticates SSH only; facts, interfaces, and configuration
 remain unsupported. Cisco read entries are deliberately lab-unverified. Before
@@ -40,6 +40,17 @@ platform, authenticate, follow neighbors, or add inventory automatically.
 Only one discovery job may be queued or running at a time. Adding a candidate
 still requires explicit approval and a successful authenticated connection test;
 the resulting device and audit linkage are committed together.
+The topology canvas is a UI projection, not a new device capability. It can show
+any registered device, but current observed links come only from lab-unverified
+Cisco CDP/LLDP records. Dashed observed nodes never become inventory implicitly.
+Cisco routing, ARP, and MAC reads use three fixed driver mappings. The structured
+diagnostics API accepts no raw commands or alternate targets. Results are sanitized and capped at 64 KiB;
+implementation and fixture evidence do not promote them to Lab verified.
+Cisco ping/traceroute accepts one validated exact IPv4 target and renders one
+bounded vendor command; hostnames, CIDR, special-use targets, and command text
+fail validation. The Web terminal is deliberately separate from drivers: it is
+authenticated, same-origin, warning-gated Direct Mode with three-session,
+idle, input, and output limits. Terminal commands/output are never audit payloads.
 
 ## Write capabilities
 

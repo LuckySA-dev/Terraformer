@@ -111,6 +111,21 @@ export interface DiscoveryResult {
   candidates: DiscoveryCandidate[];
 }
 
+export type DiagnosticAction =
+  | 'routing_table'
+  | 'arp_table'
+  | 'mac_table'
+  | 'ping'
+  | 'traceroute';
+
+export interface DiagnosticResult {
+  device_id: string;
+  action: DiagnosticAction;
+  target?: string | null;
+  output: string;
+  truncated: boolean;
+}
+
 export interface ConnectionTestResult {
   reachable: boolean;
   driver: string;
@@ -169,7 +184,7 @@ export type JobState = 'queued' | 'started' | 'succeeded' | 'failed' | 'cancelle
 
 export interface Job {
   id: string;
-  type: 'refresh_device' | 'capture_config' | 'discover_ssh';
+  type: 'refresh_device' | 'capture_config' | 'discover_ssh' | 'run_diagnostic';
   state: JobState;
   device_id: string | null;
   result: Record<string, unknown> | null;

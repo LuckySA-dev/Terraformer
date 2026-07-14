@@ -33,12 +33,14 @@ def sanitized_outputs(fixture_dir: Path) -> dict[str, str]:
         "show cdp neighbors detail": (fixture_dir / "show_cdp_neighbors_detail.txt").read_text(
             encoding="utf-8"
         ),
-        "show lldp neighbors detail": (
-            fixture_dir / "show_lldp_neighbors_detail.txt"
-        ).read_text(encoding="utf-8"),
-        "show running-config": (fixture_dir / "running_config.txt").read_text(
+        "show lldp neighbors detail": (fixture_dir / "show_lldp_neighbors_detail.txt").read_text(
             encoding="utf-8"
         ),
+        "show ip route": (fixture_dir / "show_ip_route.txt").read_text(encoding="utf-8"),
+        "ping 198.51.100.10 repeat 3 timeout 1": (fixture_dir / "ping.txt").read_text(
+            encoding="utf-8"
+        ),
+        "show running-config": (fixture_dir / "running_config.txt").read_text(encoding="utf-8"),
     }
 
 

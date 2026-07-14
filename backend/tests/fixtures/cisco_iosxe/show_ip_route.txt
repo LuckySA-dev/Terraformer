@@ -1,0 +1,7 @@
+Codes: C - connected, S - static
+
+Gateway of last resort is 192.0.2.1 to network 0.0.0.0
+
+C    192.0.2.0/24 is directly connected, GigabitEthernet1
+S*   0.0.0.0/0 [1/0] via 192.0.2.1
+community SANITIZED_COMMUNITY

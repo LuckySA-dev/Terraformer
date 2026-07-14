@@ -1,12 +1,16 @@
 # Architecture
 
-## Phase 0–2 partial boundary
+## Phase 0–2 boundary
 
 The system is a single-user local application for 1–50 registered devices. The
 current vertical slice supports an operator-started IPv4 SSH-port probe capped at
-64 addresses, explicit candidate approval, and observed Cisco CDP/LLDP neighbors.
-It does not traverse neighbors, add devices automatically, provide a terminal,
-create topology links, or change device state.
+64 addresses, explicit candidate approval, observed Cisco CDP/LLDP neighbors,
+an observed Cytoscape projection, background Cisco routing/ARP/MAC/ping/
+traceroute actions selected from a backend allowlist, and a guarded AsyncSSH PTY
+terminal. Diagnostic output is sanitized and capped at 64 KiB before persistence.
+It does not traverse neighbors, add devices automatically, or expose a
+structured device-configuration path. Layout and unverified manual links are
+browser-local until backup/restore scope is implemented.
 
 ```text
 Browser
@@ -15,7 +19,7 @@ Browser
           -> PostgreSQL 17 (inventory, jobs, events, metadata)
           -> Redis 7 (RQ queue and worker registration)
           -> encrypted snapshot volume
-      -> WebSocket routes (reserved for later phases)
+      -> `/ws/terminal/{device_id}` (authenticated, same-origin Direct Mode PTY)
 
 worker (same backend image as api)
   -> PostgreSQL / Redis
@@ -66,8 +70,8 @@ are unavailable. The web service starts after API readiness and is the sole
 entry point.
 
 The worker health command checks live RQ registration rather than merely testing
-that Redis accepts connections. This distinguishes a reachable queue from an
-available worker.
+that Redis accepts connections. It uses the queue-specific RQ registry so stale
+or incomplete general worker metadata cannot produce a false negative.
 
 ## Secret flow
 

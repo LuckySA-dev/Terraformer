@@ -5,6 +5,7 @@ import type {
   CredentialProfile,
   CredentialProfileInput,
   Device,
+  DiagnosticAction,
   FactsResponse,
   DeviceInput,
   DiscoveryInput,
@@ -77,6 +78,11 @@ export const api = {
     }),
   refreshDevice: (id: string) =>
     apiRequest<Job>(`/devices/${encodeURIComponent(id)}/refresh`, { method: 'POST' }),
+  runDiagnostic: (deviceId: string, action: DiagnosticAction, target?: string) =>
+    apiRequest<Job>('/diagnostics', {
+      method: 'POST',
+      body: json({ device_id: deviceId, action, target }),
+    }),
   startDiscovery: (input: DiscoveryInput) =>
     apiRequest<Job>('/discovery-jobs', { method: 'POST', body: json(input) }),
   approveDiscoveryCandidate: (jobId: string, input: DeviceInput) =>

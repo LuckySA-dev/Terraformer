@@ -6,8 +6,10 @@ import {
   ChevronRight,
   CircleGauge,
   Clock3,
+  Download,
   FileLock2,
   LoaderCircle,
+  ListTree,
   Network,
   Pencil,
   PlugZap,
@@ -15,16 +17,19 @@ import {
   Router,
   Server,
   ShieldCheck,
+  SquareTerminal,
   Trash2,
   Waypoints,
   WifiOff,
   X,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { api } from '../../api/network';
 import type {
   ConfigSnapshot,
   Device,
+  DiagnosticAction,
+  DiagnosticResult,
   DeviceFacts,
   DeviceInterface,
   DeviceNeighbor,
@@ -33,10 +38,22 @@ import type {
 import { AppState, InlineNotice, QueryErrorState } from '../../components/ui/AppState';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
+import { InputField, SelectField } from '../../components/ui/FormField';
 import { formatDateTime, formatRelativeTime, formatUptime, titleCase } from '../../lib/format';
 import { EventTimeline } from './EventTimeline';
 
-type InspectorTab = 'overview' | 'interfaces' | 'neighbors' | 'snapshots' | 'activity';
+const TerminalPanel = lazy(() =>
+  import('./TerminalPanel').then((module) => ({ default: module.TerminalPanel })),
+);
+
+type InspectorTab =
+  | 'overview'
+  | 'interfaces'
+  | 'neighbors'
+  | 'diagnostics'
+  | 'terminal'
+  | 'snapshots'
+  | 'activity';
 
 interface DeviceInspectorProps {
   device: Device | null;
@@ -46,11 +63,37 @@ interface DeviceInspectorProps {
 }
 
 const finalJobStates = new Set(['succeeded', 'failed', 'cancelled']);
+const diagnosticActions: {
+  action: DiagnosticAction;
+  capability: string;
+  label: string;
+  targetRequired?: boolean;
+}[] = [
+  { action: 'routing_table', capability: 'routing', label: 'Routing table' },
+  { action: 'arp_table', capability: 'arp', label: 'ARP table' },
+  { action: 'mac_table', capability: 'mac', label: 'MAC address table' },
+  { action: 'ping', capability: 'ping', label: 'Ping', targetRequired: true },
+  {
+    action: 'traceroute',
+    capability: 'traceroute',
+    label: 'Traceroute',
+    targetRequired: true,
+  },
+];
 
 function stateTone(status: string): 'success' | 'danger' | 'warning' | 'neutral' {
   if (status === 'reachable') return 'success';
   if (status === 'unreachable') return 'danger';
   return 'warning';
+}
+
+function downloadDiagnostic(result: DiagnosticResult): void {
+  const url = URL.createObjectURL(new Blob([result.output], { type: 'text/plain;charset=utf-8' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `diagnostic-${result.action}.txt`;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 function Detail({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
@@ -258,6 +301,106 @@ function NeighborsTab({ device }: { device: Device }) {
   );
 }
 
+function DiagnosticsTab({
+  device,
+  job,
+  running,
+  error,
+  onRun,
+}: {
+  device: Device;
+  job: Job | undefined;
+  running: boolean;
+  error: string | undefined;
+  onRun: (action: DiagnosticAction, target?: string) => void;
+}) {
+  const available = diagnosticActions.filter(({ capability }) =>
+    device.capabilities.some((item) => item.name === capability && item.supported),
+  );
+  const [action, setAction] = useState<DiagnosticAction>(
+    available[0]?.action ?? 'routing_table',
+  );
+  const [target, setTarget] = useState('');
+  const selectedAction = diagnosticActions.find((item) => item.action === action);
+  const result =
+    job?.type === 'run_diagnostic' && job.state === 'succeeded'
+      ? (job.result as unknown as DiagnosticResult)
+      : undefined;
+
+  if (available.length === 0) {
+    return (
+      <AppState
+        kind="empty"
+        title="Diagnostics unavailable"
+        message="This driver has no verified routing, ARP, or MAC read capability."
+      />
+    );
+  }
+
+  return (
+    <div className="inspector-section-stack">
+      <InlineNotice tone="warning" title="Allowlisted device read">
+        Runs one fixed show command through the background worker. Custom commands and targets are not accepted.
+      </InlineNotice>
+      <div className="diagnostic-actions">
+        <SelectField
+          label="Diagnostic"
+          value={action}
+          onChange={(event) => setAction(event.target.value as DiagnosticAction)}
+        >
+          {available.map((item) => (
+            <option key={item.action} value={item.action}>{item.label}</option>
+          ))}
+        </SelectField>
+        {selectedAction?.targetRequired === true ? (
+          <InputField
+            label="Exact IPv4 target"
+            placeholder="198.51.100.10"
+            value={target}
+            onChange={(event) => setTarget(event.target.value)}
+            required
+            spellCheck={false}
+            hint="One address only; CIDR, hostname, and command text are rejected"
+          />
+        ) : null}
+        <Button
+          size="small"
+          onClick={() => onRun(action, selectedAction?.targetRequired === true ? target.trim() : undefined)}
+          busy={running}
+          disabled={selectedAction?.targetRequired === true && !target.trim()}
+        >
+          <ListTree size={14} /> Run read-only diagnostic
+        </Button>
+      </div>
+      {error === undefined ? null : <div className="form-error" role="alert">{error}</div>}
+      {job?.type === 'run_diagnostic' && job.state === 'failed' ? (
+        <AppState
+          kind="error"
+          title="Diagnostic failed"
+          message={job.error_message ?? 'The allowlisted diagnostic could not complete.'}
+          compact
+        />
+      ) : null}
+      {result === undefined ? null : (
+        <div className="diagnostic-output">
+          <div>
+            <strong>{diagnosticActions.find((item) => item.action === result.action)?.label}</strong>
+            <span>
+              <Badge tone={result.truncated ? 'warning' : 'info'}>
+                {result.truncated ? 'TRUNCATED' : 'SANITIZED'}
+              </Badge>
+              <Button size="small" variant="ghost" onClick={() => downloadDiagnostic(result)}>
+                <Download size={12} /> Download sanitized output
+              </Button>
+            </span>
+          </div>
+          <pre>{result.output}</pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SnapshotDetail({ snapshot }: { snapshot: ConfigSnapshot }) {
   const detail = useQuery({
     queryKey: ['snapshots', snapshot.id],
@@ -370,6 +513,15 @@ export function DeviceInspector({ device, onClose, onEdit, onDelete }: DeviceIns
     mutationFn: (target: Device) => api.captureSnapshot(target.id),
     onSuccess: (job: Job) => setActiveJob({ id: job.id, label: 'Capturing running configuration' }),
   });
+  const diagnostic = useMutation({
+    mutationFn: ({ device: target, action, destination }: {
+      device: Device;
+      action: DiagnosticAction;
+      destination?: string;
+    }) => api.runDiagnostic(target.id, action, destination),
+    onSuccess: (queued: Job) =>
+      setActiveJob({ id: queued.id, label: 'Running allowlisted diagnostic' }),
+  });
   const job = useQuery({
     queryKey: ['jobs', activeJob?.id],
     queryFn: () => api.job(activeJob?.id ?? ''),
@@ -396,6 +548,8 @@ export function DeviceInspector({ device, onClose, onEdit, onDelete }: DeviceIns
       { id: 'overview' as const, label: 'Overview', icon: CircleGauge },
       { id: 'interfaces' as const, label: 'Interfaces', icon: Network },
       { id: 'neighbors' as const, label: 'Neighbors', icon: Waypoints },
+      { id: 'diagnostics' as const, label: 'Diagnostics', icon: ListTree },
+      { id: 'terminal' as const, label: 'Terminal', icon: SquareTerminal },
       { id: 'snapshots' as const, label: 'Snapshots', icon: FileLock2 },
       { id: 'activity' as const, label: 'Activity', icon: Activity },
     ],
@@ -480,6 +634,26 @@ export function DeviceInspector({ device, onClose, onEdit, onDelete }: DeviceIns
         {tab === 'overview' ? <OverviewTab device={device} /> : null}
         {tab === 'interfaces' ? <InterfacesTab device={device} /> : null}
         {tab === 'neighbors' ? <NeighborsTab device={device} /> : null}
+        {tab === 'diagnostics' ? (
+          <DiagnosticsTab
+            device={device}
+            job={job.data}
+            running={diagnostic.isPending || jobRunning}
+            error={diagnostic.error?.message}
+            onRun={(action, destination) =>
+              diagnostic.mutate({
+                device,
+                action,
+                ...(destination === undefined ? {} : { destination }),
+              })
+            }
+          />
+        ) : null}
+        {tab === 'terminal' ? (
+          <Suspense fallback={<AppState kind="loading" title="Loading terminal" message="Preparing the local PTY client…" compact />}>
+            <TerminalPanel deviceId={device.id} />
+          </Suspense>
+        ) : null}
         {tab === 'snapshots' ? (
           <SnapshotsTab
             device={device}

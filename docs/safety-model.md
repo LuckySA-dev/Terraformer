@@ -14,6 +14,19 @@ provide the exact target or bounded IPv4 range, authorize the operation, and use
 a lab or approved management network. Discovery is capped at 64 addresses, uses
 bounded concurrency/timeouts/rate, stores only open-port candidates, and never
 adds a device automatically. Implicit neighbor traversal is not implemented.
+Diagnostics accept only typed routing, ARP, MAC, ping, and traceroute actions for
+a registered device. The Cisco driver maps each action to one fixed or bounded
+command; ping/traceroute accepts one validated exact IPv4 target. Output is
+sanitized, capped at 64 KiB, and recorded without raw output in event details.
+Generic and unknown drivers fail closed.
+
+The terminal is a separate Direct Mode path, not a structured driver capability.
+It requires an authenticated same-origin WebSocket and an explicit warning
+acknowledgement before credentials are decrypted or SSH begins. Three-session,
+input-idle, per-message input, and total-output limits bound resources. Commands
+and output are never logged or stored. Direct Mode can change a device and has
+no command parser or rollback guarantee; the warning is an operator boundary,
+not a claim that the terminal is read-only.
 
 ## Safety levels
 

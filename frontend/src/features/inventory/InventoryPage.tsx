@@ -274,6 +274,7 @@ export function InventoryPage() {
       </main>
 
       <DeviceInspector
+        key={selectedDevice?.id ?? 'empty'}
         device={selectedDevice}
         onClose={() => setSelectedId(undefined)}
         onEdit={(device) => setDeviceDialog({ mode: 'edit', device })}

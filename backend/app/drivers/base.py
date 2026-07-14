@@ -18,12 +18,31 @@ class DriverCapability(StrEnum):
     ROUTING = "routing"
     ARP = "arp"
     MAC = "mac"
+    PING = "ping"
+    TRACEROUTE = "traceroute"
     RENDER = "render"
     VALIDATE = "validate"
     COMPARE = "compare"
     APPLY = "apply"
     POST_CHECK = "post_check"
     ROLLBACK = "rollback"
+
+
+class DiagnosticAction(StrEnum):
+    ROUTING_TABLE = "routing_table"
+    ARP_TABLE = "arp_table"
+    MAC_TABLE = "mac_table"
+    PING = "ping"
+    TRACEROUTE = "traceroute"
+
+
+DIAGNOSTIC_CAPABILITIES = {
+    DiagnosticAction.ROUTING_TABLE: DriverCapability.ROUTING,
+    DiagnosticAction.ARP_TABLE: DriverCapability.ARP,
+    DiagnosticAction.MAC_TABLE: DriverCapability.MAC,
+    DiagnosticAction.PING: DriverCapability.PING,
+    DiagnosticAction.TRACEROUTE: DriverCapability.TRACEROUTE,
+}
 
 
 WRITE_CAPABILITIES = frozenset(
@@ -165,6 +184,15 @@ class DeviceDriver(ABC):
 
     def get_running_config(self, parameters: ConnectionParameters) -> str:
         self._unsupported(DriverCapability.RUNNING_CONFIG)
+
+    def run_diagnostic(
+        self,
+        parameters: ConnectionParameters,
+        action: DiagnosticAction,
+        target: str | None = None,
+    ) -> str:
+        del parameters, target
+        self._unsupported(DIAGNOSTIC_CAPABILITIES[action])
 
     def apply_configuration(self, parameters: ConnectionParameters, commands: list[str]) -> None:
         del parameters, commands

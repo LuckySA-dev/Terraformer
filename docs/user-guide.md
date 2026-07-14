@@ -1,7 +1,8 @@
-# Phase 0–2 partial user guide
+# Phase 0–2 user guide
 
-This guide covers local startup, first-run administration, and the read-only
-Cisco IOS/IOS-XE slice. The implementation is intentionally incomplete; check
+This guide covers local startup, first-run administration, topology,
+diagnostics, and Direct Mode terminal access. Automated implementation is
+complete, but real-device capabilities remain lab-unverified; check
 `IMPLEMENTATION_STATUS.md` before relying on a screen or endpoint.
 
 ## 1. Start and check health
@@ -74,6 +75,29 @@ CDP/LLDP neighbor observations, snapshot metadata, and an event timeline.
 verified topology link. Refresh deliberately and avoid polling fragile equipment
 repeatedly.
 
+Open **Topology** to project registered devices and saved neighbor observations
+onto a read-only canvas. Solid nodes are inventory records; dashed nodes are
+observed evidence only. Dragged positions persist in this browser. Manual links
+are browser-local and always labelled `UNVERIFIED`; they never create inventory
+or cause device access. Choose manual, 30-second, or 60-second view refresh;
+these refresh saved API data, not device state.
+
+Open **Diagnostics** in a Cisco device inspector to request one fixed routing,
+ARP, or MAC table read, or a bounded ping/traceroute to one exact IPv4 address.
+The worker uses the registered device and encrypted credential profile; raw
+commands, CIDR, hostnames, loopback, link-local, multicast, unspecified, and
+reserved targets are rejected. Results are
+sanitized, limited to 64 KiB, and may be downloaded locally. A timeout or
+rejected command fails the job and does not trigger another command automatically.
+
+Open **Terminal** only when an unrestricted interactive SSH session is required.
+Read and accept the Direct Mode warning before every new session. Commands run
+exactly as typed: there is no parser, approval plan, rollback guarantee, or
+recording. The UI and API allow at most three sessions, idle input closes after
+15 minutes, and each session has a 2 MiB output limit. Never paste secrets into
+the terminal, and leave configuration mode unless a separately approved change
+authorizes it.
+
 Check that events contain status and timing but no credential, enable secret, or
 raw configuration. Report a possible leak privately and rotate the source
 credential.
@@ -81,15 +105,14 @@ credential.
 ## Unavailable in this phase
 
 - configuration render, preview, apply, post-check, and rollback;
-- terminal and arbitrary show-command execution;
-- automatic CDP/LLDP traversal and topology canvas;
-- ping, traceroute, routing, ARP, and MAC diagnostics;
+- automatic CDP/LLDP traversal or verified manual-link persistence;
 - Juniper NETCONF support;
 - bulk operations and monitoring; and
 - model-provider or local-model features.
 
-Every device therefore has Safety Level D for writes. No UI or API control in
-this phase should be able to alter a device.
+Every structured driver capability therefore has Safety Level D for writes.
+Direct Mode is the explicit exception: terminal input can alter a device and is
+the operator's responsibility after the warning gate.
 
 ## Stop and retain data
 

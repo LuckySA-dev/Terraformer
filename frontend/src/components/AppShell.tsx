@@ -9,13 +9,16 @@ import {
   Server,
   ShieldCheck,
 } from 'lucide-react';
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import type { HealthResponse } from '../types/api';
+import { AppState } from './ui/AppState';
 import { Badge } from './ui/Badge';
 import { ActivityPage } from '../features/inventory/ActivityPage';
 import { InventoryPage } from '../features/inventory/InventoryPage';
 
-type ViewId = 'inventory' | 'activity';
+const TopologyPage = lazy(() => import('../features/topology/TopologyPage'));
+
+type ViewId = 'inventory' | 'topology' | 'activity';
 
 interface AppShellProps {
   health: HealthResponse;
@@ -69,6 +72,15 @@ export function AppShell({ health, onLogout }: AppShellProps) {
           </button>
           <button
             type="button"
+            className={view === 'topology' ? 'is-active' : ''}
+            onClick={() => setView('topology')}
+            aria-current={view === 'topology' ? 'page' : undefined}
+          >
+            <Network size={18} />
+            <span>Topology</span>
+          </button>
+          <button
+            type="button"
             className={view === 'activity' ? 'is-active' : ''}
             onClick={() => setView('activity')}
             aria-current={view === 'activity' ? 'page' : undefined}
@@ -101,7 +113,23 @@ export function AppShell({ health, onLogout }: AppShellProps) {
       </aside>
 
       <div className="app-shell__content">
-        {view === 'inventory' ? <InventoryPage /> : <ActivityPage />}
+        {view === 'inventory' ? (
+          <InventoryPage />
+        ) : view === 'topology' ? (
+          <Suspense
+            fallback={
+              <AppState
+                kind="loading"
+                title="Loading topology"
+                message="Preparing the read-only graph..."
+              />
+            }
+          >
+            <TopologyPage />
+          </Suspense>
+        ) : (
+          <ActivityPage />
+        )}
       </div>
 
       <footer className="status-bar">

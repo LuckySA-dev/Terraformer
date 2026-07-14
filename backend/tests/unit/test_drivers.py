@@ -14,6 +14,7 @@ from app.core.errors import (
 from app.drivers import (
     CiscoIOSXEDriver,
     ConnectionParameters,
+    DiagnosticAction,
     DriverCapability,
     GenericReadOnlyDriver,
 )
@@ -155,16 +156,16 @@ def test_malformed_cli_output_degrades_to_unknown_fields() -> None:
     assert parse_lldp_neighbors("unexpected output") == []
 
 
-def test_neighbor_collection_translates_command_timeout(
+def test_read_operations_translate_command_timeout(
     sanitized_outputs: dict[str, str],
 ) -> None:
     error = type("TransportTimeout", (Exception,), {})()
-    driver = CiscoIOSXEDriver(
-        FakeTransportFactory(sanitized_outputs, command_error=error)
-    )
+    driver = CiscoIOSXEDriver(FakeTransportFactory(sanitized_outputs, command_error=error))
 
     with pytest.raises(DriverTimeoutError):
         driver.get_neighbors(parameters())
+    with pytest.raises(DriverTimeoutError):
+        driver.run_diagnostic(parameters(), DiagnosticAction.ROUTING_TABLE)
 
 
 def test_neighbor_collection_deduplicates_and_uses_lldp_chassis_fallback(
@@ -222,3 +223,56 @@ def test_generic_neighbor_collection_fails_closed() -> None:
     assert not driver.capabilities.supports(DriverCapability.NEIGHBORS)
     with pytest.raises(UnsupportedCapabilityError):
         driver.get_neighbors(parameters())
+
+
+@pytest.mark.parametrize(
+    ("action", "command"),
+    [
+        (DiagnosticAction.ROUTING_TABLE, "show ip route"),
+        (DiagnosticAction.ARP_TABLE, "show ip arp"),
+        (DiagnosticAction.MAC_TABLE, "show mac address-table"),
+    ],
+)
+def test_cisco_diagnostics_use_fixed_read_only_commands(
+    action: DiagnosticAction,
+    command: str,
+) -> None:
+    factory = FakeTransportFactory({command: "sanitized fixture output"})
+    driver = CiscoIOSXEDriver(factory)
+
+    assert driver.run_diagnostic(parameters(), action) == "sanitized fixture output"
+    assert factory.transports[0].sent_commands == [command]
+    assert factory.transports[0].closed is True
+
+
+def test_generic_diagnostics_fail_closed() -> None:
+    driver = GenericReadOnlyDriver(FakeTransportFactory({}))
+
+    with pytest.raises(UnsupportedCapabilityError):
+        driver.run_diagnostic(parameters(), DiagnosticAction.ROUTING_TABLE)
+
+
+@pytest.mark.parametrize(
+    ("action", "target", "command"),
+    [
+        (DiagnosticAction.PING, "198.51.100.10", "ping 198.51.100.10 repeat 3 timeout 1"),
+        (
+            DiagnosticAction.TRACEROUTE,
+            "198.51.100.10",
+            "traceroute 198.51.100.10 numeric timeout 1 probe 1",
+        ),
+    ],
+)
+def test_cisco_target_diagnostics_accept_only_canonical_ip(
+    action: DiagnosticAction,
+    target: str,
+    command: str,
+) -> None:
+    factory = FakeTransportFactory({command: "sanitized fixture output"})
+    driver = CiscoIOSXEDriver(factory)
+
+    assert driver.run_diagnostic(parameters(), action, target) == "sanitized fixture output"
+    assert factory.transports[0].sent_commands == [command]
+
+    with pytest.raises(ValueError):
+        driver.run_diagnostic(parameters(), action, f"{target};reload")

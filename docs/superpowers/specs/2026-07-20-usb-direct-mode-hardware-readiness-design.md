@@ -1,7 +1,7 @@
 # Manual USB Console and Hardware Readiness Design
 
 Date: 2026-07-20
-Status: Awaiting written-spec review
+Status: Approved for implementation (frozen)
 
 ## Context
 
@@ -26,8 +26,12 @@ write capabilities remain Not Implemented and Safety Level D.
   separate.
 - Make serial settings usable with real network hardware: baud presets,
   validated custom baud, configurable line endings, and optional local echo.
-- Handle permission, I/O, navigation, teardown, and unexpected adapter removal
-  without leaked readers, writers, locks, ports, listeners, or UI buffers.
+- Require an explicit, per-session acknowledgement that the operator is
+  authorized to access the attached hardware and understands the Direct Mode
+  risk.
+- Deterministically clean up permission, I/O, navigation, teardown, and
+  unexpected-removal paths; when browser or operating-system cleanup hangs,
+  report the timeout and never reuse the old session.
 - Leave automated verification and operator documentation ready for a later,
   explicitly authorized hardware validation.
 
@@ -96,6 +100,8 @@ component.
 - the user-approved `SerialPort` reference;
 - permission request and port opening;
 - raw byte reads and queued writes;
+- a write queue capped at 64 KiB of pending UTF-8 input, with each queued input
+  chunk capped at 4 KiB;
 - incremental `TextDecoder` state, including split multibyte sequences;
 - reader and writer objects and their locks;
 - read/write failure handling;
@@ -105,6 +111,11 @@ component.
 Its public contract supports opening from an explicit user gesture, writing a
 validated input chunk with backpressure, publishing decoded output and
 sanitized status events, and an idempotent asynchronous `close()`.
+
+The transport rejects an entire new input chunk before transmission when that
+chunk would exceed either write bound. It maps the rejection to `serial write
+queue full`, blocks further input, and begins normal cleanup. It never silently
+drops, truncates, or partially enqueues the rejected chunk.
 
 ## User flow
 
@@ -116,14 +127,21 @@ sanitized status events, and an idempotent asynchronous `close()`.
    echo; local echo is off by default.
 4. Before browser permission is requested, the UI warns that USB Direct Mode
    sends commands exactly as entered and can modify, restart, or erase hardware.
-5. After explicit acknowledgement, a user gesture calls `requestPort()` and
+   The operator must explicitly acknowledge for this session that they are
+   authorized to access the attached hardware and understand those risks. The
+   acknowledgement is not persisted and is not treated as proof of permission.
+5. After acknowledgement, a separate user gesture calls `requestPort()` and
    opens the selected adapter.
 6. Device output is decoded incrementally and written only to the in-memory
    xterm session. Operator input is normalized to the selected line ending and
    sent with stream backpressure.
-7. Input containing multiple logical lines is held in a UI-only buffer. The UI
-   warns before transmission and reports only the line count. Send transmits
-   the buffered input; cancel discards it.
+7. Newlines are first normalized by converting `CRLF` and lone `CR` to canonical
+   `LF`. Logical-line detection ignores one trailing empty segment caused by a
+   final newline and otherwise counts blank or non-blank segments. Input with
+   more than one logical line is held in a UI-only buffer. The UI warns before
+   transmission and reports only the line count. Send converts canonical `LF`
+   to the selected line ending and transmits the buffered input; cancel discards
+   it. This prevents mixed newline forms from bypassing multiline detection.
 8. Closing, navigating away, losing the adapter, or encountering an I/O failure
    invokes the shared shutdown path.
 
@@ -153,6 +171,11 @@ opened. Failures also clean up and return the connection to `idle`; a sanitized
 in-memory UI error may remain visible independently of connection state. There
 is no automatic reconnection.
 
+Returning to `idle` never reuses a prior session. Each manual reopen constructs
+a fresh shared session, xterm instance, transport instance, decoder, streams,
+listeners, and buffers. Disposed instances reject late callbacks and cannot be
+reconnected.
+
 ### Top-level shutdown
 
 One idempotent top-level shutdown operation handles user disconnect, route or
@@ -170,6 +193,14 @@ double-release resources. Route changes and unmounts invoke shutdown; document
 teardown also receives best-effort cleanup without relying on asynchronous work
 to delay navigation.
 
+Top-level shutdown has a five-second deadline. Cleanup still attempts every
+ownership-correct step when cancellation or port close fails. If the deadline
+expires, the old session is permanently disposed, all owned references and
+listeners are cleared, and the UI shows the sanitized `cleanup timed out` state.
+A later attempt must create a fresh session and reselect the adapter; if the
+browser or operating system still holds the port, opening maps to `port
+unavailable` rather than reusing the timed-out transport.
+
 ### USB transport cleanup
 
 `UsbSerialTransport.close()` cleans up serial resources only. It:
@@ -181,6 +212,10 @@ to delay navigation.
 5. closes the port when it is still available;
 6. clears decoder state, raw byte/write buffers, and serial references; and
 7. completes even when cancellation or individual cleanup operations fail.
+
+Each awaited serial cleanup operation is bounded by the remaining top-level
+deadline and runs through `finally`-style continuation, so one hung cancellation
+or close call does not prevent later release attempts and reference cleanup.
 
 Unexpected adapter removal uses this same path. It reports `device
 disconnected` in memory and does not attempt to reopen the port.
@@ -197,8 +232,10 @@ operator-facing states:
 - permission denied;
 - port unavailable or already in use;
 - device disconnected;
-- serial read failed; or
-- serial write failed.
+- serial read failed;
+- serial write failed;
+- serial write queue full; or
+- cleanup timed out.
 
 The feature must not use `localStorage`, `sessionStorage`, IndexedDB, terminal
 history, analytics, telemetry, backend REST calls, backend WebSockets, or error
@@ -216,11 +253,15 @@ open, read, or write any real hardware. Coverage includes:
   ending normalization, and local echo;
 - partial reads and split multibyte decoding across chunks;
 - successful reads and writes with backpressure;
+- 4 KiB per-chunk and 64 KiB pending-write bounds, including whole-chunk
+  rejection without silent truncation or partial enqueue;
 - read failure, write failure, and cancellation while cleanup is active;
 - adapter removal while a read or write is active;
 - multiline-paste hold, warning, send/cancel behavior, and buffer clearing after
   send, cancellation, failure, disconnect, route change, and teardown;
 - idempotent transport cleanup and independently owned shared-session cleanup;
+- the five-second cleanup deadline, late callback rejection, and fresh
+  session/transport/xterm recreation after normal close, failure, and timeout;
 - listener, observer, xterm, buffer, reader, writer, lock, and port disposal;
 - a standalone USB Console entry before device registration;
 - SSH terminal regression behavior through its separate WebSocket transport;
@@ -236,8 +277,10 @@ unexpected persistence or backend call fails the suite.
 Before handoff, run the relevant frontend and backend format, lint, type, test,
 and production-build checks. Validate normal and development Compose files,
 build the affected images, confirm the Nginx Permissions Policy response header,
-and run local application health checks. These checks must not contact a network
-device.
+confirm the same `Permissions-Policy: serial=(self)` header from the frontend
+development server, and run local application health checks. Automated header
+checks cover both production and development serving paths. These checks must
+not contact a network device.
 
 Refactoring is limited to the terminal/session seam and readiness blockers
 found by these checks. Existing device drivers, structured SSH reads, discovery,
@@ -280,17 +323,24 @@ device identifiers, or any other serial-session content.
 ## Acceptance criteria
 
 - A supported same-machine browser can open USB Direct Mode before registration
-  after explicit device-change acknowledgement and browser permission.
+  after explicit operator-authorization/device-change acknowledgement and
+  browser permission, with acknowledgement required again for every fresh
+  session.
 - Serial settings, input policy, output decoding, local echo, and multiline
-  paste confirmation behave as specified.
+  paste confirmation behave as specified, including normalized multiline
+  detection and bounded whole-chunk write queuing.
 - All normal and exceptional exits use the idempotent ownership-correct cleanup
   path and leave no active port, stream lock, listener, observer, xterm instance,
-  or pending paste buffer.
+  or pending paste buffer within the cleanup deadline, or permanently dispose
+  the old session and report a sanitized cleanup-timeout state.
+- Every reopen uses newly constructed session, transport, decoder, stream,
+  listener, buffer, and xterm objects.
 - USB Direct Mode creates no persisted state and no backend REST or WebSocket
   traffic.
 - Existing SSH Direct Mode and structured read-only workflows pass regression
   verification unchanged.
 - Secure-context and Permissions Policy requirements are enforced and
-  documented.
+  documented, with the required header verified in both production and
+  development serving paths.
 - Automated verification is recorded separately from hardware validation, and
   the feature remains lab unverified without explicit authorized evidence.

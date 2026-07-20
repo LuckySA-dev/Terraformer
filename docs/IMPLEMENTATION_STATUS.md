@@ -128,7 +128,3 @@ in `network-automation-final-plan.md`.
   remains intentionally unstarted until that evidence exists.
 - Direct Mode is an explicit operator escape hatch and can change a device. It
   has no parser, approval plan, rollback guarantee, or recording by design.
-- The final typed WebSocket error guard for a missing terminal device passed
-  lint, types, and the full backend suite after runtime deployment. A final API
-  image rebuild was blocked by the Codex execution quota, so the currently
-  healthy local API image is one source-only guard behind the worktree.

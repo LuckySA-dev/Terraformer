@@ -45,6 +45,68 @@ describe('UsbSerialTransport', () => {
     ]);
   });
 
+  it('rejects a concurrent open without requesting a second port or replacing the listener', async () => {
+    const fixture = serialFixture();
+    let resolvePort!: (port: typeof fixture.port) => void;
+    const pendingPort = new Promise<typeof fixture.port>((resolve) => { resolvePort = resolve; });
+    fixture.requestPort.mockImplementation(() => pendingPort);
+    const firstListener = vi.fn();
+    const secondListener = vi.fn();
+    const transport = new UsbSerialTransport(fixture.api, defaultSerialSettings);
+
+    const first = transport.open(firstListener);
+    const second = transport.open(secondListener);
+
+    await expect(second).rejects.toMatchObject({ code: 'port_unavailable' });
+    expect(fixture.requestPort).toHaveBeenCalledOnce();
+    resolvePort(fixture.port);
+    await first;
+
+    expect(firstListener).toHaveBeenCalledWith({ type: 'status', status: 'connected' });
+    expect(secondListener).not.toHaveBeenCalled();
+  });
+
+  it('closes a port that arrives after close during permission request without connecting', async () => {
+    const fixture = serialFixture();
+    let resolvePort!: (port: typeof fixture.port) => void;
+    const pendingPort = new Promise<typeof fixture.port>((resolve) => { resolvePort = resolve; });
+    fixture.requestPort.mockImplementation(() => pendingPort);
+    const events: TerminalTransportEvent[] = [];
+    const transport = new UsbSerialTransport(fixture.api, defaultSerialSettings);
+
+    const opening = transport.open((event) => events.push(event));
+    await transport.close(Date.now() + 5_000);
+    resolvePort(fixture.port);
+
+    await expect(opening).rejects.toMatchObject({ code: 'port_unavailable' });
+    expect(fixture.port.open).not.toHaveBeenCalled();
+    expect(fixture.port.close).toHaveBeenCalledOnce();
+    expect(fixture.port.readable.locked).toBe(false);
+    expect(fixture.port.writable.locked).toBe(false);
+    expect(events).toEqual([{ type: 'status', status: 'closed' }]);
+  });
+
+  it('does not reactivate or close twice when close races with port opening', async () => {
+    const fixture = serialFixture();
+    let resolveOpen!: () => void;
+    const pendingOpen = new Promise<void>((resolve) => { resolveOpen = resolve; });
+    fixture.port.open.mockImplementation(() => pendingOpen);
+    const events: TerminalTransportEvent[] = [];
+    const transport = new UsbSerialTransport(fixture.api, defaultSerialSettings);
+
+    const opening = transport.open((event) => events.push(event));
+    await nextMicrotask();
+    const closing = transport.close(Date.now() + 5_000);
+    resolveOpen();
+
+    await closing;
+    await expect(opening).rejects.toMatchObject({ code: 'port_unavailable' });
+    expect(fixture.port.close).toHaveBeenCalledOnce();
+    expect(fixture.port.readable.locked).toBe(false);
+    expect(fixture.port.writable.locked).toBe(false);
+    expect(events).toEqual([{ type: 'status', status: 'closed' }]);
+  });
+
   it('rejects an overflowing write queue before the extra chunk reaches the port', async () => {
     const fixture = serialFixture();
     const transport = new UsbSerialTransport(fixture.api, defaultSerialSettings);

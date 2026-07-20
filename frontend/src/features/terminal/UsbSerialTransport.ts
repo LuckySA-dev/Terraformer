@@ -79,7 +79,9 @@ export class UsbSerialTransport implements TerminalTransport {
   private readLoop: Promise<void> | null = null;
   private writeTail: Promise<void> = Promise.resolve();
   private pendingWriteBytes = 0;
+  private openPromise: Promise<void> | null = null;
   private closePromise: Promise<void> | null = null;
+  private readonly releasedPorts = new WeakSet<SerialPortLike>();
   private closing = false;
   private disposed = false;
   private readonly onDisconnect = () => {
@@ -92,22 +94,42 @@ export class UsbSerialTransport implements TerminalTransport {
     private readonly settings: UsbSerialSettings,
   ) {}
 
-  async open(listener: TerminalTransportListener): Promise<void> {
-    this.listener = listener;
-    if (this.disposed || this.closing || this.port !== null) {
-      throw new TerminalTransportError('port_unavailable', 'Port unavailable');
+  open(listener: TerminalTransportListener): Promise<void> {
+    if (this.disposed || this.closing || this.port !== null || this.openPromise !== null) {
+      return Promise.reject(new TerminalTransportError('port_unavailable', 'Port unavailable'));
     }
+    this.listener = listener;
+    const opening = this.openPort(listener);
+    this.openPromise = opening;
+    void opening.finally(() => {
+      if (this.openPromise === opening) this.openPromise = null;
+    }).catch(() => undefined);
+    return opening;
+  }
+
+  private async openPort(listener: TerminalTransportListener): Promise<void> {
     const requestedPort = this.api.requestPort();
     try {
       const port = await requestedPort;
+      if (this.openIsStale(listener)) {
+        this.closeLatePort(port);
+        throw new TerminalTransportError('port_unavailable', 'Port unavailable');
+      }
       this.port = port;
       port.addEventListener('disconnect', this.onDisconnect);
       await port.open(this.settings);
+      if (this.openIsStale(listener, port)) {
+        this.closeLatePort(port);
+        throw new TerminalTransportError('port_unavailable', 'Port unavailable');
+      }
       const reader = port.readable?.getReader() ?? null;
       const writer = port.writable?.getWriter() ?? null;
-      if (reader === null || writer === null) {
-        reader?.releaseLock();
-        writer?.releaseLock();
+      if (reader === null) {
+        if (writer !== null) writer.releaseLock();
+        throw new TerminalTransportError('port_unavailable', 'Port unavailable');
+      }
+      if (writer === null) {
+        reader.releaseLock();
         throw new TerminalTransportError('port_unavailable', 'Port unavailable');
       }
       this.reader = reader;
@@ -116,8 +138,12 @@ export class UsbSerialTransport implements TerminalTransport {
       listener({ type: 'status', status: 'connected' });
       this.readLoop = this.read();
     } catch (error) {
+      if (this.closing || this.disposed || this.listener !== listener) {
+        throw new TerminalTransportError('port_unavailable', 'Port unavailable');
+      }
       if (error instanceof DOMException && error.name === 'NotFoundError') {
         listener({ type: 'status', status: 'closed' });
+        if (this.listener === listener) this.listener = null;
         return;
       }
       const mapped = this.openFailure(error);
@@ -213,6 +239,22 @@ export class UsbSerialTransport implements TerminalTransport {
     return new TerminalTransportError('port_unavailable', 'Port unavailable');
   }
 
+  private openIsStale(listener: TerminalTransportListener, port?: SerialPortLike): boolean {
+    return this.closing || this.disposed || this.listener !== listener
+      || (port !== undefined && this.port !== port);
+  }
+
+  private closeLatePort(port: SerialPortLike): void {
+    if (this.releasedPorts.has(port)) return;
+    this.releasedPorts.add(port);
+    port.removeEventListener('disconnect', this.onDisconnect);
+    try {
+      void port.close().catch(() => undefined);
+    } catch {
+      // A port returned after teardown is never activated.
+    }
+  }
+
   private async cleanup(deadlineAt: number): Promise<void> {
     const port = this.port;
     const reader = this.reader;
@@ -228,7 +270,10 @@ export class UsbSerialTransport implements TerminalTransport {
     this.readLoop = null;
     this.pendingWriteBytes = 0;
     this.listener = null;
-    if (port !== null) port.removeEventListener('disconnect', this.onDisconnect);
+    if (port !== null) {
+      this.releasedPorts.add(port);
+      port.removeEventListener('disconnect', this.onDisconnect);
+    }
 
     if (reader !== null) {
       try {

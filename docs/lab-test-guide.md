@@ -13,6 +13,35 @@ No real-lab result is recorded in this repository, so every capability remains
 lab-unverified until an operator runs the harness against an approved device and
 records only sanitized evidence.
 
+Manual USB Console is also **hardware validation pending**. Automated tests use
+fake streams only; they do not enumerate or open a serial adapter.
+
+## Manual USB Console hardware-validation gate
+
+Do not start any real-adapter session without explicit approval for the exact
+hardware and test window. The approver must understand that USB Direct Mode is
+not read-only and that typed or pasted commands can modify, restart, or erase
+the attached device. Use same-machine Chrome or Edge over HTTPS or localhost,
+verify `Permissions-Policy: serial=(self)`, establish console/OOB recovery, and
+stop on any unexpected prompt or device behavior.
+
+An authorized validation record may contain only these metadata fields:
+
+| Date | Approver | Browser/version | Adapter type | Device category | Application version/commit | Non-command validation-step descriptions | Pass/fail outcome |
+|---|---|---|---|---|---|---|---|
+
+No authorized hardware result has been recorded. Do not add a placeholder that
+could be mistaken for a completed test.
+
+The record must never contain terminal output, commands, credentials,
+configuration, addresses, hostnames, serial numbers, adapter or device
+identifiers, raw exceptions, screenshots, recordings, or any serial-session
+content. Non-command validation-step descriptions may describe only the UI or
+lifecycle behavior checked; they must not reproduce serial interaction. Do not
+attach or link prohibited content as evidence. Until an explicitly authorized
+session is completed and this metadata-only record is added, retain the status
+**Implemented, lab unverified** / **hardware validation pending**.
+
 ## Required harness contract
 
 The `lab` test suite requires all of the following before it opens a socket:

@@ -5,9 +5,10 @@ capabilities and evidence, not on a vendor name or optimistic fallback.
 
 ## Current enforcement boundary
 
-Phases 0–2 are read-only. Every write capability in the capability matrix is
-**Not Implemented**, and every driver is treated as Safety Level D for writes.
-An absent write route is intentional defense in depth, not a missing UI shortcut.
+Structured automation in phases 0–2 is read-only. Every structured write
+capability in the capability matrix is **Not Implemented**, and every driver is
+treated as Safety Level D for writes. An absent structured write route is
+intentional defense in depth, not a missing UI shortcut.
 
 Read operations still have side effects on fragile devices. The operator must
 provide the exact target or bounded IPv4 range, authorize the operation, and use
@@ -27,6 +28,26 @@ input-idle, per-message input, and total-output limits bound resources. Commands
 and output are never logged or stored. Direct Mode can change a device and has
 no command parser or rollback guarantee; the warning is an operator boundary,
 not a claim that the terminal is read-only.
+
+Manual USB Console is also a Direct Mode path. On same-machine Chrome or Edge,
+the browser connects directly to an operator-selected USB-to-console adapter;
+serial bytes bypass the backend, audit pipeline, credentials, device locks,
+snapshots, validation, and rollback controls. Typed or pasted commands can
+modify, restart, or erase hardware. Before each fresh session, the operator must
+acknowledge that they are authorized and understand this risk, then separately
+approve the browser permission chooser. This acknowledgement is not persisted
+and is not proof of authorization.
+
+USB Direct Mode requires a secure HTTPS or localhost context and
+`Permissions-Policy: serial=(self)`. It stores and reports no selected port,
+adapter identifier, settings, command, terminal output, raw exception, or
+session history; it creates no telemetry or backend traffic. Multiline input is
+held in memory until separately confirmed. Input is bounded to 4 KiB per UTF-8
+chunk and 64 KiB pending, but those resource limits do not make commands safe.
+User disconnect, navigation, I/O failure, or adapter removal uses ownership-
+correct cleanup with a five-second deadline. A later open always creates a fresh
+session and reselects an adapter; there is no automatic reconnect, generated
+command, vendor template, bootstrap, recording, or recovery path.
 
 ## Safety levels
 

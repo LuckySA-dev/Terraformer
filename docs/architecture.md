@@ -26,6 +26,35 @@ worker (same backend image as api)
   -> explicitly approved management-network device
 ```
 
+Manual USB Console uses a separate, browser-local path:
+
+```text
+Chrome/Edge on the local host
+  -> Web Serial permission chooser
+  -> operator-selected USB-to-console adapter
+  -> attached device console
+```
+
+This USB Direct Mode path bypasses Nginx proxying after page delivery, the API,
+worker, databases, SSH transport, and structured driver safety pipeline. Typed
+or pasted commands can modify, restart, or erase the attached hardware. It is
+therefore an operator-controlled direct-access path, not a structured write
+capability or a read-only feature.
+
+The page must run on the same machine as the adapter in Chrome or Edge, in a
+secure context (HTTPS or localhost), with `Permissions-Policy: serial=(self)`.
+The browser permission chooser is the only adapter-selection path. Serial
+settings, input, output, pending paste, errors, and terminal history remain in
+memory and create no backend REST/WebSocket traffic, telemetry, or persistence.
+
+The shared terminal session owns xterm, UI listeners, paste confirmation, and
+top-level shutdown. The USB transport separately owns the port, reader, writer,
+stream locks, decoder, raw buffers, and adapter-disconnect listener. Writes are
+bounded to 4 KiB per UTF-8 chunk and 64 KiB pending. Shutdown is idempotent and
+has a five-second deadline; every reopen constructs a fresh session and
+transport and requires adapter selection again. There is no automatic reconnect,
+generated command, bootstrap flow, vendor template, or automatic command path.
+
 There is no load balancer, PostgreSQL replica, Redis Sentinel, time-series
 database, AI gateway container, or local model runtime in this phase.
 

@@ -1,6 +1,6 @@
 # Capability matrix
 
-Last updated: 2026-07-12
+Last updated: 2026-07-20
 Scope: phases 0–2
 
 ## Status definitions
@@ -51,6 +51,25 @@ bounded vendor command; hostnames, CIDR, special-use targets, and command text
 fail validation. The Web terminal is deliberately separate from drivers: it is
 authenticated, same-origin, warning-gated Direct Mode with three-session,
 idle, input, and output limits. Terminal commands/output are never audit payloads.
+
+## Direct access paths
+
+Direct access is recorded separately because it is operator-controlled manual
+access, not a structured driver read or write capability.
+
+| Access path | Status | Vendor scope | Safety and evidence boundary |
+|---|---|---|---|
+| Manual USB Console / USB Direct Mode | **Implemented, lab unverified** | Vendor-neutral manual serial access | Can write, modify, restart, or erase hardware; bypasses backend and structured safety controls. Automated fake-stream, privacy, lifecycle, serving-policy, type, lint, and build checks passed on 2026-07-20. Hardware validation pending; no vendor/device support claim. |
+
+### Manual USB Console hardware evidence
+
+No authorized hardware validation has been recorded. This table must remain
+empty until an explicitly approved real-adapter session is completed. Entries
+may contain only the metadata allowed by `lab-test-guide.md`; never serial-
+session content.
+
+| Date | Approver | Browser/version | Adapter type | Device category | Application version/commit | Non-command validation-step descriptions | Pass/fail outcome |
+|---|---|---|---|---|---|---|---|
 
 ## Write capabilities
 

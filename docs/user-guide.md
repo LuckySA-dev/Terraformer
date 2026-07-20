@@ -55,6 +55,40 @@ The snapshot is observed device state. It must be immutable and must not be
 presented as desired configuration. Abort on a platform mismatch, unexpected
 privilege prompt, or parser warning.
 
+## 3a. Prepare a device with Manual USB Console
+
+Manual USB Console (USB Direct Mode) is available before registration for
+operator-controlled console access. It is not read-only: anything typed or
+pasted can modify, restart, or erase the attached hardware. It bypasses
+Terraformer's structured validation, snapshots, locks, audit, and rollback.
+
+Use Chrome or Edge on the same machine as the USB adapter. Open Terraformer
+through HTTPS or localhost; the document must receive
+`Permissions-Policy: serial=(self)`. Then:
+
+1. Open **Inventory** and select **Open USB Console**.
+2. Select the baud rate and line ending (`CR`, `LF`, or `CRLF`), and optionally
+   enable local echo. Defaults are 9600 baud, 8 data bits, 1 stop bit, no parity,
+   no flow control, `CR`, and local echo off.
+3. Read the warning and acknowledge for this session that you are authorized to
+   access the attached hardware and understand that commands can change it.
+4. Select **Open USB Direct Mode**, then choose the intended adapter in the
+   browser permission chooser. Verify it physically; Terraformer does not
+   discover, identify, or remember adapters.
+5. Type commands deliberately. A paste containing more than one logical line is
+   held in memory and shows only its line count; confirm **Send** or cancel it.
+6. Select **Disconnect** when finished. Navigation, adapter removal, or an I/O
+   failure also starts cleanup. A later open is a fresh session and requires a
+   new acknowledgement and adapter selection, with settings restored to the
+   defaults.
+7. After you have prepared the device outside Terraformer's automation,
+   register it and test SSH separately using the normal inventory flow.
+
+No adapter choice, settings, commands, output, raw errors, or terminal history is
+persisted or sent to the backend, analytics, telemetry, or error reporting.
+There is no automatic reconnect, command generation, starter configuration,
+bootstrap workflow, vendor template, recording, or automatic command execution.
+
 ## 4. Discover candidates safely
 
 Select **Discover**, enter one exact IPv4 network containing no more than 64

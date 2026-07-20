@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-07-12
+Last updated: 2026-07-20
 Current delivery target: phases 0–2
 
 This is the status ledger, not a roadmap. Product intent and future scope remain
@@ -62,6 +62,7 @@ in `network-automation-final-plan.md`.
 | Read-only topology canvas and links | Implemented; lab unverified | Cytoscape projection of registered devices and saved CDP/LLDP records; browser-local node positions; manual/30/60-second view refresh; interface-pair labels; browser-local manual links always labeled `UNVERIFIED` |
 | Allowlisted Cisco diagnostics | Implemented; lab unverified | Typed routing/ARP/MAC plus bounded exact-IPv4 ping/traceroute actions; fixed driver mappings; RQ execution; sanitized 64 KiB cap and local download; injection/timeout/unsupported tests |
 | Web SSH terminal | Implemented; lab unverified | AsyncSSH PTY over authenticated same-origin WebSocket; explicit Direct Mode confirmation before credential decrypt/connect; three-session server/UI cap; 15-minute input idle timeout; 2 MiB output cap; no command/output recording |
+| Manual USB Console / USB Direct Mode | Implemented; lab unverified | **Automated verification passed; hardware validation pending.** Same-machine Chrome/Edge Web Serial path with secure-context and `serial=(self)` checks, per-session authorization warning, settings, multiline confirmation, bounded writes, five-second cleanup, fresh-session reopen, and fake-stream privacy/lifecycle coverage; no real adapter was contacted |
 
 ## Verification record
 
@@ -88,6 +89,10 @@ in `network-automation-final-plan.md`.
 | 2026-07-12 | Phase 2 observed topology slice | Frontend type/lint/tests; Vite production build; `npm audit`; Compose config; isolated web image build/recreate/health | 22 frontend tests passed; 0 vulnerabilities; Cytoscape lazy chunk 443 kB; web healthy on `127.0.0.1:8080`; no device network operation |
 | 2026-07-12 | Phase 2 allowlisted diagnostics slice | Targeted Ruff format; Ruff; Pyright; backend/frontend tests; Vite build; Compose config | Backend 54 passed/1 lab skipped; frontend 24 passed; production build passed; normal/dev Compose configs valid; Docker image build blocked by Codex approval usage limit; no real device command run |
 | 2026-07-12 | Phase 2 completion slice | Targeted Ruff format; Ruff; Pyright; backend/frontend tests; Vite/Docker builds; normal/dev Compose config; Alembic current/heads/check; runtime health | Backend 65 passed/1 opt-in lab skipped; frontend 29 passed; API/web images built; all five services healthy; DB at `20260712_0002` with no drift; no real-device operation run |
+| 2026-07-20 | Manual USB Console frontend verification | `npm.cmd run verify`; `npm.cmd audit`; focused `npm.cmd test -- --run tests/serving-policy.test.ts` | TypeScript and ESLint passed; 11 test files / 81 tests passed; Vite production build passed (1,934 modules, existing large-chunk warning); serving-policy test 2 passed; audit found 0 vulnerabilities |
+| 2026-07-20 | Routine backend regression | `.venv\Scripts\python.exe -m ruff check --no-cache .`; `.venv\Scripts\pyright.exe`; `.venv\Scripts\python.exe -m pytest` | Ruff passed; Pyright 0 errors, 0 warnings; 65 passed and 1 explicitly opt-in real-lab test skipped; no device opt-in supplied |
+| 2026-07-20 | Declarative deployment configuration | `docker compose -f deploy/compose.yml config --quiet`; `docker compose -f deploy/compose.yml -f deploy/compose.dev.yml config --quiet` | Both configurations valid; Docker emitted only inaccessible user-config warnings; no secrets initialized and no services started |
+| 2026-07-20 | Serving policy | Static Nginx/Vite regression plus hidden loopback Vite `HEAD /` | Development response contained `camera=(), microphone=(), geolocation=(), serial=(self)`; launcher and listener were explicitly stopped and confirmed absent; production policy passed static verification only |
 
 ## Security decisions verified
 
@@ -109,7 +114,10 @@ in `network-automation-final-plan.md`.
 - No real-device lab result is recorded. Phase 1 exit remains blocked; the user
   explicitly directed fixture-only Phase 2 work, so Cisco reads remain **lab
   unverified**.
-- No write capability is implemented.
+- Manual USB Console automated verification passed, but hardware validation is
+  pending. It remains lab-unverified, and no device/vendor support is inferred
+  from browser, fake-stream, or serving-policy evidence.
+- No structured write capability is implemented.
 - Backup/restore acceptance is not implemented in phases 0–2.
 - Broader LAN exposure has not been hardened or tested; normal deployment stays
   loopback-only.

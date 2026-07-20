@@ -46,6 +46,7 @@ playwright-report/
 test-results/
 
 # Runtime artifacts and local data
+.worktrees/
 *.log
 logs/
 data/

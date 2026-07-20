@@ -1,0 +1,320 @@
+import { FitAddon } from '@xterm/addon-fit';
+import { Terminal } from '@xterm/xterm';
+import '@xterm/xterm/css/xterm.css';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { InlineNotice } from '../../components/ui/AppState';
+import { Button } from '../../components/ui/Button';
+import { prepareTerminalInput, type TerminalInputPolicy } from './inputPolicy';
+import {
+  TERMINAL_CLEANUP_TIMEOUT_MS,
+  TerminalTransportError,
+  type TerminalTransport,
+  type TerminalTransportEvent,
+} from './transport';
+
+interface TerminalSessionProps {
+  createTransport: () => TerminalTransport;
+  warningTitle: string;
+  warningBody: string;
+  acknowledgementLabel: string;
+  requireAuthorization?: boolean;
+  inputPolicy: TerminalInputPolicy;
+  ariaLabel: string;
+  note: string;
+  openDisabled?: boolean;
+  configuration?: ReactNode;
+  onReset?: () => void;
+}
+
+interface SessionError {
+  code: string;
+  message: string;
+}
+
+interface SessionToken {
+  disposed: boolean;
+}
+
+async function withCleanupTimeout(cleanup: Promise<void>, milliseconds: number): Promise<void> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      cleanup,
+      new Promise<void>((_resolve, reject) => {
+        timeout = setTimeout(
+          () => reject(new TerminalTransportError('cleanup_timed_out', 'Cleanup timed out')),
+          milliseconds,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
+}
+
+function sanitizedError(error: unknown, fallback: SessionError): SessionError {
+  return error instanceof TerminalTransportError
+    ? { code: error.code, message: error.message }
+    : fallback;
+}
+
+export function TerminalSession({
+  createTransport,
+  warningTitle,
+  warningBody,
+  acknowledgementLabel,
+  requireAuthorization = false,
+  inputPolicy,
+  ariaLabel,
+  note,
+  openDisabled = false,
+  configuration,
+  onReset,
+}: TerminalSessionProps) {
+  const container = useRef<HTMLDivElement>(null);
+  const transportRef = useRef<TerminalTransport | null>(null);
+  const terminal = useRef<Terminal | null>(null);
+  const fitAddon = useRef<FitAddon | null>(null);
+  const inputSubscription = useRef<{ dispose(): void } | null>(null);
+  const resizeObserver = useRef<ResizeObserver | null>(null);
+  const resizeHandler = useRef<(() => void) | null>(null);
+  const pageHideHandler = useRef<(() => void) | null>(null);
+  const sessionToken = useRef<SessionToken | null>(null);
+  const shutdownPromise = useRef<Promise<void> | null>(null);
+  const shutdownRef = useRef<(error?: SessionError, disposed?: boolean) => Promise<void>>(
+    () => Promise.resolve(),
+  );
+  const acceptingInput = useRef(false);
+  const [accepted, setAccepted] = useState(false);
+  const [authorized, setAuthorized] = useState(false);
+  const [status, setStatus] = useState<'idle' | 'connecting' | 'connected'>('idle');
+  const [error, setError] = useState<SessionError>();
+  const [pendingPaste, setPendingPaste] = useState<{ data: string; lineCount: number }>();
+
+  const clearAllSessionRefs = () => {
+    transportRef.current = null;
+    terminal.current = null;
+    fitAddon.current = null;
+    inputSubscription.current = null;
+    resizeObserver.current = null;
+    resizeHandler.current = null;
+    pageHideHandler.current = null;
+    sessionToken.current = null;
+  };
+
+  const shutdown = async (shutdownError?: SessionError, disposed = false) => {
+    if (shutdownPromise.current !== null) return shutdownPromise.current;
+    shutdownPromise.current = (async () => {
+      acceptingInput.current = false;
+      setPendingPaste(undefined);
+      const deadlineAt = Date.now() + TERMINAL_CLEANUP_TIMEOUT_MS;
+      try {
+        await withCleanupTimeout(
+          transportRef.current?.close(deadlineAt) ?? Promise.resolve(),
+          TERMINAL_CLEANUP_TIMEOUT_MS,
+        );
+      } catch {
+        shutdownError ??= { code: 'cleanup_timed_out', message: 'Cleanup timed out' };
+      } finally {
+        inputSubscription.current?.dispose();
+        resizeObserver.current?.disconnect();
+        if (resizeHandler.current !== null) {
+          window.removeEventListener('resize', resizeHandler.current);
+        }
+        if (pageHideHandler.current !== null) {
+          window.removeEventListener('pagehide', pageHideHandler.current);
+        }
+        fitAddon.current?.dispose();
+        terminal.current?.dispose();
+        clearAllSessionRefs();
+        if (!disposed) {
+          setStatus('idle');
+          setError(shutdownError);
+          setAccepted(false);
+          setAuthorized(false);
+          onReset?.();
+        }
+      }
+    })();
+    return shutdownPromise.current;
+  };
+
+  useEffect(() => {
+    shutdownRef.current = shutdown;
+  });
+
+  useEffect(() => () => {
+    if (sessionToken.current !== null) sessionToken.current.disposed = true;
+    void shutdownRef.current(undefined, true);
+  }, []);
+
+  const failWrite = (writeError: unknown, token: SessionToken) => {
+    if (token.disposed) return;
+    token.disposed = true;
+    setPendingPaste(undefined);
+    void shutdown(
+      sanitizedError(writeError, { code: 'terminal_write_failed', message: 'Terminal write failed' }),
+    );
+  };
+
+  const send = (data: string, token: SessionToken) => {
+    const currentTransport = transportRef.current;
+    if (!acceptingInput.current || token.disposed || currentTransport === null) return;
+    void currentTransport.write(data).then(() => {
+      if (!token.disposed && inputPolicy.localEcho) terminal.current?.write(data);
+    }).catch((writeError: unknown) => failWrite(writeError, token));
+  };
+
+  const handleTransportEvent = (event: TerminalTransportEvent, token: SessionToken) => {
+    if (token.disposed) return;
+    if (event.type === 'output') {
+      terminal.current?.write(event.data);
+    } else if (event.type === 'status' && event.status === 'closed') {
+      token.disposed = true;
+      setPendingPaste(undefined);
+      void shutdown();
+    } else if (
+      event.type === 'status'
+      && (event.status === 'connecting' || event.status === 'connected')
+    ) {
+      setStatus(event.status);
+    } else if (event.type === 'error') {
+      token.disposed = true;
+      setPendingPaste(undefined);
+      void shutdown({ code: event.code, message: event.message });
+    }
+  };
+
+  const open = () => {
+    if (openDisabled || (requireAuthorization && !authorized) || container.current === null) return;
+    shutdownPromise.current = null;
+    setError(undefined);
+    setPendingPaste(undefined);
+    setAccepted(true);
+    setStatus('connecting');
+    const token = { disposed: false };
+    sessionToken.current = token;
+
+    try {
+      const transport = createTransport();
+      transportRef.current = transport;
+      const nextTerminal = new Terminal({
+        convertEol: true,
+        cursorBlink: true,
+        fontFamily: '"DM Mono", monospace',
+        fontSize: 12,
+        scrollback: 2_000,
+        theme: { background: '#10191b', foreground: '#b8cbc6' },
+      });
+      const nextFitAddon = new FitAddon();
+      terminal.current = nextTerminal;
+      fitAddon.current = nextFitAddon;
+      nextTerminal.loadAddon(nextFitAddon);
+      nextTerminal.open(container.current);
+      nextFitAddon.fit();
+      acceptingInput.current = true;
+
+      inputSubscription.current = nextTerminal.onData((input) => {
+        if (!acceptingInput.current || token.disposed) return;
+        const prepared = prepareTerminalInput(input, inputPolicy);
+        if (prepared.requiresConfirmation) {
+          setPendingPaste({ data: prepared.data, lineCount: prepared.lineCount });
+        } else {
+          send(prepared.data, token);
+        }
+      });
+      const resize = () => {
+        if (token.disposed) return;
+        nextFitAddon.fit();
+        transport.resize(nextTerminal.cols, nextTerminal.rows);
+      };
+      resizeHandler.current = resize;
+      resizeObserver.current = typeof ResizeObserver === 'undefined'
+        ? null
+        : new ResizeObserver(resize);
+      resizeObserver.current?.observe(container.current);
+      window.addEventListener('resize', resize);
+      const pageHide = () => {
+        token.disposed = true;
+        void shutdown(undefined, true);
+      };
+      pageHideHandler.current = pageHide;
+      window.addEventListener('pagehide', pageHide);
+
+      void transport.open((event) => handleTransportEvent(event, token)).catch((openError: unknown) => {
+        if (token.disposed) return;
+        token.disposed = true;
+        void shutdown(sanitizedError(openError, {
+          code: 'terminal_open_failed',
+          message: 'Unable to open the terminal session.',
+        }));
+      });
+    } catch (openError) {
+      token.disposed = true;
+      void shutdown(sanitizedError(openError, {
+        code: 'terminal_open_failed',
+        message: 'Unable to open the terminal session.',
+      }));
+    }
+  };
+
+  const disconnect = () => {
+    if (sessionToken.current !== null) sessionToken.current.disposed = true;
+    void shutdown();
+  };
+
+  const confirmPaste = () => {
+    const pending = pendingPaste;
+    const token = sessionToken.current;
+    setPendingPaste(undefined);
+    if (pending !== undefined && token !== null) send(pending.data, token);
+  };
+
+  return (
+    <div className="terminal-session">
+      {!accepted ? (
+        <div className="terminal-consent">
+          <InlineNotice tone="warning" title={warningTitle}>{warningBody}</InlineNotice>
+          {configuration}
+          {requireAuthorization ? (
+            <label>
+              <input
+                type="checkbox"
+                checked={authorized}
+                onChange={(event) => setAuthorized(event.target.checked)}
+              />
+              {acknowledgementLabel}
+            </label>
+          ) : null}
+          <Button
+            size="small"
+            disabled={openDisabled || (requireAuthorization && !authorized)}
+            onClick={open}
+          >
+            {requireAuthorization ? 'Open USB Direct Mode' : acknowledgementLabel}
+          </Button>
+        </div>
+      ) : null}
+      <div hidden={!accepted}>
+        <div className="terminal-session__status">
+          <span>DIRECT MODE</span>
+          <span>{status.toUpperCase()}</span>
+        </div>
+        <div ref={container} className="terminal-session__canvas" aria-label={ariaLabel} />
+        {pendingPaste === undefined ? null : (
+          <div>
+            <Button size="small" onClick={confirmPaste}>
+              Send {pendingPaste.lineCount} lines
+            </Button>
+            <Button size="small" variant="ghost" onClick={() => setPendingPaste(undefined)}>
+              Cancel
+            </Button>
+          </div>
+        )}
+        <Button size="small" variant="ghost" onClick={disconnect}>Disconnect</Button>
+      </div>
+      {error === undefined ? null : <div className="form-error" role="alert">{error.message}</div>}
+      <p className="terminal-note">{note}</p>
+    </div>
+  );
+}

@@ -3,7 +3,8 @@ from __future__ import annotations
 import socket
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
-from time import sleep
+from time import monotonic, sleep
+from typing import Literal
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -15,52 +16,84 @@ from app.schemas.devices import DeviceCreate
 from app.schemas.discovery import DiscoveryCandidate, DiscoveryRequest, DiscoveryResult
 from app.services.devices import DeviceService
 
-PortProbe = Callable[[str, int, float], bool]
+ProbeStatus = Literal["ssh", "open_tcp"]
+PortProbe = Callable[[str, int, float], ProbeStatus | None]
 
 
-def tcp_port_open(address: str, port: int, timeout: float) -> bool:
+def tcp_service_probe(address: str, port: int, timeout: float) -> ProbeStatus | None:
+    deadline = monotonic() + timeout
     try:
-        with socket.create_connection((address, port), timeout=timeout):
-            return True
+        connection = socket.create_connection((address, port), timeout=timeout)
     except OSError:
-        return False
+        return None
+    try:
+        with connection:
+            banner = bytearray()
+            try:
+                while len(banner) < 512:
+                    remaining = deadline - monotonic()
+                    if remaining <= 0:
+                        return "open_tcp"
+                    connection.settimeout(remaining)
+                    chunk = connection.recv(512 - len(banner))
+                    if not chunk:
+                        break
+                    banner.extend(chunk)
+                    if any(line.startswith(b"SSH-") for line in banner.splitlines()):
+                        return "ssh"
+            except TimeoutError:
+                return "open_tcp"
+    except OSError:
+        return "open_tcp"
+    return "open_tcp"
 
 
 def run_discovery(
     request: DiscoveryRequest,
     *,
     connection_limit: int,
-    probe: PortProbe = tcp_port_open,
+    probe: PortProbe = tcp_service_probe,
 ) -> dict[str, object]:
     addresses = [str(address) for address in request.network().hosts()]
     concurrency = min(request.concurrency, connection_limit)
-    futures: list[tuple[str, Future[bool]]] = []
+    futures: list[tuple[str, int, Future[ProbeStatus | None]]] = []
     with ThreadPoolExecutor(max_workers=concurrency) as executor:
         for address in addresses:
-            futures.append(
-                (
-                    address,
-                    executor.submit(
-                        probe,
+            for port in request.ports:
+                futures.append(
+                    (
                         address,
-                        request.port,
-                        request.connect_timeout_seconds,
-                    ),
+                        port,
+                        executor.submit(
+                            probe,
+                            address,
+                            port,
+                            request.connect_timeout_seconds,
+                        ),
+                    )
                 )
-            )
-            if request.probe_delay_ms:
-                sleep(request.probe_delay_ms / 1_000)
+                if request.probe_delay_ms:
+                    sleep(request.probe_delay_ms / 1_000)
+    results = [
+        (address, port, future.result()) for address, port, future in futures
+    ]
     candidates = [
-        DiscoveryCandidate(management_address=address, port=request.port)
-        for address, future in futures
-        if future.result()
+        DiscoveryCandidate(management_address=address, port=port)
+        for address, port, result in results
+        if result == "ssh"
+    ]
+    open_endpoints = [
+        DiscoveryCandidate(management_address=address, port=port)
+        for address, port, result in results
+        if result == "open_tcp"
     ]
     return DiscoveryResult(
         cidr=request.cidr,
-        port=request.port,
-        scanned_count=len(addresses),
+        ports=request.ports,
+        scanned_count=len(addresses) * len(request.ports),
         concurrency=concurrency,
         candidates=candidates,
+        open_endpoints=open_endpoints,
     ).model_dump(mode="json")
 
 

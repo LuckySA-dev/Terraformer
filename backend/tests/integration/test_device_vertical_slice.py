@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import traceback
 from uuid import UUID
 
+import pytest
 from fastapi.testclient import TestClient
+from scrapli.exceptions import ScrapliAuthenticationFailed
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.container import ApplicationContainer
+from app.core.errors import DriverAuthenticationError
 from app.jobs import tasks
 from app.models import ConfigSnapshot, Job
 
@@ -140,7 +144,7 @@ def test_connection_failure_is_typed_and_does_not_create_device(
     credential_profile: dict[str, object],
     transport_factory,
 ) -> None:
-    transport_factory.open_error = type("AuthenticationFailed", (Exception,), {})()
+    transport_factory.open_error = ScrapliAuthenticationFailed("Permission denied")
     response = authenticated_client.post(
         "/api/devices", json=_device_payload(str(credential_profile["id"]))
     )
@@ -148,6 +152,51 @@ def test_connection_failure_is_typed_and_does_not_create_device(
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "device_authentication_failed"
     assert authenticated_client.get("/api/devices").json() == []
+
+
+def test_background_driver_failure_does_not_log_raw_exception(
+    authenticated_client: TestClient,
+    credential_profile: dict[str, object],
+    container: ApplicationContainer,
+    session_factory: sessionmaker[Session],
+    transport_factory,
+    monkeypatch,
+) -> None:
+    records: list[dict[str, object]] = []
+
+    class RecordingLogger:
+        def exception(self, event: str, **kwargs: object) -> None:
+            records.append(
+                {"event": event, "traceback": traceback.format_exc(), **kwargs}
+            )
+
+        def error(self, event: str, **kwargs: object) -> None:
+            records.append({"event": event, **kwargs})
+
+    created = authenticated_client.post(
+        "/api/devices",
+        json=_device_payload(str(credential_profile["id"])),
+    )
+    job = authenticated_client.post(f"/api/devices/{created.json()['id']}/refresh")
+    transport_factory.command_error = ScrapliAuthenticationFailed(
+        "Permission denied raw-worker-marker"
+    )
+    monkeypatch.setattr(tasks, "get_default_container", lambda: container)
+    monkeypatch.setattr(tasks, "logger", RecordingLogger())
+
+    with pytest.raises(DriverAuthenticationError) as captured:
+        tasks.execute_job(job.json()["id"])
+
+    assert "raw-worker-marker" not in repr(records)
+    rq_exc_info = "".join(
+        traceback.format_exception(captured.type, captured.value, captured.tb)
+    )
+    assert "raw-worker-marker" not in rq_exc_info
+    with session_factory() as session:
+        stored = session.get(Job, UUID(job.json()["id"]))
+        assert stored is not None
+        assert stored.error_code == "device_authentication_failed"
+        assert stored.error_message == "The device rejected the credential profile"
 
 
 def test_queue_failure_marks_job_failed_and_returns_503(

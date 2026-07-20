@@ -1,20 +1,33 @@
 from __future__ import annotations
 
 from ipaddress import IPv4Network, ip_network
+from typing import Annotated, cast
 
 from pydantic import Field, field_validator
 
 from app.schemas.common import APIModel
 
 _MAX_DISCOVERY_ADDRESSES = 64
+Port = Annotated[int, Field(ge=1, le=65_535)]
 
 
 class DiscoveryRequest(APIModel):
     cidr: str
-    port: int = Field(default=22, ge=1, le=65_535)
+    ports: list[Port] = Field(default_factory=lambda: [22], min_length=1, max_length=4)
     concurrency: int = Field(default=4, ge=1, le=10)
     connect_timeout_seconds: float = Field(default=0.5, gt=0, le=5)
     probe_delay_ms: int = Field(default=50, ge=10, le=1_000)
+
+    @field_validator("ports", mode="before")
+    @classmethod
+    def normalize_ports(cls, value: object) -> object:
+        if not isinstance(value, list):
+            return value
+        normalized: list[object] = []
+        for port in cast(list[object], value):
+            if port not in normalized:
+                normalized.append(port)
+        return normalized
 
     @field_validator("cidr")
     @classmethod
@@ -51,7 +64,8 @@ class DiscoveryCandidate(APIModel):
 
 class DiscoveryResult(APIModel):
     cidr: str
-    port: int
+    ports: list[int]
     scanned_count: int
     concurrency: int
     candidates: list[DiscoveryCandidate]
+    open_endpoints: list[DiscoveryCandidate]

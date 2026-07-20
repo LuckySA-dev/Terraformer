@@ -44,31 +44,51 @@ describe('DiscoveryDialog safety flow', () => {
       state: 'succeeded',
       result: {
         cidr: '192.0.2.0/30',
-        port: 22,
-        scanned_count: 2,
+        ports: [22, 23],
+        scanned_count: 4,
         concurrency: 2,
         candidates: [{ management_address: '192.0.2.1', port: 22 }],
+        open_endpoints: [{ management_address: '192.0.2.1', port: 23 }],
       },
     });
     render(<DiscoveryDialog onApprove={onApprove} />, { wrapper: TestProviders });
 
     await user.type(screen.getByRole('textbox', { name: 'IPv4 network' }), '192.0.2.0/30');
+    const portsInput = screen.getByRole('textbox', { name: 'TCP ports' });
+    await user.clear(portsInput);
+    await user.type(portsInput, '22, 23');
     await user.click(screen.getByRole('button', { name: 'Start discovery' }));
 
     expect(api.startDiscovery).toHaveBeenCalledWith({
       cidr: '192.0.2.0/30',
-      port: 22,
+      ports: [22, 23],
       concurrency: 4,
       connect_timeout_seconds: 0.5,
       probe_delay_ms: 50,
     });
     expect(await screen.findByText('192.0.2.1:22')).toBeVisible();
+    expect(screen.getByText(/192\.0\.2\.1:23/)).toBeVisible();
+    expect(screen.getAllByRole('button', { name: /review and approve/i })).toHaveLength(1);
     expect(screen.getByText(/no devices added/i)).toBeVisible();
     await user.click(screen.getByRole('button', { name: /review and approve/i }));
     expect(onApprove).toHaveBeenCalledWith(queuedJob.id, {
       management_address: '192.0.2.1',
       port: 22,
     });
+  });
+
+  it('rejects more than four ports before starting discovery', async () => {
+    const user = userEvent.setup();
+    render(<DiscoveryDialog onApprove={vi.fn()} />, { wrapper: TestProviders });
+
+    await user.type(screen.getByRole('textbox', { name: 'IPv4 network' }), '192.0.2.0/30');
+    const portsInput = screen.getByRole('textbox', { name: 'TCP ports' });
+    await user.clear(portsInput);
+    await user.type(portsInput, '22,23,2222,2200,2022');
+    await user.click(screen.getByRole('button', { name: 'Start discovery' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('1 to 4');
+    expect(api.startDiscovery).not.toHaveBeenCalled();
   });
 
   it('shows a start failure without inventing candidates', async () => {

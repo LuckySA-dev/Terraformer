@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-07-20
+Last updated: 2026-07-21
 Current delivery target: phases 0–2
 
 This is the status ledger, not a roadmap. Product intent and future scope remain
@@ -19,7 +19,7 @@ in `network-automation-final-plan.md`.
 |---|---|---|---|
 | 0 — Repository and safety foundation | Implemented | Local Compose stack, file-secret bootstrap, PostgreSQL/Redis/RQ, migrations, health, authentication, encrypted credentials, sanitized logging, tests and operator docs | Passed automated and local-runtime acceptance |
 | 1 — First real device | Implemented; exit blocked — lab unverified | Exact-target manual add, capability-gated Cisco IOS/IOS-XE structured read-only connection/facts/interfaces/running-config snapshots, generic authenticated connection test, jobs/events and operator UI | Automated acceptance passed; phase exit requires an authorized real Cisco structured read-only run, which is not recorded |
-| 2 — Topology and terminal | Implemented; exit blocked — lab unverified | Bounded discovery/approval; CDP/LLDP topology with saved layouts and unverified manual links; allowlisted show/ping/traceroute diagnostics; guarded Web PTY Direct Mode | Automated and local-runtime acceptance passed; phase exit still requires an authorized lab topology plus terminal/diagnostic evidence |
+| 2 — Topology and terminal | Implemented; exit blocked — lab unverified | Bounded multi-port SSH-aware discovery/approval; CDP/LLDP topology with saved layouts and unverified manual links; allowlisted show/ping/traceroute diagnostics; guarded Web PTY Direct Mode | Automated acceptance passed; phase exit still requires an authorized lab topology plus terminal/diagnostic evidence |
 | 3 — Safe configuration MVP | Not Implemented | None; all structured writes remain Level D | Not started because Phase 2 lab exit is not yet proven |
 | 4–8 | Not Implemented | None | Future phases |
 
@@ -58,7 +58,7 @@ in `network-automation-final-plan.md`.
 | Cisco CDP/LLDP neighbor collection | Implemented; lab unverified | Sanitized parser fixtures, capability/error tests, refresh job integration |
 | Neighbor persistence and API | Implemented; lab unverified | Migration `20260712_0002`, replacement semantics, typed authenticated endpoint |
 | Observed-neighbor inspector | Implemented | React component test; records labeled `OBSERVED` |
-| Bounded IPv4 SSH discovery and approve flow | Implemented; lab unverified | Maximum 64 addresses, bounded concurrency/timeout/rate, one active scan at a time in API/UI, atomic approval audit, fake-probe tests, no credentials or automatic inventory creation |
+| Bounded multi-port IPv4 SSH discovery and approve flow | Implemented; lab unverified | Maximum 64 addresses, 4 unique operator-selected ports and 256 passive endpoint checks; only SSH-identified endpoints are approvable; open non-SSH endpoints are informational; bounded concurrency/timeout/rate, one active scan at a time, atomic approval audit, fake-probe tests, no credentials or automatic inventory creation |
 | Read-only topology canvas and links | Implemented; lab unverified | Cytoscape projection of registered devices and saved CDP/LLDP records; browser-local node positions; manual/30/60-second view refresh; interface-pair labels; browser-local manual links always labeled `UNVERIFIED` |
 | Allowlisted Cisco diagnostics | Implemented; lab unverified | Typed routing/ARP/MAC plus bounded exact-IPv4 ping/traceroute actions; fixed driver mappings; RQ execution; sanitized 64 KiB cap and local download; injection/timeout/unsupported tests |
 | Web SSH terminal | Implemented; lab unverified | AsyncSSH PTY over authenticated same-origin WebSocket; explicit Direct Mode confirmation before credential decrypt/connect; three-session server/UI cap; 15-minute input idle timeout; 2 MiB output cap; no command/output recording |
@@ -94,6 +94,7 @@ in `network-automation-final-plan.md`.
 | 2026-07-20 | Local secret and Compose runtime | `python deploy/init-secrets.py` twice; both Compose `config --quiet` commands; `docker compose -f deploy/compose.yml up --build --detach --wait`; API-container `alembic current`, `heads`, and `check`; `docker compose -f deploy/compose.yml down` without `-v` | Worktree secrets were created, then retained byte-for-byte without printing values. Isolated runtime images built; PostgreSQL, Redis, migrate, API, worker, and web completed/healthy as applicable; database was at `20260712_0002` head with no model drift; cleanup left zero containers and no listener while preserving volumes |
 | 2026-07-20 | Serving policy | Static Nginx/Vite regression plus hidden loopback Vite and production Compose `HEAD /` checks | Development and production responses contained `camera=(), microphone=(), geolocation=(), serial=(self)`; both local launchers/listeners and the Compose stack were explicitly stopped and confirmed absent |
 | 2026-07-20 | Manual USB Console UI polish | CSS-source regression; USB component regression; `npm.cmd run verify` | Scoped light-surface and privacy-note declarations passed source and component checks; 12 files / 91 tests, type check, lint, and production build passed; browser visual validation remains pending; no hardware contacted |
+| 2026-07-21 | SSH runtime hardening and multi-port SSH-aware discovery | Backend Ruff, Pyright and `python -m pytest`; frontend `npm.cmd run verify`; normal/dev Compose `config --quiet`; focused fake transport/banner, logging, RQ-formatting and approval regressions | **Automated verification passed; hardware validation pending.** Backend 85 passed/1 opt-in lab skipped; frontend 12 files/92 tests plus typecheck, lint and production build passed; both Compose configs valid. Docker image smoke-test remains pending because the local Docker Desktop daemon was unavailable; no device connection or real network probe was performed. |
 
 ## Security decisions verified
 
@@ -115,6 +116,9 @@ in `network-automation-final-plan.md`.
 - No real-device lab result is recorded. Phase 1 exit remains blocked; the user
   explicitly directed fixture-only Phase 2 work, so Cisco reads remain **lab
   unverified**.
+- The backend Dockerfile now includes the OpenSSH client required by Scrapli's
+  explicit system transport, but the rebuilt-image `ssh -V` smoke-test is
+  pending because Docker Desktop was unavailable during this verification.
 - Manual USB Console automated verification passed, but hardware validation is
   pending. It remains lab-unverified, and no device/vendor support is inferred
   from browser, fake-stream, serving-policy, or local Compose evidence. Manual

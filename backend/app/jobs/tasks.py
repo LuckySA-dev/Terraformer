@@ -78,7 +78,15 @@ def execute_job(job_id: str) -> dict[str, object]:
     except Exception as exc:
         code = exc.code if isinstance(exc, AppError) else "job_execution_failed"
         message = exc.message if isinstance(exc, AppError) else "Background job execution failed"
-        logger.exception("device_job_failed", job_id=job_id, error_code=code)
+        sanitized_error: Exception = (
+            type(exc)(message) if isinstance(exc, AppError) else RuntimeError(message)
+        )
+        logger.error(
+            "device_job_failed",
+            job_id=job_id,
+            error_code=code,
+            error_type=type(exc).__name__,
+        )
         with container.session_factory() as session:
             jobs = JobRepository(session)
             failed_job = jobs.get(parsed_job_id, for_update=True)
@@ -92,4 +100,4 @@ def execute_job(job_id: str) -> dict[str, object]:
                 details={"error_code": code},
             )
             session.commit()
-        raise
+        raise sanitized_error from None

@@ -1,6 +1,6 @@
 # Capability matrix
 
-Last updated: 2026-07-20
+Last updated: 2026-07-21
 Scope: phases 0–2
 
 ## Status definitions
@@ -28,17 +28,22 @@ can promote a capability to **Lab verified**.
 | CDP/LLDP neighbors | Implemented, lab unverified | Not Implemented | Not Implemented |
 | Routing table | Implemented, lab unverified | Not Implemented | Not Implemented |
 | ARP/MAC tables | Implemented, lab unverified | Not Implemented | Not Implemented |
-| Bounded IPv4 SSH discovery | Implemented, lab unverified | Not Implemented | Implemented, lab unverified |
+| Bounded multi-port IPv4 SSH discovery | Implemented, lab unverified | Not Implemented | Implemented, lab unverified |
 | Ping/traceroute action | Implemented, lab unverified | Not Implemented | Not Implemented |
 
 The generic driver authenticates SSH only; facts, interfaces, and configuration
 remain unsupported. Cisco read entries are deliberately lab-unverified. Before
 release, link each to passing tests and record real-device acceptance below.
-Discovery is vendor-neutral TCP port evidence only; it does not identify a
-platform, authenticate, follow neighbors, or add inventory automatically.
+Discovery is vendor-neutral passive SSH identification only; it does not
+authenticate, identify a platform, follow neighbors, or add inventory
+automatically. Only endpoints whose received identification begins with
+`SSH-` are approvable; other open TCP endpoints are informational only.
 Only one discovery job may be queued or running at a time. Adding a candidate
 still requires explicit approval and a successful authenticated connection test;
 the resulting device and audit linkage are committed together.
+The shared backend runtime includes the OpenSSH client required by the explicit
+Scrapli system transport; this packaging evidence does not replace authorized
+real-device validation, so SSH capabilities remain lab-unverified.
 The topology canvas is a UI projection, not a new device capability. It can show
 any registered device, but current observed links come only from lab-unverified
 Cisco CDP/LLDP records. Dashed observed nodes never become inventory implicitly.

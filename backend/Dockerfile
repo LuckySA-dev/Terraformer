@@ -12,7 +12,11 @@ FROM python:3.12.11-slim-bookworm AS runtime
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
-RUN groupadd --system --gid 10001 app && useradd --system --uid 10001 --gid app app
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends openssh-client \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system --gid 10001 app \
+    && useradd --system --uid 10001 --gid app app
 WORKDIR /app
 COPY --from=builder --chown=app:app /opt/venv /opt/venv
 COPY --chown=app:app alembic.ini ./

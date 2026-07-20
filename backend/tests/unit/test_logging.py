@@ -1,3 +1,5 @@
+import logging
+
 import structlog
 
 from app.core.logging import configure_logging, redact_value, sanitize_text
@@ -51,3 +53,16 @@ def test_exception_traceback_is_redacted_after_rendering(capsys) -> None:
     assert "public" not in output
     assert "key-value" not in output
     assert output.count("[REDACTED]") >= 4
+
+
+def test_scrapli_raw_messages_do_not_reach_application_logs(capsys) -> None:
+    logging.getLogger("scrapli").handlers.clear()
+    configure_logging("INFO")
+
+    logging.getLogger("scrapli.channel").critical(
+        "Permission denied raw-scrapli-marker"
+    )
+
+    captured = capsys.readouterr()
+    assert "raw-scrapli-marker" not in captured.out
+    assert "raw-scrapli-marker" not in captured.err

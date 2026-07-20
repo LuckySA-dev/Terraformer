@@ -4,10 +4,19 @@ import sys
 from types import SimpleNamespace
 
 import pytest
+from scrapli.exceptions import (
+    ScrapliAuthenticationFailed,
+    ScrapliModuleNotFound,
+    ScrapliTimeout,
+    ScrapliTransportPluginError,
+    ScrapliValueError,
+)
 
 from app.core.errors import (
+    ConfigurationError,
     DriverAuthenticationError,
     DriverCommandRejectedError,
+    DriverConnectionError,
     DriverTimeoutError,
     UnsupportedCapabilityError,
 )
@@ -83,14 +92,41 @@ def test_cisco_driver_is_read_only_and_closes_connections(
 @pytest.mark.parametrize(
     ("error", "expected"),
     [
-        (type("AuthenticationFailed", (Exception,), {})(), DriverAuthenticationError),
-        (type("TransportTimeout", (Exception,), {})(), DriverTimeoutError),
+        (ScrapliTimeout("raw-timeout-marker"), DriverTimeoutError),
+        (
+            ScrapliAuthenticationFailed("Permission denied raw-auth-marker"),
+            DriverAuthenticationError,
+        ),
+        (
+            ScrapliAuthenticationFailed("Timed out connecting raw-timeout-marker"),
+            DriverTimeoutError,
+        ),
+        (
+            ScrapliAuthenticationFailed("Host key verification failed raw-key-marker"),
+            DriverConnectionError,
+        ),
+        (
+            ScrapliAuthenticationFailed("No matching key exchange raw-kex-marker"),
+            DriverConnectionError,
+        ),
+        (
+            ScrapliValueError("ssh executable not found raw-runtime-marker"),
+            ConfigurationError,
+        ),
+        (ScrapliModuleNotFound("raw-module-marker"), ConfigurationError),
+        (ScrapliTransportPluginError("raw-plugin-marker"), ConfigurationError),
+        (RuntimeError("raw-unknown-marker"), DriverConnectionError),
     ],
 )
-def test_transport_errors_are_typed(error: Exception, expected: type[Exception]) -> None:
+def test_transport_errors_are_typed_and_sanitized(
+    error: Exception,
+    expected: type[Exception],
+) -> None:
     driver = CiscoIOSXEDriver(FakeTransportFactory({}, open_error=error))
-    with pytest.raises(expected):
+    with pytest.raises(expected) as captured:
         driver.test_connection(parameters())
+
+    assert "raw-" not in str(captured.value)
 
 
 def test_connection_and_command_timeouts_are_wired_independently(monkeypatch) -> None:
@@ -108,6 +144,7 @@ def test_connection_and_command_timeouts_are_wired_independently(monkeypatch) ->
     assert captured["timeout_ops"] == 41
     assert captured["auth_strict_key"] is True
     assert captured["platform"] == "cisco_iosxe"
+    assert captured["transport"] == "system"
 
 
 def test_scrapli_command_rejection_is_typed(monkeypatch) -> None:
@@ -145,6 +182,7 @@ def test_generic_transport_is_authenticated_but_vendor_neutral(monkeypatch) -> N
     assert captured["timeout_socket"] == 7
     assert captured["timeout_ops"] == 41
     assert captured["auth_strict_key"] is True
+    assert captured["transport"] == "system"
 
 
 def test_malformed_cli_output_degrades_to_unknown_fields() -> None:
@@ -159,7 +197,7 @@ def test_malformed_cli_output_degrades_to_unknown_fields() -> None:
 def test_read_operations_translate_command_timeout(
     sanitized_outputs: dict[str, str],
 ) -> None:
-    error = type("TransportTimeout", (Exception,), {})()
+    error = ScrapliTimeout("raw-command-timeout-marker")
     driver = CiscoIOSXEDriver(FakeTransportFactory(sanitized_outputs, command_error=error))
 
     with pytest.raises(DriverTimeoutError):

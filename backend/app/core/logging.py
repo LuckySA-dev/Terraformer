@@ -62,6 +62,10 @@ def redaction_processor(
 def configure_logging(level: str = "INFO") -> None:
     numeric_level = getattr(logging, level.upper(), logging.INFO)
     logging.basicConfig(format="%(message)s", stream=sys.stdout, level=numeric_level, force=True)
+    scrapli_logger = logging.getLogger("scrapli")
+    scrapli_logger.handlers.clear()
+    scrapli_logger.addHandler(logging.NullHandler())
+    scrapli_logger.propagate = False
     shared_processors: list[Any] = [
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_log_level,

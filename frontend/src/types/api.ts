@@ -92,7 +92,7 @@ export interface DeviceInput {
 
 export interface DiscoveryInput {
   cidr: string;
-  port: number;
+  ports: number[];
   concurrency: number;
   connect_timeout_seconds: number;
   probe_delay_ms: number;
@@ -105,10 +105,11 @@ export interface DiscoveryCandidate {
 
 export interface DiscoveryResult {
   cidr: string;
-  port: number;
+  ports: number[];
   scanned_count: number;
   concurrency: number;
   candidates: DiscoveryCandidate[];
+  open_endpoints: DiscoveryCandidate[];
 }
 
 export type DiagnosticAction =

@@ -21,7 +21,7 @@ def test_bounded_discovery_requires_explicit_candidate_approval(
         "/api/discovery-jobs",
         json={
             "cidr": "192.0.2.0/30",
-            "port": 22,
+            "ports": [22, 23],
             "concurrency": 2,
             "connect_timeout_seconds": 0.25,
             "probe_delay_ms": 10,
@@ -41,10 +41,11 @@ def test_bounded_discovery_requires_explicit_candidate_approval(
         "run_discovery",
         lambda _request, *, connection_limit: {
             "cidr": "192.0.2.0/30",
-            "port": 22,
-            "scanned_count": 2,
+            "ports": [22, 23],
+            "scanned_count": 4,
             "concurrency": min(2, connection_limit),
             "candidates": [{"management_address": "192.0.2.1", "port": 22}],
+            "open_endpoints": [{"management_address": "192.0.2.1", "port": 23}],
         },
     )
     tasks.execute_job(job_id)
@@ -71,6 +72,19 @@ def test_bounded_discovery_requires_explicit_candidate_approval(
         },
     )
     assert rejected.status_code == 409
+    assert authenticated_client.get("/api/devices").json() == []
+
+    informational_only = authenticated_client.post(
+        f"/api/discovery-jobs/{job_id}/approve",
+        json={
+            "name": "open-but-not-ssh",
+            "management_address": "192.0.2.1",
+            "port": 23,
+            "vendor": "cisco_iosxe",
+            "credential_profile_id": credential_profile["id"],
+        },
+    )
+    assert informational_only.status_code == 409
     assert authenticated_client.get("/api/devices").json() == []
 
     approved = authenticated_client.post(

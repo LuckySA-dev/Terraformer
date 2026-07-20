@@ -15,6 +15,8 @@ const finished = new Set(['succeeded', 'failed', 'cancelled']);
 
 export function DiscoveryDialog({ onApprove }: DiscoveryDialogProps) {
   const [cidr, setCidr] = useState('');
+  const [portInput, setPortInput] = useState('22');
+  const [portError, setPortError] = useState<string>();
   const [jobId, setJobId] = useState<string>();
   const start = useMutation({
     mutationFn: (input: DiscoveryInput) => api.startDiscovery(input),
@@ -42,16 +44,28 @@ export function DiscoveryDialog({ onApprove }: DiscoveryDialogProps) {
   return (
     <div className="inspector-section-stack">
       <InlineNotice tone="warning" title="Explicit bounded scan">
-        Scans only the exact IPv4 CIDR entered below, up to 64 addresses. Open ports become candidates;
-        no device is added automatically.
+        Scans only the exact IPv4 CIDR and selected TCP ports, up to 256 endpoint checks. Only
+        endpoints that identify as SSH become candidates; no device is added automatically.
       </InlineNotice>
       <form
         className="stack-form"
         onSubmit={(event) => {
           event.preventDefault();
+          const ports = [
+            ...new Set(portInput.split(',').map((value) => Number(value.trim()))),
+          ];
+          if (
+            ports.length === 0 ||
+            ports.length > 4 ||
+            ports.some((port) => !Number.isInteger(port) || port < 1 || port > 65_535)
+          ) {
+            setPortError('Enter 1 to 4 TCP ports between 1 and 65535.');
+            return;
+          }
+          setPortError(undefined);
           start.mutate({
             cidr: cidr.trim(),
-            port: 22,
+            ports,
             concurrency: 4,
             connect_timeout_seconds: 0.5,
             probe_delay_ms: 50,
@@ -65,7 +79,16 @@ export function DiscoveryDialog({ onApprove }: DiscoveryDialogProps) {
           onChange={(event) => setCidr(event.target.value)}
           required
           spellCheck={false}
-          hint="Maximum 64 addresses / SSH port 22 / concurrency 4"
+          hint="Maximum 64 addresses"
+        />
+        <InputField
+          label="TCP ports"
+          value={portInput}
+          onChange={(event) => setPortInput(event.target.value)}
+          error={portError}
+          required
+          spellCheck={false}
+          hint="Comma-separated; maximum 4 ports and 256 endpoint checks"
         />
         <Button
           type="submit"
@@ -85,7 +108,7 @@ export function DiscoveryDialog({ onApprove }: DiscoveryDialogProps) {
         <AppState
           kind="loading"
           title="Scanning bounded range"
-          message="The worker is probing SSH port 22 at the configured safe rate..."
+          message="The worker is passively checking selected TCP ports for SSH identification..."
           compact
         />
       ) : null}
@@ -101,7 +124,7 @@ export function DiscoveryDialog({ onApprove }: DiscoveryDialogProps) {
         <AppState
           kind="empty"
           title="No SSH candidates found"
-          message={`Scanned ${String(result.scanned_count)} addresses. No devices were added.`}
+          message={`Checked ${String(result.scanned_count)} endpoints. No devices were added.`}
           compact
         />
       ) : null}
@@ -122,6 +145,14 @@ export function DiscoveryDialog({ onApprove }: DiscoveryDialogProps) {
             </button>
           ))}
         </section>
+      )}
+      {!result?.open_endpoints.length ? null : (
+        <InlineNotice tone="warning" title="Open endpoints not identified as SSH">
+          {result.open_endpoints
+            .map((endpoint) => `${endpoint.management_address}:${String(endpoint.port)}`)
+            .join(', ')}{' '}
+          — informational only; these endpoints cannot be approved.
+        </InlineNotice>
       )}
     </div>
   );

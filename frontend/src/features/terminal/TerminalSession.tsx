@@ -236,7 +236,7 @@ export function TerminalSession({
       window.addEventListener('resize', resize);
       const pageHide = () => {
         token.disposed = true;
-        void shutdown(undefined, true);
+        void shutdown();
       };
       pageHideHandler.current = pageHide;
       window.addEventListener('pagehide', pageHide);
@@ -291,7 +291,7 @@ export function TerminalSession({
             disabled={openDisabled || (requireAuthorization && !authorized)}
             onClick={open}
           >
-            {requireAuthorization ? 'Open USB Direct Mode' : acknowledgementLabel}
+            {requireAuthorization ? 'Open terminal session' : acknowledgementLabel}
           </Button>
         </div>
       ) : null}

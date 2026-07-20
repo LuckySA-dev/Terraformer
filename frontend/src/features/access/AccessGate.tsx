@@ -51,7 +51,7 @@ function BrandPanel() {
         <li>
           <ShieldCheck size={18} />
           <span>
-            <strong>Read-only foundation</strong>
+            <strong>Structured safety foundation</strong>
             Phase 0–1 never applies configuration changes.
           </span>
         </li>

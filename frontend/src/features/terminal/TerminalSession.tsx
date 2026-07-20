@@ -21,6 +21,7 @@ interface TerminalSessionProps {
   inputPolicy: TerminalInputPolicy;
   ariaLabel: string;
   note: string;
+  openLabel?: string;
   openDisabled?: boolean;
   configuration?: ReactNode;
   onReset?: () => void;
@@ -67,6 +68,7 @@ export function TerminalSession({
   inputPolicy,
   ariaLabel,
   note,
+  openLabel,
   openDisabled = false,
   configuration,
   onReset,
@@ -277,7 +279,7 @@ export function TerminalSession({
           <InlineNotice tone="warning" title={warningTitle}>{warningBody}</InlineNotice>
           {configuration}
           {requireAuthorization ? (
-            <label>
+            <label className="usb-console-authorization">
               <input
                 type="checkbox"
                 checked={authorized}
@@ -291,7 +293,7 @@ export function TerminalSession({
             disabled={openDisabled || (requireAuthorization && !authorized)}
             onClick={open}
           >
-            {requireAuthorization ? 'Open terminal session' : acknowledgementLabel}
+            {openLabel ?? (requireAuthorization ? 'Open terminal session' : acknowledgementLabel)}
           </Button>
         </div>
       ) : null}
@@ -302,16 +304,21 @@ export function TerminalSession({
         </div>
         <div ref={container} className="terminal-session__canvas" aria-label={ariaLabel} />
         {pendingPaste === undefined ? null : (
-          <div>
-            <Button size="small" onClick={confirmPaste}>
-              Send {pendingPaste.lineCount} lines
-            </Button>
-            <Button size="small" variant="ghost" onClick={() => setPendingPaste(undefined)}>
-              Cancel
-            </Button>
+          <div className="terminal-multiline-warning" role="alert">
+            <span>{pendingPaste.lineCount} lines are waiting. Review before sending.</span>
+            <div className="terminal-session__actions">
+              <Button size="small" onClick={confirmPaste}>
+                Send {pendingPaste.lineCount} lines
+              </Button>
+              <Button size="small" variant="ghost" onClick={() => setPendingPaste(undefined)}>
+                Cancel
+              </Button>
+            </div>
           </div>
         )}
-        <Button size="small" variant="ghost" onClick={disconnect}>Disconnect</Button>
+        <div className="terminal-session__actions">
+          <Button size="small" variant="ghost" onClick={disconnect}>Disconnect</Button>
+        </div>
       </div>
       {error === undefined ? null : <div className="form-error" role="alert">{error.message}</div>}
       <p className="terminal-note">{note}</p>

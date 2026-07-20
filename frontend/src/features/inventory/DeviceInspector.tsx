@@ -664,7 +664,7 @@ export function DeviceInspector({ device, onClose, onEdit, onDelete }: DeviceIns
         {tab === 'activity' ? <ActivityTab device={device} /> : null}
       </div>
       <footer className="inspector__footer">
-        <ShieldCheck size={14} /> Read-only · Safety level D for writes
+        <ShieldCheck size={14} /> Structured writes blocked · Terminal is Direct Mode
       </footer>
     </aside>
   );

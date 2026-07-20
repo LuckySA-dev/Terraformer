@@ -1933,6 +1933,58 @@ p {
   font-size: 7px;
 }
 
+.usb-console-settings {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 12px;
+  color: var(--ink);
+  border-radius: 7px;
+  background: var(--surface);
+}
+
+.usb-console-settings > p,
+.usb-console-echo {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.usb-console-echo,
+.usb-console-authorization {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.usb-console-authorization {
+  margin: 0 12px;
+  color: #d6e2df;
+  font-size: 10px;
+}
+
+.terminal-multiline-warning {
+  display: grid;
+  gap: 8px;
+  margin: 0 9px;
+  padding: 10px;
+  color: #f3c978;
+  border: 1px solid #6a5328;
+  border-radius: 6px;
+  background: #261f14;
+  font-size: 9px;
+}
+
+.terminal-session__actions {
+  display: flex;
+  gap: 7px;
+}
+
+.terminal-session__actions .button,
+.terminal-multiline-warning .button {
+  margin: 0;
+}
+
 .interface-row__main strong {
   font-family: "DM Mono", monospace;
   font-size: 9px;
@@ -2424,7 +2476,8 @@ p {
 
   .metrics-grid,
   .form-grid--two,
-  .form-grid--address {
+  .form-grid--address,
+  .usb-console-settings {
     grid-template-columns: 1fr;
   }
 

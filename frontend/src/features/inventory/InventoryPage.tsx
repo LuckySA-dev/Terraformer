@@ -25,6 +25,7 @@ import { CredentialForm } from './CredentialForm';
 import { DeviceForm } from './DeviceForm';
 import { DeviceInspector } from './DeviceInspector';
 import { DiscoveryDialog } from './DiscoveryDialog';
+import { UsbConsoleDialog } from './UsbConsoleDialog';
 
 type DeviceDialog =
   | { mode: 'create' }
@@ -138,6 +139,7 @@ export function InventoryPage() {
   const [deviceDialog, setDeviceDialog] = useState<DeviceDialog>(null);
   const [credentialOpen, setCredentialOpen] = useState(false);
   const [discoveryOpen, setDiscoveryOpen] = useState(false);
+  const [usbConsoleOpen, setUsbConsoleOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Device>();
 
   const devices = useQuery({ queryKey: ['devices'], queryFn: api.devices, retry: false });
@@ -202,9 +204,12 @@ export function InventoryPage() {
           <div>
             <span className="eyebrow">PHASE 2 · SAFE DISCOVERY</span>
             <h1>Device inventory</h1>
-            <p>Register and inspect Cisco devices through explicit, read-only connections.</p>
+            <p>Structured connections remain read-only; manual terminals are Direct Mode.</p>
           </div>
           <div className="page-header__actions">
+            <Button onClick={() => setUsbConsoleOpen(true)}>
+              <Cable size={16} /> Open USB Console
+            </Button>
             <Button onClick={() => setDiscoveryOpen(true)}>
               <Radar size={16} /> Discover
             </Button>
@@ -227,7 +232,7 @@ export function InventoryPage() {
           />
           <MetricCard icon={CheckCircle2} label="Reachable" value={String(reachable)} detail="last explicit check" tone="green" />
           <MetricCard icon={Unplug} label="Disconnected" value={String(unreachable)} detail="requires attention" tone="red" />
-          <MetricCard icon={ShieldCheck} label="Safety mode" value="Read only" detail="all write actions blocked" tone="violet" />
+          <MetricCard icon={ShieldCheck} label="Structured writes" value="Blocked" detail="Manual terminals bypass automation" tone="violet" />
         </section>
 
         <section className="inventory-panel" aria-labelledby="inventory-heading">
@@ -280,6 +285,16 @@ export function InventoryPage() {
         onEdit={(device) => setDeviceDialog({ mode: 'edit', device })}
         onDelete={setDeleteTarget}
       />
+
+      <Modal
+        open={usbConsoleOpen}
+        title="Manual USB Console"
+        description="Browser-local USB Direct Mode. No device record or backend connection is required."
+        onClose={() => setUsbConsoleOpen(false)}
+        size="large"
+      >
+        <UsbConsoleDialog />
+      </Modal>
 
       <Modal
         open={deviceDialog !== null}

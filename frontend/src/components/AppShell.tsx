@@ -95,8 +95,8 @@ export function AppShell({ health, onLogout }: AppShellProps) {
             <ShieldCheck size={18} />
           </div>
           <div>
-            <strong>Read-only safety mode</strong>
-            <p>Writes, reloads, and configuration changes are not implemented.</p>
+            <strong>Structured automation is read-only</strong>
+            <p>Direct Mode terminals are manual and can change hardware.</p>
           </div>
           <Badge tone="success">ENFORCED</Badge>
         </section>
@@ -149,7 +149,7 @@ export function AppShell({ health, onLogout }: AppShellProps) {
         </div>
         <div className="status-bar__group">
           <span>
-            <ShieldCheck size={12} /> Read only
+            <ShieldCheck size={12} /> Structured writes blocked
           </span>
           <span className="status-separator" />
           <span>v{health.version}</span>

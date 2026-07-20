@@ -51,20 +51,24 @@ command, vendor template, bootstrap, recording, or recovery path.
 
 ## Safety levels
 
+Safety Levels A–D classify structured automation capabilities only. Manual SSH
+and USB Direct Mode are outside these levels and can write to or otherwise
+change hardware without the structured apply pipeline.
+
 | Level | Meaning | Required UI wording |
 |---|---|---|
 | A | Native candidate, compare, confirmed commit, and rollback | Native transactional |
 | B | Device-assisted rollback or replace for the tested feature | Device-assisted |
 | C | Snapshot/diff/post-check; recovery requires connectivity | Best effort; never “auto-rollback” |
-| D | Write path absent or not lab-verified | Read-only |
+| D | Structured write path absent or not lab-verified | Read-only |
 
-A vendor or OS version remains Level D until the exact capability has sanitized
-fixtures and real-lab evidence. Evidence for one command family does not imply
-support for another.
+A vendor or OS version remains Level D for a structured capability until that
+exact capability has sanitized fixtures and real-lab evidence. Evidence for one
+command family does not imply support for another.
 
 ## Future mandatory apply pipeline
 
-No stage may be skipped when writes are introduced in a later phase:
+No stage may be skipped when structured writes are introduced in a later phase:
 
 ```text
 Intent -> Structured Change Plan -> Vendor Render -> Validation -> Snapshot
@@ -124,9 +128,9 @@ encrypted profile. Do not paste it into an issue or support chat.
 - Keep connection establishment (`SSH_CONNECT_TIMEOUT_SECONDS`, default 10) and
   command execution (`SSH_COMMAND_TIMEOUT_SECONDS`, default 30) as separate,
   bounded timeouts. A command timeout must not trigger an unbounded reconnect.
-- Write tests in future phases require a current backup, console/OOB recovery,
-  an approved maintenance window, and a separately documented change/recovery
-  plan.
+- Structured-write tests in future phases require a current backup, console/OOB
+  recovery, an approved maintenance window, and a separately documented
+  change/recovery plan.
 
 ## Logging and audit
 

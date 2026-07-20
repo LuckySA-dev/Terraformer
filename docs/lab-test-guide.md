@@ -35,12 +35,13 @@ could be mistaken for a completed test.
 
 The record must never contain terminal output, commands, credentials,
 configuration, addresses, hostnames, serial numbers, adapter or device
-identifiers, raw exceptions, screenshots, recordings, or any serial-session
-content. Non-command validation-step descriptions may describe only the UI or
-lifecycle behavior checked; they must not reproduce serial interaction. Do not
-attach or link prohibited content as evidence. Until an explicitly authorized
-session is completed and this metadata-only record is added, retain the status
-**Implemented, lab unverified** / **hardware validation pending**.
+identifiers, raw errors or exceptions, screenshots, recordings, or any
+serial-session content. Non-command validation-step descriptions may describe
+only the UI or lifecycle behavior checked; they must not reproduce serial
+interaction. Do not attach or link prohibited content as evidence. Until an
+explicitly authorized session is completed and this metadata-only record is
+added, retain the status **Implemented, lab unverified** / **hardware validation
+pending**.
 
 ## Required harness contract
 
@@ -56,7 +57,8 @@ The `lab` test suite requires all of the following before it opens a socket:
 7. a preflight that aborts on platform mismatch or unexpected privilege.
 
 Optional settings are `LAB_DEVICE_PORT`, `LAB_DEVICE_ENABLE_PASSWORD`, and
-`LAB_SSH_STRICT_HOST_KEY`. `RUN_LAB_TESTS=1` never authorizes writes.
+`LAB_SSH_STRICT_HOST_KEY`. `RUN_LAB_TESTS=1` never authorizes structured or
+Direct Mode writes.
 
 The harness uses one SSH session for the facts/interface/neighbor observation
 batch. Connection testing and the running-config read use separate sessions.
@@ -105,11 +107,13 @@ After the test:
 
 ## Write-test gate for later phases
 
-There are no authorized write tests in phases 0–2. A future write test requires
-a second explicit opt-in, exact target allowlist, per-device lock, immutable
-pre-change snapshot, preview/diff, human confirmation, tested post-check, and a
-platform-specific recovery plan. High-risk tests also require a maintenance
-window and working console/OOB access.
+There are no authorized structured-write tests in phases 0–2. A future
+structured-write test requires a second explicit opt-in, exact target allowlist,
+per-device lock, immutable pre-change snapshot, preview/diff, human confirmation,
+tested post-check, and a platform-specific recovery plan. High-risk tests also
+require a maintenance window and working console/OOB access. Manual USB Console
+hardware validation has the separate explicit authorization and metadata-only
+record gate above; it does not promote structured write support.
 
 Without every gate, mark the capability **Not Implemented** or lab-unverified;
 do not reinterpret a successful read as evidence that a write is safe.

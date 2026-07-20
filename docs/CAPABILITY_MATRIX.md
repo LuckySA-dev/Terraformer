@@ -15,7 +15,7 @@ Scope: phases 0–2
 “Implemented” is not the same as “Supported.” Only a dated lab evidence record
 can promote a capability to **Lab verified**.
 
-## Read capabilities
+## Structured read capabilities
 
 | Capability | Cisco IOS/IOS-XE | Juniper Junos | Generic/unknown |
 |---|---|---|---|
@@ -29,7 +29,6 @@ can promote a capability to **Lab verified**.
 | Routing table | Implemented, lab unverified | Not Implemented | Not Implemented |
 | ARP/MAC tables | Implemented, lab unverified | Not Implemented | Not Implemented |
 | Bounded IPv4 SSH discovery | Implemented, lab unverified | Not Implemented | Implemented, lab unverified |
-| Web terminal Direct Mode | Implemented, lab unverified | Not Implemented | Implemented, lab unverified |
 | Ping/traceroute action | Implemented, lab unverified | Not Implemented | Not Implemented |
 
 The generic driver authenticates SSH only; facts, interfaces, and configuration
@@ -48,17 +47,18 @@ diagnostics API accepts no raw commands or alternate targets. Results are saniti
 implementation and fixture evidence do not promote them to Lab verified.
 Cisco ping/traceroute accepts one validated exact IPv4 target and renders one
 bounded vendor command; hostnames, CIDR, special-use targets, and command text
-fail validation. The Web terminal is deliberately separate from drivers: it is
-authenticated, same-origin, warning-gated Direct Mode with three-session,
-idle, input, and output limits. Terminal commands/output are never audit payloads.
+fail validation.
 
 ## Direct access paths
 
 Direct access is recorded separately because it is operator-controlled manual
-access, not a structured driver read or write capability.
+access, not a structured driver read or write capability. Manual Direct Mode is
+outside structured Safety Levels A–D; its warning gate does not prevent commands
+from writing to or changing hardware.
 
 | Access path | Status | Vendor scope | Safety and evidence boundary |
 |---|---|---|---|
+| Web SSH terminal Direct Mode | **Implemented, lab unverified** | Registered devices with an available SSH transport | Can write or otherwise change hardware; separate from drivers and structured Safety Levels A–D. Authenticated, same-origin, warning-gated, and resource-bounded; commands/output are never audit payloads. |
 | Manual USB Console / USB Direct Mode | **Implemented, lab unverified** | Vendor-neutral manual serial access | Can write, modify, restart, or erase hardware; bypasses backend and structured safety controls. Automated fake-stream, privacy, lifecycle, serving-policy, type, lint, and build checks passed on 2026-07-20. Hardware validation pending; no vendor/device support claim. |
 
 ### Manual USB Console hardware evidence
@@ -71,10 +71,12 @@ session content.
 | Date | Approver | Browser/version | Adapter type | Device category | Application version/commit | Non-command validation-step descriptions | Pass/fail outcome |
 |---|---|---|---|---|---|---|---|
 
-## Write capabilities
+## Structured write capabilities
 
-Every write is **Not Implemented**. The application must not expose an API,
-worker job, driver fallback, or UI control that can execute these operations.
+Every structured write capability is **Not Implemented**. The application must
+not expose an API, worker job, driver fallback, or structured UI control that can
+execute these operations. Manual Direct Mode remains the explicit path outside
+this table and outside Safety Levels A–D.
 
 | Capability | Cisco IOS/IOS-XE | Juniper Junos | Generic/unknown |
 |---|---|---|---|
@@ -90,7 +92,8 @@ worker job, driver fallback, or UI control that can execute these operations.
 | Confirmed commit | **Not Implemented** | **Not Implemented** | **Not Implemented** |
 | Rollback/assisted recovery | **Not Implemented** | **Not Implemented** | **Not Implemented** |
 
-Current write safety classification for every platform: **Level D — Read-only**.
+Current structured-write safety classification for every platform:
+**Level D — Read-only**.
 
 ## Real-lab evidence log
 

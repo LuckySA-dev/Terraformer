@@ -18,7 +18,7 @@ in `network-automation-final-plan.md`.
 | Phase | Status | Delivered boundary | Exit-criterion result |
 |---|---|---|---|
 | 0 — Repository and safety foundation | Implemented | Local Compose stack, file-secret bootstrap, PostgreSQL/Redis/RQ, migrations, health, authentication, encrypted credentials, sanitized logging, tests and operator docs | Passed automated and local-runtime acceptance |
-| 1 — First real device | Implemented; exit blocked — lab unverified | Exact-target manual add, capability-gated Cisco IOS/IOS-XE read-only connection/facts/interfaces/running-config snapshots, generic authenticated connection test, jobs/events and operator UI | Automated acceptance passed; phase exit requires an authorized real Cisco read-only run, which is not recorded |
+| 1 — First real device | Implemented; exit blocked — lab unverified | Exact-target manual add, capability-gated Cisco IOS/IOS-XE structured read-only connection/facts/interfaces/running-config snapshots, generic authenticated connection test, jobs/events and operator UI | Automated acceptance passed; phase exit requires an authorized real Cisco structured read-only run, which is not recorded |
 | 2 — Topology and terminal | Implemented; exit blocked — lab unverified | Bounded discovery/approval; CDP/LLDP topology with saved layouts and unverified manual links; allowlisted show/ping/traceroute diagnostics; guarded Web PTY Direct Mode | Automated and local-runtime acceptance passed; phase exit still requires an authorized lab topology plus terminal/diagnostic evidence |
 | 3 — Safe configuration MVP | Not Implemented | None; all structured writes remain Level D | Not started because Phase 2 lab exit is not yet proven |
 | 4–8 | Not Implemented | None | Future phases |
@@ -49,7 +49,7 @@ in `network-automation-final-plan.md`.
 | Immutable running-config snapshot | Implemented; lab unverified | Compress-then-encrypt, tamper, traversal and no-overwrite tests; PostgreSQL immutable trigger present |
 | Read-only device inspector and event timeline | Implemented | React component and API tests; visual QA against running Compose stack |
 | Generic/unknown platform | Implemented; lab unverified | Authenticated SSH connection test only; other capabilities fail closed |
-| Every device write capability | **Not Implemented** | Required current safety boundary |
+| Every structured device write capability | **Not Implemented** | Required current safety boundary; manual Direct Mode is outside structured Safety Levels A–D and can write/change hardware |
 
 ## Phase 2 checklist
 
@@ -91,8 +91,8 @@ in `network-automation-final-plan.md`.
 | 2026-07-12 | Phase 2 completion slice | Targeted Ruff format; Ruff; Pyright; backend/frontend tests; Vite/Docker builds; normal/dev Compose config; Alembic current/heads/check; runtime health | Backend 65 passed/1 opt-in lab skipped; frontend 29 passed; API/web images built; all five services healthy; DB at `20260712_0002` with no drift; no real-device operation run |
 | 2026-07-20 | Manual USB Console frontend verification | `npm.cmd run verify`; `npm.cmd audit`; focused `npm.cmd test -- --run tests/serving-policy.test.ts` | TypeScript and ESLint passed; 11 test files / 81 tests passed; Vite production build passed (1,934 modules, existing large-chunk warning); serving-policy test 2 passed; audit found 0 vulnerabilities |
 | 2026-07-20 | Routine backend regression | `.venv\Scripts\python.exe -m ruff check --no-cache .`; `.venv\Scripts\pyright.exe`; `.venv\Scripts\python.exe -m pytest` | Ruff passed; Pyright 0 errors, 0 warnings; 65 passed and 1 explicitly opt-in real-lab test skipped; no device opt-in supplied |
-| 2026-07-20 | Declarative deployment configuration | `docker compose -f deploy/compose.yml config --quiet`; `docker compose -f deploy/compose.yml -f deploy/compose.dev.yml config --quiet` | Both configurations valid; Docker emitted only inaccessible user-config warnings; no secrets initialized and no services started |
-| 2026-07-20 | Serving policy | Static Nginx/Vite regression plus hidden loopback Vite `HEAD /` | Development response contained `camera=(), microphone=(), geolocation=(), serial=(self)`; launcher and listener were explicitly stopped and confirmed absent; production policy passed static verification only |
+| 2026-07-20 | Local secret and Compose runtime | `python deploy/init-secrets.py` twice; both Compose `config --quiet` commands; `docker compose -f deploy/compose.yml up --build --detach --wait`; API-container `alembic current`, `heads`, and `check`; `docker compose -f deploy/compose.yml down` without `-v` | Worktree secrets were created, then retained byte-for-byte without printing values. Isolated runtime images built; PostgreSQL, Redis, migrate, API, worker, and web completed/healthy as applicable; database was at `20260712_0002` head with no model drift; cleanup left zero containers and no listener while preserving volumes |
+| 2026-07-20 | Serving policy | Static Nginx/Vite regression plus hidden loopback Vite and production Compose `HEAD /` checks | Development and production responses contained `camera=(), microphone=(), geolocation=(), serial=(self)`; both local launchers/listeners and the Compose stack were explicitly stopped and confirmed absent |
 
 ## Security decisions verified
 
@@ -116,7 +116,9 @@ in `network-automation-final-plan.md`.
   unverified**.
 - Manual USB Console automated verification passed, but hardware validation is
   pending. It remains lab-unverified, and no device/vendor support is inferred
-  from browser, fake-stream, or serving-policy evidence.
+  from browser, fake-stream, serving-policy, or local Compose evidence. Manual
+  Direct Mode is outside structured Safety Levels A–D and can write/change
+  hardware.
 - No structured write capability is implemented.
 - Backup/restore acceptance is not implemented in phases 0–2.
 - Broader LAN exposure has not been hardened or tested; normal deployment stays

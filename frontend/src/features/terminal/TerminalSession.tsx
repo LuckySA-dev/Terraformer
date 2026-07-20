@@ -116,7 +116,7 @@ export function TerminalSession({
           TERMINAL_CLEANUP_TIMEOUT_MS,
         );
       } catch {
-        shutdownError ??= { code: 'cleanup_timed_out', message: 'Cleanup timed out' };
+        shutdownError = { code: 'cleanup_timed_out', message: 'Cleanup timed out' };
       } finally {
         inputSubscription.current?.dispose();
         resizeObserver.current?.disconnect();

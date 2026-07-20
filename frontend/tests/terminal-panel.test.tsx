@@ -329,4 +329,41 @@ describe('Direct Mode terminal', () => {
     expect(fitMocks.instances[0]?.dispose).toHaveBeenCalledOnce();
     expect(screen.getByText('Cleanup timed out')).toBeVisible();
   });
+
+  it('shows cleanup timeout over an earlier transport error and reopens fresh', async () => {
+    vi.useFakeTimers();
+    const transports: FakeTransport[] = [];
+    renderUsbLikeSession(() => {
+      const transport = new FakeTransport();
+      if (transports.length === 0) {
+        transport.close.mockImplementation(() => new Promise<void>(() => undefined));
+      }
+      transports.push(transport);
+      return transport;
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Open test session' }));
+    act(() => terminalMocks.instances[0]?.emitInput('show version\nreload'));
+    expect(screen.getByRole('button', { name: 'Send 2 lines' })).toBeVisible();
+
+    act(() => {
+      transports[0]?.emit({
+        type: 'error',
+        code: 'serial_read_failed',
+        message: 'Serial read failed',
+      });
+    });
+    await act(() => vi.advanceTimersByTimeAsync(5_000));
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Cleanup timed out');
+    expect(screen.queryByText('Serial read failed')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Send 2 lines' })).not.toBeInTheDocument();
+    expect(terminalMocks.instances[0]?.dispose).toHaveBeenCalledOnce();
+    expect(fitMocks.instances[0]?.dispose).toHaveBeenCalledOnce();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open test session' }));
+    expect(transports).toHaveLength(2);
+    expect(terminalMocks.instances).toHaveLength(2);
+    expect(transports[1]).not.toBe(transports[0]);
+    expect(terminalMocks.instances[1]).not.toBe(terminalMocks.instances[0]);
+  });
 });

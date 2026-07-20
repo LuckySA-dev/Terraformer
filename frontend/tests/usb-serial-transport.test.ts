@@ -107,6 +107,120 @@ describe('UsbSerialTransport', () => {
     expect(events).toEqual([{ type: 'status', status: 'closed' }]);
   });
 
+  it('retries port close after a failed close races with port opening', async () => {
+    const fixture = serialFixture();
+    let resolveOpen!: () => void;
+    let portIsOpen = false;
+    const pendingOpen = new Promise<void>((resolve) => { resolveOpen = resolve; });
+    fixture.port.open.mockImplementation(() => pendingOpen.then(() => { portIsOpen = true; }));
+    fixture.port.close
+      .mockRejectedValueOnce(new Error('raw close detail'))
+      .mockImplementationOnce(() => {
+        portIsOpen = false;
+        return Promise.resolve();
+      });
+    const events: TerminalTransportEvent[] = [];
+    const transport = new UsbSerialTransport(fixture.api, defaultSerialSettings);
+
+    const opening = transport.open((event) => events.push(event));
+    await nextMicrotask();
+    await transport.close(Date.now() + 5_000);
+    resolveOpen();
+
+    await expect(opening).rejects.toMatchObject({ code: 'port_unavailable' });
+    await nextMicrotask();
+    expect(fixture.port.close).toHaveBeenCalledTimes(2);
+    expect(portIsOpen).toBe(false);
+    expect(fixture.port.readable.locked).toBe(false);
+    expect(fixture.port.writable.locked).toBe(false);
+    expect(fixture.removeEventListener).toHaveBeenCalled();
+    await expect(transport.write('show version')).rejects.toMatchObject({
+      code: 'serial_write_failed',
+    });
+    expect(events).toEqual([{ type: 'status', status: 'closed' }]);
+  });
+
+  it('does not overlap a successful deferred close with late-open cleanup', async () => {
+    const fixture = serialFixture();
+    let resolveOpen!: () => void;
+    let resolveClose!: () => void;
+    let portIsOpen = false;
+    const pendingOpen = new Promise<void>((resolve) => { resolveOpen = resolve; });
+    const pendingClose = new Promise<void>((resolve) => { resolveClose = resolve; });
+    fixture.port.open.mockImplementation(() => pendingOpen.then(() => { portIsOpen = true; }));
+    fixture.port.close.mockImplementation(() => pendingClose.then(() => { portIsOpen = false; }));
+    const events: TerminalTransportEvent[] = [];
+    const transport = new UsbSerialTransport(fixture.api, defaultSerialSettings);
+
+    const opening = transport.open((event) => events.push(event));
+    await nextMicrotask();
+    const closing = transport.close(Date.now() + 5_000);
+    resolveOpen();
+
+    await expect(opening).rejects.toMatchObject({ code: 'port_unavailable' });
+    expect(fixture.port.close).toHaveBeenCalledOnce();
+    resolveClose();
+    await closing;
+    expect(fixture.port.close).toHaveBeenCalledOnce();
+    expect(portIsOpen).toBe(false);
+    expect(events).toEqual([{ type: 'status', status: 'closed' }]);
+  });
+
+  it('waits for a deferred close failure before retrying late-open cleanup', async () => {
+    const fixture = serialFixture();
+    let resolveOpen!: () => void;
+    let rejectClose!: (error: Error) => void;
+    let portIsOpen = false;
+    const pendingOpen = new Promise<void>((resolve) => { resolveOpen = resolve; });
+    const pendingClose = new Promise<void>((_resolve, reject) => { rejectClose = reject; });
+    fixture.port.open.mockImplementation(() => pendingOpen.then(() => { portIsOpen = true; }));
+    fixture.port.close
+      .mockImplementationOnce(() => pendingClose)
+      .mockImplementationOnce(() => {
+        portIsOpen = false;
+        return Promise.resolve();
+      });
+    const transport = new UsbSerialTransport(fixture.api, defaultSerialSettings);
+
+    const opening = transport.open(vi.fn());
+    await nextMicrotask();
+    const closing = transport.close(Date.now() + 5_000);
+    resolveOpen();
+
+    await expect(opening).rejects.toMatchObject({ code: 'port_unavailable' });
+    expect(fixture.port.close).toHaveBeenCalledOnce();
+    rejectClose(new Error('raw deferred close detail'));
+    await closing;
+    await nextMicrotask();
+    expect(fixture.port.close).toHaveBeenCalledTimes(2);
+    expect(portIsOpen).toBe(false);
+  });
+
+  it('retries late-open cleanup after port close throws synchronously', async () => {
+    const fixture = serialFixture();
+    let resolveOpen!: () => void;
+    let portIsOpen = false;
+    const pendingOpen = new Promise<void>((resolve) => { resolveOpen = resolve; });
+    fixture.port.open.mockImplementation(() => pendingOpen.then(() => { portIsOpen = true; }));
+    fixture.port.close
+      .mockImplementationOnce(() => { throw new Error('raw synchronous close detail'); })
+      .mockImplementationOnce(() => {
+        portIsOpen = false;
+        return Promise.resolve();
+      });
+    const transport = new UsbSerialTransport(fixture.api, defaultSerialSettings);
+
+    const opening = transport.open(vi.fn());
+    await nextMicrotask();
+    await transport.close(Date.now() + 5_000);
+    resolveOpen();
+
+    await expect(opening).rejects.toMatchObject({ code: 'port_unavailable' });
+    await nextMicrotask();
+    expect(fixture.port.close).toHaveBeenCalledTimes(2);
+    expect(portIsOpen).toBe(false);
+  });
+
   it('rejects an overflowing write queue before the extra chunk reaches the port', async () => {
     const fixture = serialFixture();
     const transport = new UsbSerialTransport(fixture.api, defaultSerialSettings);

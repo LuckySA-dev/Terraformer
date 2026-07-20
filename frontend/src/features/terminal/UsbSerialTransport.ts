@@ -82,6 +82,7 @@ export class UsbSerialTransport implements TerminalTransport {
   private openPromise: Promise<void> | null = null;
   private closePromise: Promise<void> | null = null;
   private readonly releasedPorts = new WeakSet<SerialPortLike>();
+  private readonly closingPorts = new WeakMap<SerialPortLike, Promise<void>>();
   private closing = false;
   private disposed = false;
   private readonly onDisconnect = () => {
@@ -246,13 +247,23 @@ export class UsbSerialTransport implements TerminalTransport {
 
   private closeLatePort(port: SerialPortLike): void {
     if (this.releasedPorts.has(port)) return;
-    this.releasedPorts.add(port);
     port.removeEventListener('disconnect', this.onDisconnect);
-    try {
-      void port.close().catch(() => undefined);
-    } catch {
-      // A port returned after teardown is never activated.
-    }
+    const closing = this.closingPorts.get(port);
+    void (closing === undefined
+      ? this.closePort(port)
+      : closing.catch(() => this.closePort(port)))
+      .catch(() => undefined);
+  }
+
+  private closePort(port: SerialPortLike): Promise<void> {
+    const closing = this.closingPorts.get(port);
+    if (closing !== undefined) return closing;
+    const trackedClose = Promise.resolve()
+      .then(() => port.close())
+      .then(() => { this.releasedPorts.add(port); })
+      .finally(() => this.closingPorts.delete(port));
+    this.closingPorts.set(port, trackedClose);
+    return trackedClose;
   }
 
   private async cleanup(deadlineAt: number): Promise<void> {
@@ -271,7 +282,6 @@ export class UsbSerialTransport implements TerminalTransport {
     this.pendingWriteBytes = 0;
     this.listener = null;
     if (port !== null) {
-      this.releasedPorts.add(port);
       port.removeEventListener('disconnect', this.onDisconnect);
     }
 
@@ -312,7 +322,8 @@ export class UsbSerialTransport implements TerminalTransport {
 
     if (port !== null) {
       try {
-        timedOut = !(await settleBefore(port.close(), deadlineAt)) || timedOut;
+        const portClose = this.closePort(port);
+        timedOut = !(await settleBefore(portClose, deadlineAt)) || timedOut;
       } catch {
         // Browser cleanup failures are intentionally ignored after sanitization.
       }

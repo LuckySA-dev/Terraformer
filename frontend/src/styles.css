@@ -1933,6 +1933,23 @@ p {
   font-size: 7px;
 }
 
+.terminal-session:has(.usb-console-settings) {
+  border-color: var(--border);
+  background: var(--surface);
+}
+
+.terminal-session:has(.usb-console-settings) .usb-console-authorization {
+  color: var(--ink);
+}
+
+.terminal-session:has(.usb-console-settings) .terminal-note {
+  margin: 0;
+  padding: 0 9px 9px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
 .usb-console-settings {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

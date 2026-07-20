@@ -20,6 +20,10 @@ const terminalMocks = vi.hoisted(() => ({
 }));
 
 const transportMocks = vi.hoisted(() => ({ instances: [] as object[] }));
+const originalStorageSetItem = Object.getOwnPropertyDescriptor(Storage.prototype, 'setItem');
+const originalSendBeacon = Object.getOwnPropertyDescriptor(navigator, 'sendBeacon');
+const originalHistoryPushState = Object.getOwnPropertyDescriptor(history, 'pushState');
+const originalHistoryReplaceState = Object.getOwnPropertyDescriptor(history, 'replaceState');
 
 vi.mock('@xterm/xterm', () => ({
   Terminal: class {
@@ -95,6 +99,15 @@ describe('Manual USB Console', () => {
   beforeEach(() => {
     terminalMocks.instances = [];
     transportMocks.instances = [];
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    if (originalSendBeacon === undefined) {
+      Reflect.deleteProperty(navigator, 'sendBeacon');
+    } else {
+      Object.defineProperty(navigator, 'sendBeacon', originalSendBeacon);
+    }
   });
 
   it('requires authorization acknowledgement before requesting a port', async () => {
@@ -186,6 +199,17 @@ describe('Manual USB Console', () => {
     expect(sendBeacon).not.toHaveBeenCalled();
     expect(historyPush).not.toHaveBeenCalled();
     expect(historyReplace).not.toHaveBeenCalled();
+  });
+
+  it('does not leak browser API mocks from the privacy check', () => {
+    expect(Object.getOwnPropertyDescriptor(Storage.prototype, 'setItem')).toEqual(
+      originalStorageSetItem,
+    );
+    expect(Object.getOwnPropertyDescriptor(navigator, 'sendBeacon')).toEqual(originalSendBeacon);
+    expect(Object.getOwnPropertyDescriptor(history, 'pushState')).toEqual(originalHistoryPushState);
+    expect(Object.getOwnPropertyDescriptor(history, 'replaceState')).toEqual(
+      originalHistoryReplaceState,
+    );
   });
 
   it('resets authorization and settings and creates fresh objects after close', async () => {

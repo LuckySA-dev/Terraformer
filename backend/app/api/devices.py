@@ -61,7 +61,7 @@ def test_connection(
     return _service(session, container).test_connection(request)
 
 
-@router.get("/{device_id}", response_model=DeviceView)
+@router.get("/{device_id:uuid}", response_model=DeviceView)
 def get_device(
     device_id: UUID,
     _auth: Authenticated,

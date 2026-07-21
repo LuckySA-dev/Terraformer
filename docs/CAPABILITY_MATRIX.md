@@ -44,6 +44,14 @@ the resulting device and audit linkage are committed together.
 The shared backend runtime includes the OpenSSH client required by the explicit
 Scrapli system transport; this packaging evidence does not replace authorized
 real-device validation, so SSH capabilities remain lab-unverified.
+Structured Cisco and generic transports append only group14-SHA1, RSA host-key,
+and AES-256-CBC compatibility after modern OpenSSH defaults; group1 and 3DES
+remain disabled. On 2026-07-21, an authorized connection-only attempt against
+an older Cisco Catalyst device negotiated through the authentication boundary
+with this set, after which the selected encrypted credential profile was
+rejected. No show/configuration command or structured read completed, and the
+required OS metadata was not collected, so this is interoperability evidence
+only and does not promote any capability to **Lab verified**.
 The topology canvas is a UI projection, not a new device capability. It can show
 any registered device, but current observed links come only from lab-unverified
 Cisco CDP/LLDP records. Dashed observed nodes never become inventory implicitly.

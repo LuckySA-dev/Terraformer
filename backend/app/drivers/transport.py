@@ -5,6 +5,19 @@ from typing import Any
 from app.core.errors import DriverCommandRejectedError
 from app.drivers.base import ConnectionParameters, NetworkTransport
 
+_LEGACY_SSH_OPEN_CMD = (
+    "-o",
+    "KexAlgorithms=+diffie-hellman-group14-sha1",
+    "-o",
+    "HostKeyAlgorithms=+ssh-rsa",
+    "-o",
+    "Ciphers=+aes256-cbc",
+)
+
+
+def _system_transport_options() -> dict[str, list[str]]:
+    return {"open_cmd": list(_LEGACY_SSH_OPEN_CMD)}
+
 
 class ScrapliTransport:
     """Small adapter that keeps Scrapli outside the service and parser layers."""
@@ -24,6 +37,7 @@ class ScrapliTransport:
             "timeout_socket": parameters.connect_timeout_seconds,
             "timeout_transport": parameters.connect_timeout_seconds,
             "timeout_ops": parameters.command_timeout_seconds,
+            "transport_options": _system_transport_options(),
         }
         self._connection = Scrapli(**device)
 
@@ -64,6 +78,7 @@ class ScrapliGenericTransport:
             timeout_socket=parameters.connect_timeout_seconds,
             timeout_transport=parameters.connect_timeout_seconds,
             timeout_ops=parameters.command_timeout_seconds,
+            transport_options=_system_transport_options(),
         )
 
     def open(self) -> None:

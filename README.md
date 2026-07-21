@@ -155,6 +155,13 @@ SSH man-in-the-middle attack. For a persistent or LAN-accessible deployment,
 provision and mount a trusted `known_hosts` file, set
 `SSH_STRICT_HOST_KEY=true`, and keep the connect and command timeouts separate.
 
+Structured Scrapli connections append a narrow legacy compatibility set for
+older network devices: `diffie-hellman-group14-sha1`, `ssh-rsa`, and
+`aes256-cbc`. OpenSSH's `+` syntax keeps modern defaults ahead of these weaker
+fallbacks. Group1 and 3DES remain disabled. This interoperability setting does
+not replace trusted host-key verification in persistent or LAN-accessible
+deployments.
+
 ## Documentation
 
 - [`docs/architecture.md`](docs/architecture.md) — services, trust boundaries,

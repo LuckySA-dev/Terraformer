@@ -147,6 +147,44 @@ def test_connection_and_command_timeouts_are_wired_independently(monkeypatch) ->
     assert captured["transport"] == "system"
 
 
+def test_structured_system_transports_append_narrow_legacy_ssh_compatibility(
+    monkeypatch,
+) -> None:
+    cisco_args: dict[str, object] = {}
+    generic_args: dict[str, object] = {}
+
+    class FakeScrapli:
+        def __init__(self, **kwargs) -> None:
+            cisco_args.update(kwargs)
+
+    class FakeGenericDriver:
+        def __init__(self, **kwargs) -> None:
+            generic_args.update(kwargs)
+
+    monkeypatch.setitem(sys.modules, "scrapli", SimpleNamespace(Scrapli=FakeScrapli))
+    monkeypatch.setitem(
+        sys.modules,
+        "scrapli.driver",
+        SimpleNamespace(GenericDriver=FakeGenericDriver),
+    )
+
+    ScrapliTransport(parameters(), strict_host_key=True)
+    ScrapliGenericTransport(parameters(), strict_host_key=True)
+
+    expected_open_cmd = [
+        "-o",
+        "KexAlgorithms=+diffie-hellman-group14-sha1",
+        "-o",
+        "HostKeyAlgorithms=+ssh-rsa",
+        "-o",
+        "Ciphers=+aes256-cbc",
+    ]
+    assert cisco_args["transport_options"] == {"open_cmd": expected_open_cmd}
+    assert generic_args["transport_options"] == {"open_cmd": expected_open_cmd}
+    assert "diffie-hellman-group1-sha1" not in " ".join(expected_open_cmd)
+    assert "3des" not in " ".join(expected_open_cmd)
+
+
 def test_scrapli_command_rejection_is_typed(monkeypatch) -> None:
     class FailedResponse:
         failed = True

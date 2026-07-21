@@ -95,6 +95,8 @@ in `network-automation-final-plan.md`.
 | 2026-07-20 | Serving policy | Static Nginx/Vite regression plus hidden loopback Vite and production Compose `HEAD /` checks | Development and production responses contained `camera=(), microphone=(), geolocation=(), serial=(self)`; both local launchers/listeners and the Compose stack were explicitly stopped and confirmed absent |
 | 2026-07-20 | Manual USB Console UI polish | CSS-source regression; USB component regression; `npm.cmd run verify` | Scoped light-surface and privacy-note declarations passed source and component checks; 12 files / 91 tests, type check, lint, and production build passed; browser visual validation remains pending; no hardware contacted |
 | 2026-07-21 | SSH runtime hardening and multi-port SSH-aware discovery | Backend Ruff, Pyright and `python -m pytest`; frontend `npm.cmd run verify`; normal/dev Compose `config --quiet`; focused fake transport/banner, logging, RQ-formatting and approval regressions | **Automated verification passed; hardware validation pending.** Backend 85 passed/1 opt-in lab skipped; frontend 12 files/92 tests plus typecheck, lint and production build passed; both Compose configs valid. Docker image smoke-test remains pending because the local Docker Desktop daemon was unavailable; no device connection or real network probe was performed. |
+| 2026-07-21 | Candidate connection-test route-method regression | TDD route-matcher RED; focused API regression; changed-file Ruff format check; Ruff lint; Pyright; routine backend pytest; normal/dev Compose validation; image rebuild and live local endpoint check | `GET /api/devices/connection-test` now returns 405 with `Allow: POST` instead of parsing `connection-test` as a UUID. Backend 86 passed/1 opt-in lab skipped; rebuilt stack healthy; no device connection or network probe was performed. |
+| 2026-07-21 | Narrow legacy SSH interoperability | TDD transport-options RED/GREEN; affected driver/runtime tests; changed-file Ruff format; full Ruff and Pyright; network-disabled backend pytest; normal/dev Compose validation; image rebuild/health; one authorized connection-only hardware attempt using an encrypted profile | Cisco and generic structured Scrapli transports append group14-SHA1, RSA host-key, and AES-256-CBC compatibility after modern OpenSSH defaults; group1/3DES remain disabled. Focused RED failed on missing `transport_options`, GREEN passed; 28 affected tests and the full 87 passed/1 opt-in lab skipped. Rebuilt services were healthy. The authorized legacy device negotiated through the SSH authentication boundary, then rejected the selected credential profile; no show/configuration command ran and no capability was promoted. |
 
 ## Security decisions verified
 
@@ -113,12 +115,15 @@ in `network-automation-final-plan.md`.
 
 ## Known gaps
 
-- No real-device lab result is recorded. Phase 1 exit remains blocked; the user
-  explicitly directed fixture-only Phase 2 work, so Cisco reads remain **lab
-  unverified**.
-- The backend Dockerfile now includes the OpenSSH client required by Scrapli's
-  explicit system transport, but the rebuilt-image `ssh -V` smoke-test is
-  pending because Docker Desktop was unavailable during this verification.
+- No qualifying real-device lab acceptance result is recorded. A bounded
+  connection-only attempt reached the authentication boundary on an authorized
+  legacy Cisco device, but the selected credential profile was rejected and no
+  structured read or required OS metadata was collected. Phase 1 therefore
+  remains **lab unverified**.
+- The rebuilt backend image includes the OpenSSH client required by Scrapli's
+  explicit system transport. Runtime negotiation with an authorized legacy
+  device reached authentication using the narrow compatibility set; this does
+  not replace a successful authenticated lab-harness result.
 - Manual USB Console automated verification passed, but hardware validation is
   pending. It remains lab-unverified, and no device/vendor support is inferred
   from browser, fake-stream, serving-policy, or local Compose evidence. Manual

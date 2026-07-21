@@ -125,6 +125,11 @@ encrypted profile. Do not paste it into an issue or support chat.
 - The local-lab default `SSH_STRICT_HOST_KEY=false` accepts impersonation risk.
   Persistent or LAN-accessible deployments must mount a trusted `known_hosts`
   file and set it to `true`; never auto-accept a changed host key.
+- Structured Scrapli transports append only `diffie-hellman-group14-sha1`,
+  `ssh-rsa`, and `aes256-cbc` after OpenSSH's modern defaults for older-device
+  interoperability. These are weaker fallbacks, not preferred algorithms.
+  Group1 and 3DES remain disabled, and the fallback does not weaken or bypass
+  the configured host-key verification policy.
 - Keep connection establishment (`SSH_CONNECT_TIMEOUT_SECONDS`, default 10) and
   command execution (`SSH_COMMAND_TIMEOUT_SECONDS`, default 30) as separate,
   bounded timeouts. A command timeout must not trigger an unbounded reconnect.

@@ -14,6 +14,7 @@ from app.models.entities import (
     JobType,
     Neighbor,
     SafetyLevel,
+    SSHCompatibility,
     Vendor,
 )
 
@@ -32,6 +33,7 @@ __all__ = [
     "JobState",
     "JobType",
     "Neighbor",
+    "SSHCompatibility",
     "SafetyLevel",
     "Vendor",
 ]

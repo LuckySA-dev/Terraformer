@@ -17,7 +17,11 @@ def test_database_password_file_and_connection_limit_alias(
     settings = Settings(_env_file=None)
 
     assert settings.max_device_connections == 12
+    assert settings.ssh_legacy_enabled is False
+    assert settings.ssh_group1_enabled is False
+    assert settings.ssh_terminal_enabled is True
+    assert settings.terminal_pty_timeout_seconds == 10.0
+    assert settings.terminal_max_duration_seconds == 3600
     assert settings.resolved_database_url() == (
         "postgresql+psycopg://app+user:p%40ss%3A%2Fword@db.internal:5432/terraformer"
     )
-

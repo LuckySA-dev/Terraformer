@@ -6,7 +6,7 @@ from enum import StrEnum
 from typing import Any, Literal, Never, Protocol
 
 from app.core.errors import UnsupportedCapabilityError
-from app.models import SafetyLevel, Vendor
+from app.models import SafetyLevel, SSHCompatibility, Vendor
 
 
 class DriverCapability(StrEnum):
@@ -89,6 +89,7 @@ class ConnectionParameters:
     enable_password: str | None = None
     connect_timeout_seconds: float = 10.0
     command_timeout_seconds: float = 30.0
+    ssh_compatibility: SSHCompatibility = SSHCompatibility.MODERN
 
 
 @dataclass(frozen=True, slots=True)

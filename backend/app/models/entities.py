@@ -39,6 +39,12 @@ class DeviceStatus(StrEnum):
     UNREACHABLE = "unreachable"
 
 
+class SSHCompatibility(StrEnum):
+    MODERN = "modern"
+    CISCO_LEGACY = "cisco_legacy"
+    CISCO_LEGACY_GROUP1 = "cisco_legacy_group1"
+
+
 class SafetyLevel(StrEnum):
     READ_ONLY = "D"
 
@@ -114,6 +120,18 @@ class Device(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         enum_type(DeviceStatus, "device_status"),
         nullable=False,
         default=DeviceStatus.UNKNOWN,
+    )
+    ssh_compatibility: Mapped[SSHCompatibility] = mapped_column(
+        Enum(
+            SSHCompatibility,
+            name="ssh_compatibility",
+            native_enum=False,
+            create_constraint=True,
+            values_callable=_enum_values,
+            validate_strings=True,
+        ),
+        nullable=False,
+        default=SSHCompatibility.MODERN,
     )
     credential_profile_id: Mapped[UUID] = mapped_column(
         ForeignKey("credential_profiles.id", ondelete="RESTRICT"),

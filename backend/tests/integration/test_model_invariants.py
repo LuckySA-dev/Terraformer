@@ -6,7 +6,14 @@ import pytest
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.errors import SnapshotImmutableError
-from app.models import ConfigSnapshot, CredentialProfile, Device, DeviceStatus, Vendor
+from app.models import (
+    ConfigSnapshot,
+    CredentialProfile,
+    Device,
+    DeviceStatus,
+    SSHCompatibility,
+    Vendor,
+)
 
 
 def test_snapshot_rows_reject_update_and_delete(session_factory: sessionmaker[Session]) -> None:
@@ -55,3 +62,23 @@ def test_snapshot_rows_reject_update_and_delete(session_factory: sessionmaker[Se
             session.flush()
         session.rollback()
 
+
+def test_device_compatibility_defaults_to_modern(session_factory: sessionmaker[Session]) -> None:
+    with session_factory() as session:
+        profile = CredentialProfile(
+            name="compatibility-fixture",
+            encrypted_secret=b"encrypted",
+        )
+        session.add(profile)
+        session.flush()
+        device = Device(
+            name="compatibility-fixture",
+            management_address="192.0.2.21",
+            vendor=Vendor.CISCO_IOSXE,
+            credential_profile_id=profile.id,
+            facts={},
+        )
+        session.add(device)
+        session.flush()
+
+        assert device.ssh_compatibility is SSHCompatibility.MODERN

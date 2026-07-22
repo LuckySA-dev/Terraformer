@@ -18,6 +18,11 @@ x-backend-environment: &backend-environment
   DEVICE_CONNECTION_LIMIT: "${DEVICE_CONNECTION_LIMIT:-10}"
   SSH_CONNECT_TIMEOUT_SECONDS: "${SSH_CONNECT_TIMEOUT_SECONDS:-10}"
   SSH_COMMAND_TIMEOUT_SECONDS: "${SSH_COMMAND_TIMEOUT_SECONDS:-30}"
+  SSH_LEGACY_ENABLED: "${SSH_LEGACY_ENABLED:-false}"
+  SSH_GROUP1_ENABLED: "${SSH_GROUP1_ENABLED:-false}"
+  SSH_TERMINAL_ENABLED: "${SSH_TERMINAL_ENABLED:-true}"
+  TERMINAL_PTY_TIMEOUT_SECONDS: "${TERMINAL_PTY_TIMEOUT_SECONDS:-10}"
+  TERMINAL_MAX_DURATION_SECONDS: "${TERMINAL_MAX_DURATION_SECONDS:-3600}"
   SSH_STRICT_HOST_KEY: "${SSH_STRICT_HOST_KEY:-false}"
   SESSION_COOKIE_SECURE: "${SESSION_COOKIE_SECURE:-false}"
   SESSION_COOKIE_SAMESITE: ${SESSION_COOKIE_SAMESITE:-lax}
@@ -70,7 +75,7 @@ services:
     <<: *service-security
     image: terraformer-backend:${APP_IMAGE_TAG:-local}
     build: *backend-build
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--ws-max-size", "8192"]
     init: true
     restart: unless-stopped
     depends_on:

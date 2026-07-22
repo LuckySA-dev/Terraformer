@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import Field, field_validator, model_validator
 
-from app.models import DeviceStatus, SafetyLevel, Vendor
+from app.models import DeviceStatus, SafetyLevel, SSHCompatibility, Vendor
 from app.schemas.common import APIModel
 
 _HOST = re.compile(r"^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?)$")
@@ -18,6 +18,8 @@ class DeviceConnectionFields(APIModel):
     port: int = Field(default=22, ge=1, le=65_535)
     vendor: Vendor
     credential_profile_id: UUID
+    ssh_compatibility: SSHCompatibility = SSHCompatibility.MODERN
+    group1_risk_acknowledged: bool = False
 
     @field_validator("management_address")
     @classmethod
@@ -46,6 +48,8 @@ class DeviceUpdate(APIModel):
     port: int | None = Field(default=None, ge=1, le=65_535)
     vendor: Vendor | None = None
     credential_profile_id: UUID | None = None
+    ssh_compatibility: SSHCompatibility | None = None
+    group1_risk_acknowledged: bool = False
 
     @model_validator(mode="after")
     def reject_explicit_nulls(self) -> DeviceUpdate:
@@ -79,6 +83,7 @@ class DeviceView(APIModel):
     management_address: str
     port: int
     vendor: Vendor
+    ssh_compatibility: SSHCompatibility
     status: DeviceStatus
     credential_profile_id: UUID
     facts: dict[str, Any]

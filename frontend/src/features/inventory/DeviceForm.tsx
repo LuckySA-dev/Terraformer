@@ -53,8 +53,8 @@ const fingerprint = (input: DeviceInput): string =>
     port: input.port,
     vendor: input.vendor,
     credential_profile_id: input.credential_profile_id,
-    ssh_compatibility: input.ssh_compatibility ?? 'modern',
-    group1_risk_acknowledged: input.group1_risk_acknowledged ?? false,
+    ssh_compatibility: input.ssh_compatibility,
+    group1_risk_acknowledged: input.group1_risk_acknowledged,
   });
 
 function connectionErrorText(error: unknown): string {

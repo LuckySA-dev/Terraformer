@@ -77,8 +77,8 @@ export const api = {
         port,
         vendor,
         credential_profile_id,
-        ...(ssh_compatibility === undefined ? {} : { ssh_compatibility }),
-        ...(group1_risk_acknowledged === undefined ? {} : { group1_risk_acknowledged }),
+        ssh_compatibility,
+        group1_risk_acknowledged,
       }),
     }),
   testDeviceConnection: (id: string) =>

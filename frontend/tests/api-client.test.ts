@@ -1,6 +1,6 @@
 import { ApiError, apiRequest } from '../src/api/client';
 import { api } from '../src/api/network';
-import type { HealthResponse } from '../src/types/api';
+import type { DeviceInput, HealthResponse } from '../src/types/api';
 
 describe('typed API client', () => {
   it('maps the backend error envelope without exposing an unreadable response', async () => {
@@ -70,6 +70,12 @@ describe('typed API client', () => {
   });
 
   it('omits the display name from the strict connection-test request schema', async () => {
+    const compatibilityFieldsAreRequired: DeviceInput extends {
+      ssh_compatibility: 'modern' | 'cisco_legacy' | 'cisco_legacy_group1';
+      group1_risk_acknowledged: boolean;
+    }
+      ? true
+      : false = true;
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -89,15 +95,20 @@ describe('typed API client', () => {
       port: 22,
       vendor: 'cisco_iosxe',
       credential_profile_id: 'c6d6a5be-bf2e-4d6a-bda8-3a559f985631',
+      ssh_compatibility: 'modern',
+      group1_risk_acknowledged: false,
     });
 
     const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
     const body = JSON.parse(request.body as string) as unknown;
+    expect(compatibilityFieldsAreRequired).toBe(true);
     expect(body).toEqual({
       management_address: '192.0.2.10',
       port: 22,
       vendor: 'cisco_iosxe',
       credential_profile_id: 'c6d6a5be-bf2e-4d6a-bda8-3a559f985631',
+      ssh_compatibility: 'modern',
+      group1_risk_acknowledged: false,
     });
   });
 });

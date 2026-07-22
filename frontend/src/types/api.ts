@@ -90,8 +90,8 @@ export interface DeviceInput {
   port: number;
   vendor: 'cisco_iosxe' | 'generic';
   credential_profile_id: string;
-  ssh_compatibility?: SshCompatibility;
-  group1_risk_acknowledged?: boolean;
+  ssh_compatibility: SshCompatibility;
+  group1_risk_acknowledged: boolean;
 }
 
 export interface DiscoveryInput {

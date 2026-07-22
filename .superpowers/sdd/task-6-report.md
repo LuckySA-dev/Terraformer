@@ -31,3 +31,10 @@
 - Backend contract regression was not needed because Task 6 changes no backend code and the prior backend device/discovery contract already accepts and tests both fields.
 
 `docs/network-automation-final-plan.md` and `AGENTS.md` remain unchanged. No real device or external network was contacted.
+
+## Review follow-up
+
+- Made both `DeviceInput` compatibility fields required and made candidate-test serialization unconditional; create, update, and discovery approval already serialize the complete `DeviceInput` unchanged.
+- Updated the existing API-client contract test to supply and expect exact `modern` / `false` values. No API-boundary default or conditional omission remains.
+- Review RED: `npm run typecheck` failed with `TS2322` because the compile-time contract proved the fields were optional.
+- Review GREEN: the focused API/device suite reports 27 passed; full frontend verification reports 100 passed, lint passes with zero warnings, typecheck passes, and the production build succeeds with only the existing large-chunk advisory.

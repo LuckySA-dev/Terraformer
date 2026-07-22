@@ -76,6 +76,26 @@ class DriverAuthenticationError(DriverError):
     default_message = "The device rejected the credential profile"
 
 
+class DriverHostKeyVerificationError(DriverConnectionError):
+    code = "device_host_key_verification_failed"
+    default_message = "SSH host key verification failed"
+
+
+class DriverSSHNegotiationError(DriverConnectionError):
+    code = "legacy_ssh_negotiation_failed"
+    default_message = "SSH negotiation with the device failed"
+
+
+class DriverTerminalPTYError(DriverConnectionError):
+    code = "terminal_pty_rejected"
+    default_message = "The device rejected terminal setup"
+
+
+class DriverTerminalIOError(DriverConnectionError):
+    code = "terminal_transport_failed"
+    default_message = "The device terminal transport failed"
+
+
 class DriverTimeoutError(DriverError):
     code = "device_timeout"
     status_code = 504

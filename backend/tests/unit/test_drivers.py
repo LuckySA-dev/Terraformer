@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import sys
+import traceback
 from types import SimpleNamespace
 
 import pytest
 from scrapli.exceptions import (
     ScrapliAuthenticationFailed,
+    ScrapliConnectionError,
     ScrapliModuleNotFound,
     ScrapliTimeout,
     ScrapliTransportPluginError,
@@ -17,6 +19,9 @@ from app.core.errors import (
     DriverAuthenticationError,
     DriverCommandRejectedError,
     DriverConnectionError,
+    DriverHostKeyVerificationError,
+    DriverSSHNegotiationError,
+    DriverTerminalPTYError,
     DriverTimeoutError,
     UnsupportedCapabilityError,
 )
@@ -33,7 +38,9 @@ from app.drivers.cisco_iosxe import (
     parse_show_interfaces,
     parse_show_version,
 )
+from app.drivers.ssh_errors import ConnectionPhase, translate_ssh_error
 from app.drivers.transport import ScrapliGenericTransport, ScrapliTransport
+from app.models import SSHCompatibility
 from tests.fakes import FakeTransportFactory
 
 
@@ -129,6 +136,36 @@ def test_transport_errors_are_typed_and_sanitized(
     assert "raw-" not in str(captured.value)
 
 
+def test_authentication_failure_has_only_fixed_safe_metadata() -> None:
+    raw_values = (
+        "raw-auth-marker",
+        "edge-rtr-01.example.test",
+        "fixture-password",
+        "peer-offered-ssh-rsa",
+        "ScrapliAuthenticationFailed",
+    )
+    driver = CiscoIOSXEDriver(
+        FakeTransportFactory(
+            {},
+            open_error=ScrapliAuthenticationFailed(
+                "Permission denied raw-auth-marker edge-rtr-01.example.test "
+                "fixture-password peer-offered-ssh-rsa"
+            ),
+        )
+    )
+
+    with pytest.raises(DriverAuthenticationError) as captured:
+        driver.test_connection(parameters())
+
+    assert captured.value.details == {
+        "phase": "authentication",
+        "retryable": False,
+        "recommended_action": ("Verify the selected credential profile and device login policy."),
+    }
+    rendered = "".join(traceback.format_exception(captured.type, captured.value, captured.tb))
+    assert all(raw not in rendered for raw in raw_values)
+
+
 def test_connection_and_command_timeouts_are_wired_independently(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
@@ -145,6 +182,345 @@ def test_connection_and_command_timeouts_are_wired_independently(monkeypatch) ->
     assert captured["auth_strict_key"] is True
     assert captured["platform"] == "cisco_iosxe"
     assert captured["transport"] == "system"
+
+
+def test_scrapli_transports_force_password_only_authentication(monkeypatch) -> None:
+    captured: list[dict[str, object]] = []
+
+    class FakeConnection:
+        def __init__(self, **kwargs) -> None:
+            captured.append(kwargs)
+
+    monkeypatch.setitem(sys.modules, "scrapli", SimpleNamespace(Scrapli=FakeConnection))
+    monkeypatch.setitem(
+        sys.modules,
+        "scrapli.driver",
+        SimpleNamespace(GenericDriver=FakeConnection),
+    )
+
+    secret_parameters = ConnectionParameters(
+        host="192.0.2.10",
+        port=22,
+        username="fixture-user",
+        password="fixture-password",
+        enable_password="fixture-enable-password",
+    )
+    ScrapliTransport(secret_parameters, strict_host_key=True)
+    ScrapliGenericTransport(secret_parameters, strict_host_key=True)
+
+    expected = [
+        "-o",
+        "IdentityAgent=none",
+        "-o",
+        "IdentitiesOnly=yes",
+        "-o",
+        "PreferredAuthentications=password",
+        "-o",
+        "PasswordAuthentication=yes",
+        "-o",
+        "PubkeyAuthentication=no",
+        "-o",
+        "KbdInteractiveAuthentication=no",
+        "-o",
+        "HostbasedAuthentication=no",
+        "-o",
+        "GSSAPIAuthentication=no",
+        "-o",
+        "NumberOfPasswordPrompts=1",
+    ]
+    for constructor in captured:
+        assert constructor["transport_options"] == {"open_cmd": expected}
+        assert secret_parameters.password not in expected
+        assert secret_parameters.enable_password not in expected
+
+
+@pytest.mark.parametrize(
+    ("mode", "algorithm_options"),
+    [
+        (SSHCompatibility.MODERN, ()),
+        (
+            SSHCompatibility.CISCO_LEGACY,
+            (
+                "KexAlgorithms=+diffie-hellman-group14-sha1,diffie-hellman-group-exchange-sha1",
+                "HostKeyAlgorithms=+ssh-rsa",
+                "Ciphers=+aes256-cbc,aes192-cbc,aes128-cbc",
+                "MACs=+hmac-sha1,hmac-sha1-96",
+            ),
+        ),
+        (
+            SSHCompatibility.CISCO_LEGACY_GROUP1,
+            (
+                "KexAlgorithms=+diffie-hellman-group14-sha1,"
+                "diffie-hellman-group-exchange-sha1,diffie-hellman-group1-sha1",
+                "HostKeyAlgorithms=+ssh-rsa",
+                "Ciphers=+aes256-cbc,aes192-cbc,aes128-cbc",
+                "MACs=+hmac-sha1,hmac-sha1-96",
+            ),
+        ),
+    ],
+)
+def test_scrapli_transports_scope_exact_compatibility_options(
+    monkeypatch,
+    mode: SSHCompatibility,
+    algorithm_options: tuple[str, ...],
+) -> None:
+    captured: list[dict[str, object]] = []
+
+    class FakeConnection:
+        def __init__(self, **kwargs) -> None:
+            captured.append(kwargs)
+
+    monkeypatch.setitem(sys.modules, "scrapli", SimpleNamespace(Scrapli=FakeConnection))
+    monkeypatch.setitem(
+        sys.modules,
+        "scrapli.driver",
+        SimpleNamespace(GenericDriver=FakeConnection),
+    )
+    secret_parameters = ConnectionParameters(
+        host="192.0.2.10",
+        port=22,
+        username="fixture-user",
+        password="fixture-password",
+        enable_password="fixture-enable-password",
+        ssh_compatibility=mode,
+    )
+
+    ScrapliTransport(secret_parameters, strict_host_key=True)
+    ScrapliGenericTransport(secret_parameters, strict_host_key=True)
+
+    authentication_options = (
+        "IdentityAgent=none",
+        "IdentitiesOnly=yes",
+        "PreferredAuthentications=password",
+        "PasswordAuthentication=yes",
+        "PubkeyAuthentication=no",
+        "KbdInteractiveAuthentication=no",
+        "HostbasedAuthentication=no",
+        "GSSAPIAuthentication=no",
+        "NumberOfPasswordPrompts=1",
+    )
+    expected = [
+        item for option in (*authentication_options, *algorithm_options) for item in ("-o", option)
+    ]
+    for constructor in captured:
+        open_cmd = constructor["transport_options"]["open_cmd"]  # type: ignore[index]
+        assert open_cmd == expected
+        assert secret_parameters.password not in open_cmd
+        assert secret_parameters.enable_password not in open_cmd
+
+
+@pytest.mark.parametrize(
+    ("error", "phase", "expected_type", "expected_details"),
+    [
+        (
+            ScrapliTimeout("raw-timeout-marker"),
+            ConnectionPhase.TCP,
+            DriverTimeoutError,
+            {
+                "phase": "tcp_connection",
+                "retryable": True,
+                "recommended_action": (
+                    "Retry after verifying device reachability and network latency."
+                ),
+            },
+        ),
+        (
+            ScrapliAuthenticationFailed("Permission denied raw-auth-marker"),
+            ConnectionPhase.NEGOTIATION,
+            DriverAuthenticationError,
+            {
+                "phase": "authentication",
+                "retryable": False,
+                "recommended_action": (
+                    "Verify the selected credential profile and device login policy."
+                ),
+            },
+        ),
+        (
+            ScrapliAuthenticationFailed("No matching key exchange raw-kex-marker"),
+            ConnectionPhase.NEGOTIATION,
+            DriverSSHNegotiationError,
+            {
+                "phase": "ssh_negotiation",
+                "retryable": False,
+                "recommended_action": ("Verify the saved compatibility mode for this device."),
+            },
+        ),
+        (
+            ScrapliAuthenticationFailed("Host key verification failed raw-host-marker"),
+            ConnectionPhase.NEGOTIATION,
+            DriverHostKeyVerificationError,
+            {
+                "phase": "host_key_verification",
+                "retryable": False,
+                "recommended_action": "Verify the saved SSH host key for this device.",
+            },
+        ),
+        (
+            ScrapliValueError("raw-configuration-marker"),
+            ConnectionPhase.TCP,
+            ConfigurationError,
+            {"phase": "tcp_connection", "retryable": False},
+        ),
+        (
+            RuntimeError("raw-pty-marker"),
+            ConnectionPhase.PTY,
+            DriverTerminalPTYError,
+            {
+                "phase": "pty_creation",
+                "retryable": False,
+                "recommended_action": "Verify the device permits PTY and shell creation.",
+            },
+        ),
+    ],
+)
+def test_ssh_error_catalog_is_typed_and_contains_only_fixed_metadata(
+    error: Exception,
+    phase: ConnectionPhase,
+    expected_type: type[Exception],
+    expected_details: dict[str, object],
+) -> None:
+    translated = translate_ssh_error(error, phase=phase)
+
+    assert type(translated) is expected_type
+    assert translated.details == expected_details
+    assert "raw-" not in str(translated)
+    assert "raw-" not in repr(translated.details)
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        "No matching key exchange found for host, their offer: raw-kex-offer",
+        "No matching host key type found for host, their offer: raw-host-key-offer",
+        "No matching cipher found for host, their offer: raw-cipher-offer",
+    ],
+)
+def test_algorithm_mismatch_is_always_negotiation(marker: str) -> None:
+    translated = translate_ssh_error(
+        ScrapliAuthenticationFailed(marker),
+        phase=ConnectionPhase.TCP,
+    )
+
+    assert type(translated) is DriverSSHNegotiationError
+    assert translated.details == {
+        "phase": "ssh_negotiation",
+        "retryable": False,
+        "recommended_action": "Verify the saved compatibility mode for this device.",
+    }
+    assert "raw-" not in str(translated)
+    assert "raw-" not in repr(translated.details)
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        "Host key verification failed raw-verification-marker",
+        "REMOTE HOST IDENTIFICATION HAS CHANGED raw-changed-marker",
+        "No ED25519 host key is known for edge-rtr-01.example.test raw-unknown-marker",
+    ],
+)
+def test_real_host_key_failures_are_host_key_phase(marker: str) -> None:
+    translated = translate_ssh_error(
+        ScrapliAuthenticationFailed(marker),
+        phase=ConnectionPhase.TCP,
+    )
+
+    assert type(translated) is DriverHostKeyVerificationError
+    assert translated.details == {
+        "phase": "host_key_verification",
+        "retryable": False,
+        "recommended_action": "Verify the saved SSH host key for this device.",
+    }
+    assert "raw-" not in str(translated)
+    assert "raw-" not in repr(translated.details)
+
+
+@pytest.mark.parametrize(
+    ("phase", "expected_code", "retryable"),
+    [
+        (ConnectionPhase.TCP, "device_connection_failed", True),
+        (ConnectionPhase.NEGOTIATION, "legacy_ssh_negotiation_failed", False),
+        (ConnectionPhase.HOST_KEY, "device_host_key_verification_failed", False),
+        (ConnectionPhase.AUTHENTICATION, "device_authentication_failed", False),
+        (ConnectionPhase.PTY, "terminal_pty_rejected", False),
+        (ConnectionPhase.TERMINAL_IO, "terminal_transport_failed", True),
+    ],
+)
+def test_generic_failures_use_the_phase_catalog(
+    phase: ConnectionPhase,
+    expected_code: str,
+    retryable: bool,
+) -> None:
+    translated = translate_ssh_error(RuntimeError("raw-phase-marker"), phase=phase)
+
+    assert translated.code == expected_code
+    assert translated.details["phase"] == phase.value
+    assert translated.details["retryable"] is retryable
+    assert set(translated.details) <= {"phase", "retryable", "recommended_action"}
+    assert "raw-phase-marker" not in str(translated)
+
+
+@pytest.mark.parametrize("driver_type", [CiscoIOSXEDriver, GenericReadOnlyDriver])
+def test_open_failures_default_to_tcp_for_both_adapters(driver_type) -> None:
+    driver = driver_type(FakeTransportFactory({}, open_error=RuntimeError("raw-open-marker")))
+
+    with pytest.raises(DriverConnectionError) as captured:
+        driver.test_connection(parameters())
+
+    assert captured.value.details["phase"] == "tcp_connection"
+    rendered = "".join(traceback.format_exception(captured.type, captured.value, captured.tb))
+    assert "raw-open-marker" not in rendered
+
+
+def test_command_transport_failure_is_terminal_io_and_sanitized(
+    sanitized_outputs: dict[str, str],
+) -> None:
+    driver = CiscoIOSXEDriver(
+        FakeTransportFactory(
+            sanitized_outputs,
+            command_error=ScrapliConnectionError(
+                "raw-command-marker edge-rtr-01.example.test fixture-password"
+            ),
+        )
+    )
+
+    with pytest.raises(DriverConnectionError) as captured:
+        driver.run_diagnostic(parameters(), DiagnosticAction.ROUTING_TABLE)
+
+    assert captured.value.code == "terminal_transport_failed"
+    assert captured.value.details["phase"] == "terminal_io"
+    rendered = "".join(traceback.format_exception(captured.type, captured.value, captured.tb))
+    assert "raw-command-marker" not in rendered
+    assert "edge-rtr-01.example.test" not in rendered
+    assert "fixture-password" not in rendered
+
+
+def test_typed_command_error_is_rebuilt_without_raw_state(
+    sanitized_outputs: dict[str, str],
+) -> None:
+    raw_error = DriverCommandRejectedError(
+        "raw-command-marker edge-rtr-01.example.test fixture-password"
+    )
+    driver = CiscoIOSXEDriver(
+        FakeTransportFactory(
+            sanitized_outputs,
+            command_errors={"show version": raw_error},
+        )
+    )
+
+    with pytest.raises(DriverCommandRejectedError) as captured:
+        driver.collect_observations(parameters())
+
+    assert captured.value is not raw_error
+    assert captured.value.details == {
+        "phase": "terminal_io",
+        "retryable": False,
+    }
+    rendered = "".join(traceback.format_exception(captured.type, captured.value, captured.tb))
+    assert "raw-command-marker" not in rendered
+    assert "edge-rtr-01.example.test" not in rendered
+    assert "fixture-password" not in rendered
 
 
 def test_scrapli_command_rejection_is_typed(monkeypatch) -> None:
@@ -200,10 +576,19 @@ def test_read_operations_translate_command_timeout(
     error = ScrapliTimeout("raw-command-timeout-marker")
     driver = CiscoIOSXEDriver(FakeTransportFactory(sanitized_outputs, command_error=error))
 
-    with pytest.raises(DriverTimeoutError):
+    with pytest.raises(DriverTimeoutError) as neighbor_timeout:
         driver.get_neighbors(parameters())
-    with pytest.raises(DriverTimeoutError):
+    with pytest.raises(DriverTimeoutError) as diagnostic_timeout:
         driver.run_diagnostic(parameters(), DiagnosticAction.ROUTING_TABLE)
+
+    for captured in (neighbor_timeout, diagnostic_timeout):
+        assert captured.value.details == {
+            "phase": "terminal_io",
+            "retryable": True,
+            "recommended_action": (
+                "Retry after verifying device reachability and network latency."
+            ),
+        }
 
 
 def test_neighbor_collection_deduplicates_and_uses_lldp_chassis_fallback(

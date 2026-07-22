@@ -2,21 +2,7 @@ from __future__ import annotations
 
 from time import monotonic
 
-from scrapli.exceptions import (
-    ScrapliAuthenticationFailed,
-    ScrapliModuleNotFound,
-    ScrapliTimeout,
-    ScrapliTransportPluginError,
-    ScrapliValueError,
-)
-
-from app.core.errors import (
-    AppError,
-    ConfigurationError,
-    DriverAuthenticationError,
-    DriverConnectionError,
-    DriverTimeoutError,
-)
+from app.core.errors import AppError
 from app.drivers.base import (
     ConnectionParameters,
     ConnectionTestResult,
@@ -25,30 +11,12 @@ from app.drivers.base import (
     DriverCapabilitySet,
     TransportFactory,
 )
+from app.drivers.ssh_errors import ConnectionPhase, translate_ssh_error
 from app.models import SafetyLevel, Vendor
 
-_CREDENTIAL_REJECTION_MARKERS = ("permission denied", "password prompt")
-_TIMEOUT_MARKERS = ("timed out connecting",)
 
-
-def translate_transport_error(exc: Exception) -> Exception:
-    if isinstance(exc, AppError):
-        return exc
-    if isinstance(exc, ScrapliTimeout):
-        return DriverTimeoutError()
-    if isinstance(exc, ScrapliAuthenticationFailed):
-        message = str(exc).lower()
-        if any(marker in message for marker in _TIMEOUT_MARKERS):
-            return DriverTimeoutError()
-        if any(marker in message for marker in _CREDENTIAL_REJECTION_MARKERS):
-            return DriverAuthenticationError()
-        return DriverConnectionError()
-    if isinstance(
-        exc,
-        ScrapliValueError | ScrapliModuleNotFound | ScrapliTransportPluginError,
-    ):
-        return ConfigurationError()
-    return DriverConnectionError()
+def translate_transport_error(exc: Exception, *, phase: ConnectionPhase) -> AppError:
+    return translate_ssh_error(exc, phase=phase)
 
 
 class GenericReadOnlyDriver(DeviceDriver):
@@ -72,7 +40,7 @@ class GenericReadOnlyDriver(DeviceDriver):
         try:
             transport.open()
         except Exception as exc:
-            raise translate_transport_error(exc) from exc
+            raise translate_transport_error(exc, phase=ConnectionPhase.TCP) from None
         finally:
             try:
                 transport.close()

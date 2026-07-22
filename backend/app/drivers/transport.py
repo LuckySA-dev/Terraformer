@@ -4,6 +4,8 @@ from typing import Any
 
 from app.core.errors import DriverCommandRejectedError
 from app.drivers.base import ConnectionParameters, NetworkTransport
+from app.drivers.ssh_compatibility import compatibility_policy
+from app.drivers.ssh_errors import password_only_openssh_options
 
 
 class ScrapliTransport:
@@ -24,6 +26,13 @@ class ScrapliTransport:
             "timeout_socket": parameters.connect_timeout_seconds,
             "timeout_transport": parameters.connect_timeout_seconds,
             "timeout_ops": parameters.command_timeout_seconds,
+            "transport_options": {
+                "open_cmd": list(
+                    password_only_openssh_options(
+                        compatibility_policy(parameters.ssh_compatibility)
+                    )
+                )
+            },
         }
         self._connection = Scrapli(**device)
 
@@ -64,6 +73,13 @@ class ScrapliGenericTransport:
             timeout_socket=parameters.connect_timeout_seconds,
             timeout_transport=parameters.connect_timeout_seconds,
             timeout_ops=parameters.command_timeout_seconds,
+            transport_options={
+                "open_cmd": list(
+                    password_only_openssh_options(
+                        compatibility_policy(parameters.ssh_compatibility)
+                    )
+                )
+            },
         )
 
     def open(self) -> None:

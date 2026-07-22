@@ -22,6 +22,7 @@ from app.drivers.base import (
     TransportFactory,
 )
 from app.drivers.generic_readonly import translate_transport_error
+from app.drivers.ssh_errors import ConnectionPhase
 from app.models import SafetyLevel, Vendor
 
 _INTERFACE_HEADER = re.compile(
@@ -156,12 +157,16 @@ class CiscoIOSXEDriver(DeviceDriver):
         transport = self._transport_factory(parameters)
         try:
             transport.open()
+        except Exception as exc:
+            raise translate_transport_error(
+                exc,
+                phase=ConnectionPhase.TCP,
+            ) from None
+        try:
             yield transport
         except Exception as exc:
-            translated = translate_transport_error(exc)
-            if translated is exc:
-                raise
-            raise translated from exc
+            translated = translate_transport_error(exc, phase=ConnectionPhase.TERMINAL_IO)
+            raise translated from None
         finally:
             try:
                 transport.close()

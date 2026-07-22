@@ -1,6 +1,7 @@
 import logging
 
 import structlog
+from scrapli.exceptions import ScrapliAuthenticationFailed
 
 from app.core.logging import configure_logging, redact_value, sanitize_text
 
@@ -59,10 +60,28 @@ def test_scrapli_raw_messages_do_not_reach_application_logs(capsys) -> None:
     logging.getLogger("scrapli").handlers.clear()
     configure_logging("INFO")
 
-    logging.getLogger("scrapli.channel").critical(
-        "Permission denied raw-scrapli-marker"
-    )
+    logging.getLogger("scrapli.channel").critical("Permission denied raw-scrapli-marker")
 
     captured = capsys.readouterr()
     assert "raw-scrapli-marker" not in captured.out
     assert "raw-scrapli-marker" not in captured.err
+
+
+def test_structured_exception_values_are_replaced_before_rendering(capsys) -> None:
+    configure_logging("INFO")
+    structlog.get_logger("ssh-error-test").error(
+        "ssh_failure",
+        error=ScrapliAuthenticationFailed(
+            "raw-log-marker edge-rtr-01.example.test fixture-password peer-offered-ssh-rsa"
+        ),
+    )
+
+    output = capsys.readouterr().out
+    for prohibited in (
+        "raw-log-marker",
+        "edge-rtr-01.example.test",
+        "fixture-password",
+        "peer-offered-ssh-rsa",
+        "ScrapliAuthenticationFailed",
+    ):
+        assert prohibited not in output

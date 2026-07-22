@@ -56,9 +56,10 @@ def test_first_device_refresh_snapshot_and_event_flow(
 
     duplicate = authenticated_client.post("/api/devices", json=payload)
     assert duplicate.status_code == 409
-    assert authenticated_client.patch(
-        f"/api/devices/{device_id}", json={"name": None}
-    ).status_code == 422
+    assert (
+        authenticated_client.patch(f"/api/devices/{device_id}", json={"name": None}).status_code
+        == 422
+    )
 
     queued_refresh = authenticated_client.post(f"/api/devices/{device_id}/refresh")
     assert queued_refresh.status_code == 202
@@ -95,17 +96,13 @@ def test_first_device_refresh_snapshot_and_event_flow(
     completed = authenticated_client.get(f"/api/jobs/{refresh_job_id}")
     assert completed.json()["state"] == "succeeded"
 
-    queued_snapshot = authenticated_client.post(
-        f"/api/devices/{device_id}/config-snapshots"
-    )
+    queued_snapshot = authenticated_client.post(f"/api/devices/{device_id}/config-snapshots")
     assert queued_snapshot.status_code == 202
     snapshot_job_id = queued_snapshot.json()["id"]
     snapshot_result = tasks.execute_job(snapshot_job_id)
     snapshot_id = str(snapshot_result["snapshot_id"])
 
-    snapshots = authenticated_client.get(
-        "/api/config-snapshots", params={"device_id": device_id}
-    )
+    snapshots = authenticated_client.get("/api/config-snapshots", params={"device_id": device_id})
     assert snapshots.status_code == 200
     assert snapshots.json()[0]["id"] == snapshot_id
     snapshot = authenticated_client.get(f"/api/config-snapshots/{snapshot_id}")
@@ -154,6 +151,40 @@ def test_connection_failure_is_typed_and_does_not_create_device(
     assert authenticated_client.get("/api/devices").json() == []
 
 
+def test_negotiation_failure_api_contains_only_fixed_safe_fields(
+    authenticated_client: TestClient,
+    credential_profile: dict[str, object],
+    transport_factory,
+) -> None:
+    prohibited = (
+        "raw-offer-marker",
+        "edge-rtr-01.example.test",
+        "fixture-password",
+        "ScrapliAuthenticationFailed",
+    )
+    transport_factory.open_error = ScrapliAuthenticationFailed(
+        "No matching host key type found for edge-rtr-01.example.test, "
+        "their offer: raw-offer-marker fixture-password"
+    )
+
+    response = authenticated_client.post(
+        "/api/devices", json=_device_payload(str(credential_profile["id"]))
+    )
+
+    assert response.status_code == 502
+    assert response.json()["error"] == {
+        "code": "legacy_ssh_negotiation_failed",
+        "message": "SSH negotiation with the device failed",
+        "details": {
+            "phase": "ssh_negotiation",
+            "retryable": False,
+            "recommended_action": "Verify the saved compatibility mode for this device.",
+        },
+        "request_id": response.headers["x-request-id"],
+    }
+    assert all(value not in response.text for value in prohibited)
+
+
 def test_background_driver_failure_does_not_log_raw_exception(
     authenticated_client: TestClient,
     credential_profile: dict[str, object],
@@ -166,9 +197,7 @@ def test_background_driver_failure_does_not_log_raw_exception(
 
     class RecordingLogger:
         def exception(self, event: str, **kwargs: object) -> None:
-            records.append(
-                {"event": event, "traceback": traceback.format_exc(), **kwargs}
-            )
+            records.append({"event": event, "traceback": traceback.format_exc(), **kwargs})
 
         def error(self, event: str, **kwargs: object) -> None:
             records.append({"event": event, **kwargs})
@@ -188,9 +217,7 @@ def test_background_driver_failure_does_not_log_raw_exception(
         tasks.execute_job(job.json()["id"])
 
     assert "raw-worker-marker" not in repr(records)
-    rq_exc_info = "".join(
-        traceback.format_exception(captured.type, captured.value, captured.tb)
-    )
+    rq_exc_info = "".join(traceback.format_exception(captured.type, captured.value, captured.tb))
     assert "raw-worker-marker" not in rq_exc_info
     with session_factory() as session:
         stored = session.get(Job, UUID(job.json()["id"]))

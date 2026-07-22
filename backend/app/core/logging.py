@@ -37,6 +37,8 @@ def sanitize_text(value: str) -> str:
 def redact_value(value: Any, *, key: str | None = None) -> Any:
     if key is not None and _SENSITIVE_KEY.search(key):
         return _REDACTED
+    if isinstance(value, BaseException):
+        return _REDACTED
     if isinstance(value, str):
         return sanitize_text(value)
     if isinstance(value, Mapping):

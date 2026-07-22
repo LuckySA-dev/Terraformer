@@ -67,10 +67,19 @@ export const api = {
     port,
     vendor,
     credential_profile_id,
+    ssh_compatibility,
+    group1_risk_acknowledged,
   }: DeviceInput) =>
     apiRequest<ConnectionTestResult>('/devices/connection-test', {
       method: 'POST',
-      body: json({ management_address, port, vendor, credential_profile_id }),
+      body: json({
+        management_address,
+        port,
+        vendor,
+        credential_profile_id,
+        ...(ssh_compatibility === undefined ? {} : { ssh_compatibility }),
+        ...(group1_risk_acknowledged === undefined ? {} : { group1_risk_acknowledged }),
+      }),
     }),
   testDeviceConnection: (id: string) =>
     apiRequest<ConnectionTestResult>(`/devices/${encodeURIComponent(id)}/test-connection`, {

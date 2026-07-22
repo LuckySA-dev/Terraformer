@@ -109,6 +109,10 @@ function InventoryTable({
               <td>
                 <span className="table-primary">{device.vendor === 'generic' ? 'Generic · test only' : 'Cisco IOS / IOS-XE'}</span>
                 <small className="table-secondary">{device.facts.model ?? 'Model unavailable'}</small>
+                {device.ssh_compatibility === 'cisco_legacy' ||
+                device.ssh_compatibility === 'cisco_legacy_group1' ? (
+                  <Badge tone="warning">LEGACY SSH</Badge>
+                ) : null}
               </td>
               <td>
                 <Badge tone={deviceTone(device.status)} dot>

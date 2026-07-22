@@ -3,6 +3,7 @@ import { CheckCircle2, KeyRound, PlugZap, RotateCcw, ShieldCheck, XCircle } from
 import { useState } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
 import { z } from 'zod';
+import { ApiError } from '../../api/client';
 import { api } from '../../api/network';
 import type { ConnectionTestResult, CredentialProfile, Device, DeviceInput } from '../../types/api';
 import { InlineNotice } from '../../components/ui/AppState';
@@ -22,6 +23,16 @@ const deviceSchema = z.object({
   port: z.number().int().min(1, 'Port must be between 1 and 65535.').max(65_535),
   vendor: z.enum(['cisco_iosxe', 'generic']),
   credential_profile_id: z.uuid('Select a credential profile.'),
+  ssh_compatibility: z.enum(['modern', 'cisco_legacy', 'cisco_legacy_group1']),
+  group1_risk_acknowledged: z.boolean(),
+}).superRefine((value, context) => {
+  if (value.ssh_compatibility === 'cisco_legacy_group1' && !value.group1_risk_acknowledged) {
+    context.addIssue({
+      code: 'custom',
+      path: ['group1_risk_acknowledged'],
+      message: 'Acknowledge the Group1 risk before testing this connection.',
+    });
+  }
 });
 
 type DeviceFields = z.infer<typeof deviceSchema>;
@@ -42,7 +53,22 @@ const fingerprint = (input: DeviceInput): string =>
     port: input.port,
     vendor: input.vendor,
     credential_profile_id: input.credential_profile_id,
+    ssh_compatibility: input.ssh_compatibility ?? 'modern',
+    group1_risk_acknowledged: input.group1_risk_acknowledged ?? false,
   });
+
+function connectionErrorText(error: unknown): string {
+  if (!(error instanceof ApiError)) return 'The connection test could not complete.';
+  const details = error.details;
+  const recommendedAction =
+    typeof details === 'object' &&
+    details !== null &&
+    'recommended_action' in details &&
+    typeof details.recommended_action === 'string'
+      ? details.recommended_action
+      : undefined;
+  return recommendedAction === undefined ? error.message : `${error.message} ${recommendedAction}`;
+}
 
 export function DeviceForm({
   device,
@@ -65,6 +91,8 @@ export function DeviceForm({
       port: device?.port ?? initial?.port ?? 22,
       vendor: device?.vendor === 'generic' ? 'generic' : 'cisco_iosxe',
       credential_profile_id: device?.credential_profile_id ?? '',
+      ssh_compatibility: device?.ssh_compatibility ?? 'modern',
+      group1_risk_acknowledged: false,
     },
   });
   const watchedConnection = useWatch({ control: form.control });
@@ -75,6 +103,8 @@ export function DeviceForm({
     port: values.port,
     vendor: values.vendor,
     credential_profile_id: values.credential_profile_id,
+    ssh_compatibility: values.ssh_compatibility,
+    group1_risk_acknowledged: values.group1_risk_acknowledged,
   });
 
   const testConnection = async () => {
@@ -90,9 +120,7 @@ export function DeviceForm({
       setTestedFingerprint(result.reachable ? fingerprint(input) : undefined);
     } catch (connectionError) {
       setTestedFingerprint(undefined);
-      setTestError(
-        connectionError instanceof Error ? connectionError.message : 'The connection test could not complete.',
-      );
+      setTestError(connectionErrorText(connectionError));
     } finally {
       setTesting(false);
     }
@@ -112,6 +140,8 @@ export function DeviceForm({
     port: watchedConnection.port ?? 0,
     vendor: watchedConnection.vendor ?? '',
     credential_profile_id: watchedConnection.credential_profile_id ?? '',
+    ssh_compatibility: watchedConnection.ssh_compatibility ?? 'modern',
+    group1_risk_acknowledged: watchedConnection.group1_risk_acknowledged ?? false,
   });
   const readyToSave = testResult?.reachable === true && testedFingerprint === currentFingerprint;
 
@@ -175,6 +205,40 @@ export function DeviceForm({
           </option>
         ))}
       </SelectField>
+      <SelectField
+        label="SSH compatibility"
+        error={form.formState.errors.ssh_compatibility?.message}
+        hint="Modern is the default for every new device."
+        {...form.register('ssh_compatibility', {
+          onChange: () =>
+            form.setValue('group1_risk_acknowledged', false, { shouldValidate: true }),
+        })}
+      >
+        <option value="modern">Modern</option>
+        <option value="cisco_legacy">Cisco legacy</option>
+        <option value="cisco_legacy_group1">Cisco legacy + Group1</option>
+      </SelectField>
+      {watchedConnection.ssh_compatibility === 'cisco_legacy' ? (
+        <InlineNotice tone="warning" title="Per-device SSH exception">
+          This is a per-device exception. Terraformer never uses legacy SSH as an automatic fallback.
+        </InlineNotice>
+      ) : null}
+      {watchedConnection.ssh_compatibility === 'cisco_legacy_group1' ? (
+        <>
+          <InlineNotice tone="warning" title="Last-resort Group1 exception">
+            Group1 is a last-resort per-device exception and is never an automatic fallback.
+          </InlineNotice>
+          <label className="usb-console-echo">
+            <input type="checkbox" {...form.register('group1_risk_acknowledged')} />
+            I accept the Group1 risk for this device.
+          </label>
+          {form.formState.errors.group1_risk_acknowledged === undefined ? null : (
+            <span className="field__error" role="alert">
+              {form.formState.errors.group1_risk_acknowledged.message}
+            </span>
+          )}
+        </>
+      ) : null}
 
       <div className="connection-test">
         <div className="connection-test__header">

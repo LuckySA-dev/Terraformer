@@ -70,6 +70,7 @@ describe('DiscoveryDialog safety flow', () => {
     expect(screen.getByText(/192\.0\.2\.1:23/)).toBeVisible();
     expect(screen.getAllByRole('button', { name: /review and approve/i })).toHaveLength(1);
     expect(screen.getByText(/no devices added/i)).toBeVisible();
+    expect(screen.queryByText('LEGACY SSH')).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /review and approve/i }));
     expect(onApprove).toHaveBeenCalledWith(queuedJob.id, {
       management_address: '192.0.2.1',

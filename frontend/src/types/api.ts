@@ -49,6 +49,7 @@ export interface CredentialProfileInput {
 }
 
 export type DeviceStatus = 'reachable' | 'unreachable' | 'unknown';
+export type SshCompatibility = 'modern' | 'cisco_legacy' | 'cisco_legacy_group1';
 
 export interface DeviceFacts {
   hostname?: string | null;
@@ -73,6 +74,7 @@ export interface Device {
   port: number;
   vendor: 'cisco_iosxe' | 'generic';
   credential_profile_id: string;
+  ssh_compatibility?: SshCompatibility;
   status: DeviceStatus;
   facts: DeviceFacts;
   capabilities: DeviceCapability[];
@@ -88,6 +90,8 @@ export interface DeviceInput {
   port: number;
   vendor: 'cisco_iosxe' | 'generic';
   credential_profile_id: string;
+  ssh_compatibility?: SshCompatibility;
+  group1_risk_acknowledged?: boolean;
 }
 
 export interface DiscoveryInput {

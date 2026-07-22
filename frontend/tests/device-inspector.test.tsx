@@ -29,6 +29,7 @@ const device: Device = {
   port: 22,
   vendor: 'generic',
   credential_profile_id: 'c6d6a5be-bf2e-4d6a-bda8-3a559f985631',
+  ssh_compatibility: 'modern',
   status: 'reachable',
   facts: { hostname: 'edge-01', uptime: '9 days, 04:12:11' },
   capabilities: [{ name: 'connect', supported: true, safety_level: 'D' }],
@@ -70,9 +71,9 @@ function TestProviders({ children }: { children: ReactNode }) {
   return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 }
 
-function renderInspector() {
+function renderInspector(target = device) {
   render(
-    <DeviceInspector device={device} onClose={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} />,
+    <DeviceInspector device={target} onClose={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} />,
     { wrapper: TestProviders },
   );
 }
@@ -97,6 +98,13 @@ describe('DeviceInspector API contract and safety states', () => {
     expect(screen.getByText('Generic · connection test only')).toBeVisible();
     expect(screen.getByText('Available · Level D')).toBeVisible();
     expect(screen.getByRole('heading', { name: 'Configuration is unavailable' })).toBeVisible();
+    expect(screen.queryByText('LEGACY SSH')).not.toBeInTheDocument();
+  });
+
+  it('labels only saved legacy devices', async () => {
+    renderInspector({ ...device, ssh_compatibility: 'cisco_legacy' });
+
+    expect(await screen.findByText('LEGACY SSH')).toBeVisible();
   });
 
   it('uses admin_up and oper_up interface fields', async () => {

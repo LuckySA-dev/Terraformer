@@ -584,6 +584,10 @@ export function DeviceInspector({ device, onClose, onEdit, onDelete }: DeviceIns
             <Badge tone={stateTone(device.status)} dot>
               {device.status}
             </Badge>
+            {device.ssh_compatibility === 'cisco_legacy' ||
+            device.ssh_compatibility === 'cisco_legacy_group1' ? (
+              <Badge tone="warning">LEGACY SSH</Badge>
+            ) : null}
             <span className="mono">{device.management_address}</span>
           </div>
         </div>

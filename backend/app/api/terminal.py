@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass, replace
+from time import monotonic
 from typing import Protocol, cast
 from uuid import UUID
 
@@ -8,9 +10,21 @@ import asyncssh
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.container import ApplicationContainer
-from app.core.errors import AppError
+from app.core.errors import AppError, ConfigurationError
 from app.drivers import ConnectionParameters
+from app.drivers.ssh_compatibility import (
+    SSH_COMPATIBILITY_POLICY_VERSION,
+    compatibility_policy,
+    enforce_compatibility_policy,
+)
+from app.drivers.ssh_errors import FAILURES as SSH_FAILURES
+from app.models import SSHCompatibility
 from app.repositories.events import EventRepository
+from app.services.connection_gate import (
+    ConnectionOperation,
+    ConnectionPermit,
+    ConnectionTarget,
+)
 from app.services.devices import DeviceService
 
 router = APIRouter()
@@ -20,6 +34,102 @@ _IDLE_TIMEOUT_SECONDS = 900
 _MAX_INPUT_BYTES = 4_096
 _MAX_OUTPUT_BYTES = 2_097_152
 _OUTPUT_CHUNK_SIZE = 4_096
+_MAX_AUDIT_DURATION_MS = 86_400_000
+
+
+@dataclass(frozen=True, slots=True)
+class _FailureSpec:
+    message: str
+    phase: str
+    retryable: bool
+    recommended_action: str | None = None
+
+
+_FAILURES: dict[str, _FailureSpec] = {
+    "direct_mode_required": _FailureSpec(
+        "Confirm Direct Mode before opening the terminal.", "authorization", False
+    ),
+    "terminal_disabled_by_policy": _FailureSpec(
+        "Device terminals are disabled by server policy.", "authorization", False
+    ),
+    "legacy_mode_disabled_by_policy": _FailureSpec(
+        "Legacy SSH compatibility is not authorized.", "authorization", False
+    ),
+    "legacy_group1_disabled_by_policy": _FailureSpec(
+        "Group1 SSH compatibility is not authorized.", "authorization", False
+    ),
+    "connection_gate_unavailable": _FailureSpec(
+        "Connection admission is temporarily unavailable.", "authorization", True
+    ),
+    "device_connection_rate_limited": _FailureSpec(
+        "Too many device connection attempts.", "authorization", True
+    ),
+    "device_authentication_rate_limited": _FailureSpec(
+        "Device authentication is temporarily rate limited.", "authorization", False
+    ),
+    "device_connection_limit_reached": _FailureSpec(
+        "The device connection limit has been reached.", "authorization", True
+    ),
+    "terminal_session_limit_reached": _FailureSpec(
+        "The terminal session limit has been reached.", "authorization", True
+    ),
+    "not_found": _FailureSpec("The requested resource was not found.", "authorization", False),
+    "terminal_shell_rejected": _FailureSpec(
+        "The device rejected shell creation.",
+        "pty_creation",
+        False,
+        "Verify the device permits PTY and shell creation.",
+    ),
+    "terminal_idle_timeout": _FailureSpec(
+        "The terminal closed after the idle timeout.", "terminal_io", True
+    ),
+    "terminal_session_expired": _FailureSpec(
+        "The terminal reached its maximum session duration.", "terminal_io", True
+    ),
+    "terminal_input_limit": _FailureSpec("Terminal input is too large.", "terminal_io", False),
+    "terminal_output_limit": _FailureSpec(
+        "Terminal output limit reached; open a new session.", "terminal_io", False
+    ),
+    "invalid_terminal_message": _FailureSpec("Invalid terminal message.", "terminal_io", False),
+    "invalid_terminal_size": _FailureSpec("Invalid terminal size.", "terminal_io", False),
+}
+
+for _code, _message in {
+    "device_connection_timeout": "The device connection timed out.",
+    "device_connection_failed": "Unable to connect to the device.",
+    "device_connection_lost": "The device connection was lost.",
+    "device_host_key_unknown": "The device SSH host key could not be verified.",
+    "legacy_ssh_negotiation_failed": "Unable to negotiate a compatible SSH session.",
+    "device_authentication_failed": "The device rejected the credential profile.",
+    "terminal_pty_rejected": "The device rejected terminal setup.",
+    "terminal_transport_failed": "The device terminal transport failed.",
+}.items():
+    _shared = SSH_FAILURES[_code]
+    _FAILURES[_code] = _FailureSpec(
+        _message,
+        _shared.phase.value,
+        _shared.retryable,
+        _shared.recommended_action,
+    )
+
+
+class _TerminalFailure(Exception):
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
+
+    @property
+    def spec(self) -> _FailureSpec:
+        return _FAILURES[self.code]
+
+
+@dataclass(frozen=True, slots=True)
+class _TerminalTarget:
+    device_id: UUID
+    host: str
+    port: int
+    profile_id: UUID
+    compatibility: SSHCompatibility
 
 
 class TerminalSession(Protocol):
@@ -37,9 +147,13 @@ class AsyncSSHTerminalSession:
         self,
         connection: asyncssh.SSHClientConnection,
         process: asyncssh.SSHClientProcess[str],
+        *,
+        close_timeout_seconds: float,
     ) -> None:
         self._connection = connection
         self._process = process
+        self._close_timeout_seconds = close_timeout_seconds
+        self._closed = False
 
     async def read(self, size: int) -> str:
         return await self._process.stdout.read(size)
@@ -52,39 +166,91 @@ class AsyncSSHTerminalSession:
         self._process.change_terminal_size(columns, rows)
 
     async def close(self) -> None:
-        self._process.close()
-        await self._process.wait_closed()
-        self._connection.close()
-        await self._connection.wait_closed()
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self._process.close()
+            await asyncio.wait_for(self._process.wait_closed(), timeout=self._close_timeout_seconds)
+        except (Exception, asyncio.CancelledError):  # noqa: S110
+            pass  # Cleanup errors must not expose raw terminal or transport details.
+        finally:
+            await _close_connection(self._connection, self._close_timeout_seconds)
 
 
 async def _open_terminal(
     parameters: ConnectionParameters,
     *,
     strict_host_key: bool,
+    pty_timeout_seconds: float,
 ) -> TerminalSession:
+    policy = compatibility_policy(parameters.ssh_compatibility)
     options: dict[str, object] = {
         "host": parameters.host,
         "port": parameters.port,
         "username": parameters.username,
         "password": parameters.password,
-        "connect_timeout": parameters.connect_timeout_seconds,
+        "config": None,
+        "client_keys": None,
+        "agent_path": None,
+        "preferred_auth": "password",
+        "password_auth": True,
+        "public_key_auth": False,
+        "kbdint_auth": False,
+        "host_based_auth": False,
+        "gss_auth": False,
         "encoding": "utf-8",
         "errors": "replace",
     }
     if not strict_host_key:
         options["known_hosts"] = None
-    connection = await asyncssh.connect(**options)
+    for name, value in (
+        ("kex_algs", policy.asyncssh_kex_algs),
+        ("server_host_key_algs", policy.asyncssh_server_host_key_algs),
+        ("encryption_algs", policy.asyncssh_encryption_algs),
+        ("mac_algs", policy.asyncssh_mac_algs),
+    ):
+        if value is not None:
+            options[name] = value
+
     try:
-        process = await connection.create_process(
-            term_type="xterm-256color",
-            term_size=(80, 24),
+        connection = await asyncio.wait_for(
+            asyncssh.connect(**options), timeout=parameters.connect_timeout_seconds
         )
-    except BaseException:
-        connection.close()
-        await connection.wait_closed()
-        raise
-    return AsyncSSHTerminalSession(connection, process)
+    except TimeoutError:
+        raise _TerminalFailure("device_connection_timeout") from None
+    except asyncssh.PermissionDenied:
+        raise _TerminalFailure("device_authentication_failed") from None
+    except asyncssh.HostKeyNotVerifiable:
+        raise _TerminalFailure("device_host_key_unknown") from None
+    except (asyncssh.KeyExchangeFailed, asyncssh.ProtocolError):
+        raise _TerminalFailure("legacy_ssh_negotiation_failed") from None
+    except asyncssh.ConnectionLost:
+        raise _TerminalFailure("device_connection_lost") from None
+    except (asyncssh.Error, OSError):
+        raise _TerminalFailure("device_connection_failed") from None
+    try:
+        process = await asyncio.wait_for(
+            connection.create_process(
+                term_type="xterm-256color",
+                term_size=(80, 24),
+            ),
+            timeout=pty_timeout_seconds,
+        )
+    except TimeoutError:
+        await _close_connection(connection, pty_timeout_seconds)
+        raise _TerminalFailure("terminal_pty_rejected") from None
+    except (asyncssh.ChannelOpenError, asyncssh.ProcessError):
+        await _close_connection(connection, pty_timeout_seconds)
+        raise _TerminalFailure("terminal_shell_rejected") from None
+    except (asyncssh.Error, OSError):
+        await _close_connection(connection, pty_timeout_seconds)
+        raise _TerminalFailure("terminal_pty_rejected") from None
+    return AsyncSSHTerminalSession(
+        connection,
+        process,
+        close_timeout_seconds=pty_timeout_seconds,
+    )
 
 
 @router.websocket("/ws/terminal/{device_id}")
@@ -100,77 +266,184 @@ async def terminal(websocket: WebSocket, device_id: UUID) -> None:
         return
 
     await websocket.accept()
+    gate = container.connection_gate
+    target: _TerminalTarget | None = None
+    gate_target: ConnectionTarget | None = None
+    permit: ConnectionPermit | None = None
+    parameters: ConnectionParameters | None = None
     session: TerminalSession | None = None
+    relay_tasks: set[asyncio.Task[None]] = set()
     opened = False
-    reserved = False
+    cleaned = False
+    group1_acknowledged = False
+    started = monotonic()
+    audit_phase = "authorization"
+    audit_decision = "denied"
+    audit_result = "direct_mode_required"
+    cancelled: asyncio.CancelledError | None = None
+
+    async def cleanup() -> None:
+        nonlocal cleaned, parameters, permit, session, target, gate_target
+        if cleaned:
+            return
+        cleaned = True
+        for task in relay_tasks:
+            task.cancel()
+        if relay_tasks:
+            await asyncio.gather(*relay_tasks, return_exceptions=True)
+        if session is not None:
+            try:
+                await session.close()
+            except (Exception, asyncio.CancelledError):  # noqa: S110
+                pass  # Cleanup errors must not expose raw terminal or transport details.
+            session = None
+        if target is not None:
+            try:
+                await asyncio.to_thread(
+                    _record_connection_audit,
+                    container,
+                    target,
+                    group1_acknowledged,
+                    audit_phase,
+                    audit_decision,
+                    audit_result,
+                    started,
+                )
+            except (Exception, asyncio.CancelledError):  # noqa: S110
+                pass  # Cleanup errors must not expose raw terminal or transport details.
+        if opened:
+            try:
+                await asyncio.to_thread(
+                    _record_event,
+                    container,
+                    device_id,
+                    "terminal.closed",
+                    "Direct Mode terminal closed",
+                )
+            except (Exception, asyncio.CancelledError):  # noqa: S110
+                pass  # Cleanup errors must not expose raw terminal or transport details.
+        await _close_websocket(websocket)
+        if permit is not None:
+            try:
+                await asyncio.to_thread(gate.release, permit)
+            except (Exception, asyncio.CancelledError):  # noqa: S110
+                pass  # Cleanup errors must not expose raw terminal or transport details.
+            permit = None
+        parameters = None
+        gate_target = None
+        target = None
+
     try:
-        acknowledgement = await asyncio.wait_for(
-            websocket.receive_json(), timeout=_DIRECT_MODE_TIMEOUT_SECONDS
-        )
-        if acknowledgement != {"type": "accept_direct_mode"}:
-            await _send_error(websocket, "direct_mode_required", "Confirm Direct Mode first")
-            return
-
-        if not container.reserve_terminal_session():
-            await _send_error(
-                websocket,
-                "terminal_session_limit",
-                "Three terminal sessions are already active",
+        try:
+            acknowledgement = await asyncio.wait_for(
+                websocket.receive_json(), timeout=_DIRECT_MODE_TIMEOUT_SECONDS
             )
-            return
-        reserved = True
+        except TimeoutError:
+            raise _TerminalFailure("direct_mode_required") from None
+        if not isinstance(acknowledgement, dict):
+            raise _TerminalFailure("direct_mode_required")
+        acknowledgement_data = cast(dict[str, object], acknowledgement)
+        if acknowledgement_data.get("type") != "accept_direct_mode":
+            raise _TerminalFailure("direct_mode_required")
+        group1_value: object = acknowledgement_data.get("group1_risk_acknowledged", False)
+        if not isinstance(group1_value, bool):
+            raise _TerminalFailure("direct_mode_required")
+        group1_acknowledged = group1_value
 
+        target = await asyncio.to_thread(_terminal_target, container, device_id)
+        if not container.settings.ssh_terminal_enabled:
+            raise _TerminalFailure("terminal_disabled_by_policy")
+        try:
+            enforce_compatibility_policy(
+                target.compatibility,
+                container.settings,
+                group1_risk_acknowledged=group1_acknowledged,
+            )
+        except ConfigurationError:
+            if not container.settings.ssh_legacy_enabled:
+                raise _TerminalFailure("legacy_mode_disabled_by_policy") from None
+            raise _TerminalFailure("legacy_group1_disabled_by_policy") from None
+
+        gate_target = ConnectionTarget.from_endpoint(
+            host=target.host,
+            port=target.port,
+            credential_profile_id=target.profile_id,
+            device_id=target.device_id,
+        )
+        permit = await asyncio.to_thread(gate.acquire, ConnectionOperation.TERMINAL, gate_target)
+        audit_decision = "allowed"
         await websocket.send_json({"type": "status", "status": "connecting"})
-        parameters = _connection_parameters(container, device_id)
+        parameters = await asyncio.to_thread(_connection_parameters, container, target)
         session = await _open_terminal(
             parameters,
             strict_host_key=container.settings.ssh_strict_host_key,
+            pty_timeout_seconds=container.settings.terminal_pty_timeout_seconds,
         )
+        await asyncio.to_thread(gate.authentication_succeeded, gate_target)
         _record_event(container, device_id, "terminal.opened", "Direct Mode terminal opened")
         opened = True
         await websocket.send_json({"type": "status", "status": "connected"})
-        await _relay(websocket, session)
-    except TimeoutError:
-        await _send_error(websocket, "terminal_timeout", "Terminal session timed out")
-    except asyncssh.PermissionDenied:
-        await _send_error(
-            websocket,
-            "device_authentication_failed",
-            "The device rejected the credential profile",
-        )
-    except (asyncssh.Error, OSError):
-        await _send_error(
-            websocket,
-            "device_connection_failed",
-            "Unable to open the device terminal",
-        )
-    except AppError as exc:
-        await _send_error(websocket, exc.code, exc.message)
-    except WebSocketDisconnect:
-        pass
-    finally:
         try:
-            if session is not None:
-                await session.close()
-        finally:
-            if reserved:
-                container.release_terminal_session()
-            try:
-                if opened:
-                    _record_event(
-                        container,
-                        device_id,
-                        "terminal.closed",
-                        "Direct Mode terminal closed",
-                    )
-            finally:
-                await _close_websocket(websocket)
+            await asyncio.wait_for(
+                _relay(websocket, session, relay_tasks),
+                timeout=container.settings.terminal_max_duration_seconds,
+            )
+        except TimeoutError:
+            raise _TerminalFailure("terminal_session_expired") from None
+        audit_phase = "complete"
+        audit_result = "success"
+    except _TerminalFailure as exc:
+        audit_phase = exc.spec.phase
+        audit_result = exc.code
+        if permit is not None and gate_target is not None:
+            if exc.spec.phase == "authentication":
+                try:
+                    await asyncio.to_thread(gate.authentication_failed, gate_target)
+                except AppError as gate_error:
+                    exc = _TerminalFailure(gate_error.code)
+                    audit_phase = exc.spec.phase
+                    audit_result = exc.code
+            elif exc.spec.phase in {"pty_creation", "terminal_io"} and not opened:
+                try:
+                    await asyncio.to_thread(gate.authentication_succeeded, gate_target)
+                except AppError as gate_error:
+                    exc = _TerminalFailure(gate_error.code)
+                    audit_phase = exc.spec.phase
+                    audit_result = exc.code
+        await _send_error(websocket, exc.code)
+    except AppError as exc:
+        code = exc.code if exc.code in _FAILURES else "terminal_transport_failed"
+        failure = _TerminalFailure(code)
+        audit_phase = failure.spec.phase
+        audit_result = failure.code
+        await _send_error(websocket, failure.code)
+    except WebSocketDisconnect:
+        audit_phase = "terminal_io"
+        audit_result = "success" if opened else "terminal_transport_failed"
+    except asyncio.CancelledError as exc:
+        cancelled = exc
+        audit_phase = "terminal_io"
+        audit_result = "terminal_transport_failed"
+    except Exception:
+        failure = _TerminalFailure("terminal_transport_failed")
+        audit_phase = failure.spec.phase
+        audit_result = failure.code
+        await _send_error(websocket, failure.code)
+    finally:
+        cleanup_task = asyncio.create_task(cleanup())
+        try:
+            await asyncio.shield(cleanup_task)
+        except asyncio.CancelledError as exc:
+            cancelled = cancelled or exc
+            await cleanup_task
+        if cancelled is not None:
+            raise cancelled
 
 
-def _connection_parameters(
+def _terminal_target(
     container: ApplicationContainer,
     device_id: UUID,
-) -> ConnectionParameters:
+) -> _TerminalTarget:
     with container.session_factory() as database:
         service = DeviceService(
             database,
@@ -179,11 +452,32 @@ def _connection_parameters(
             vault=container.credential_vault,
         )
         device = service.get(device_id)
-        return service.connection_parameters(
-            profile_id=device.credential_profile_id,
-            host=device.management_address,
-            port=device.port,
+        return _TerminalTarget(
+            device.id,
+            device.management_address.strip().lower(),
+            device.port,
+            device.credential_profile_id,
+            device.ssh_compatibility,
         )
+
+
+def _connection_parameters(
+    container: ApplicationContainer,
+    target: _TerminalTarget,
+) -> ConnectionParameters:
+    with container.session_factory() as database:
+        service = DeviceService(
+            database,
+            settings=container.settings,
+            drivers=container.drivers,
+            vault=container.credential_vault,
+        )
+        parameters = service.connection_parameters(
+            profile_id=target.profile_id,
+            host=target.host,
+            port=target.port,
+        )
+        return replace(parameters, ssh_compatibility=target.compatibility)
 
 
 def _record_event(
@@ -202,43 +496,79 @@ def _record_event(
         database.commit()
 
 
-async def _relay(websocket: WebSocket, session: TerminalSession) -> None:
-    receive = asyncio.create_task(_receive(websocket, session))
-    send = asyncio.create_task(_send(websocket, session))
-    done, pending = await asyncio.wait({receive, send}, return_when=asyncio.FIRST_COMPLETED)
-    for task in pending:
-        task.cancel()
-    await asyncio.gather(*pending, return_exceptions=True)
+def _record_connection_audit(
+    container: ApplicationContainer,
+    target: _TerminalTarget,
+    group1_risk_acknowledged: bool,
+    phase: str,
+    decision: str,
+    result_code: str,
+    started: float,
+) -> None:
+    with container.session_factory() as database:
+        EventRepository(database).record(
+            event_type="ssh.connection_admission",
+            message="SSH connection admission completed",
+            device_id=target.device_id,
+            details={
+                "principal": "local-admin",
+                "requested_mode": target.compatibility.value,
+                "group1_risk_acknowledged": group1_risk_acknowledged,
+                "compatibility_policy_version": SSH_COMPATIBILITY_POLICY_VERSION,
+                "operation": ConnectionOperation.TERMINAL.value,
+                "phase": phase,
+                "policy_decision": decision,
+                "duration_ms": min(
+                    max(0, int((monotonic() - started) * 1_000)),
+                    _MAX_AUDIT_DURATION_MS,
+                ),
+                "result_code": result_code,
+            },
+        )
+        database.commit()
+
+
+async def _relay(
+    websocket: WebSocket,
+    session: TerminalSession,
+    tasks: set[asyncio.Task[None]],
+) -> None:
+    tasks.update(
+        {
+            asyncio.create_task(_receive(websocket, session)),
+            asyncio.create_task(_send(websocket, session)),
+        }
+    )
+    done, _pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
     for task in done:
         task.result()
 
 
 async def _receive(websocket: WebSocket, session: TerminalSession) -> None:
     while True:
-        message_value: object = await asyncio.wait_for(
-            websocket.receive_json(), timeout=_IDLE_TIMEOUT_SECONDS
-        )
+        try:
+            message_value: object = await asyncio.wait_for(
+                websocket.receive_json(), timeout=_IDLE_TIMEOUT_SECONDS
+            )
+        except TimeoutError:
+            raise _TerminalFailure("terminal_idle_timeout") from None
         if not isinstance(message_value, dict):
-            await _send_error(websocket, "invalid_terminal_message", "Invalid terminal message")
-            return
+            raise _TerminalFailure("invalid_terminal_message")
         message = cast(dict[str, object], message_value)
         message_type = message.get("type")
         if message_type == "input":
             data = message.get("data")
             if not isinstance(data, str) or len(data.encode("utf-8")) > _MAX_INPUT_BYTES:
-                await _send_error(websocket, "terminal_input_limit", "Terminal input is too large")
-                return
+                raise _TerminalFailure("terminal_input_limit")
             await session.write(data)
         elif message_type == "resize":
             columns = message.get("columns")
             rows = message.get("rows")
             if not isinstance(columns, int) or not isinstance(rows, int):
-                await _send_error(websocket, "invalid_terminal_size", "Invalid terminal size")
-                return
+                raise _TerminalFailure("invalid_terminal_size")
             session.resize(max(20, min(columns, 300)), max(5, min(rows, 120)))
         else:
-            await _send_error(websocket, "invalid_terminal_message", "Invalid terminal message")
-            return
+            raise _TerminalFailure("invalid_terminal_message")
 
 
 async def _send(websocket: WebSocket, session: TerminalSession) -> None:
@@ -250,24 +580,40 @@ async def _send(websocket: WebSocket, session: TerminalSession) -> None:
             return
         output_bytes += len(output.encode("utf-8"))
         if output_bytes > _MAX_OUTPUT_BYTES:
-            await _send_error(
-                websocket,
-                "terminal_output_limit",
-                "Terminal output limit reached; open a new session",
-            )
-            return
+            raise _TerminalFailure("terminal_output_limit")
         await websocket.send_json({"type": "output", "data": output})
 
 
-async def _send_error(websocket: WebSocket, code: str, message: str) -> None:
+async def _send_error(websocket: WebSocket, code: str) -> None:
+    spec = _FAILURES[code]
+    payload: dict[str, object] = {
+        "type": "error",
+        "code": code,
+        "message": spec.message,
+        "phase": spec.phase,
+        "retryable": spec.retryable,
+    }
+    if spec.recommended_action is not None:
+        payload["recommended_action"] = spec.recommended_action
     try:
-        await websocket.send_json({"type": "error", "code": code, "message": message})
-    except (RuntimeError, WebSocketDisconnect):
+        await websocket.send_json(payload)
+    except (OSError, RuntimeError, WebSocketDisconnect):
         pass
+
+
+async def _close_connection(
+    connection: asyncssh.SSHClientConnection,
+    timeout_seconds: float,
+) -> None:
+    try:
+        connection.close()
+        await asyncio.wait_for(connection.wait_closed(), timeout=timeout_seconds)
+    except (Exception, asyncio.CancelledError):  # noqa: S110
+        pass  # Cleanup errors must not expose raw terminal or transport details.
 
 
 async def _close_websocket(websocket: WebSocket) -> None:
     try:
         await websocket.close()
-    except (RuntimeError, WebSocketDisconnect):
+    except (OSError, RuntimeError, WebSocketDisconnect):
         pass

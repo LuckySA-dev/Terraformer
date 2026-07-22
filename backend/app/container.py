@@ -44,7 +44,6 @@ class ApplicationContainer:
         self.passwords = PasswordService()
         self._snapshot_store = snapshot_store
         self._connection_gate = connection_gate
-        self._active_terminal_sessions = 0
 
     @cached_property
     def session_factory(self) -> sessionmaker[Session]:
@@ -107,15 +106,6 @@ class ApplicationContainer:
             self.key_provider,
             ttl_seconds=self.settings.session_ttl_seconds,
         )
-
-    def reserve_terminal_session(self) -> bool:
-        if self._active_terminal_sessions >= 3:
-            return False
-        self._active_terminal_sessions += 1
-        return True
-
-    def release_terminal_session(self) -> None:
-        self._active_terminal_sessions = max(0, self._active_terminal_sessions - 1)
 
 
 @lru_cache

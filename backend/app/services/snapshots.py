@@ -8,10 +8,11 @@ from app.core.logging import sanitize_text
 from app.core.storage import EncryptedSnapshotStore
 from app.core.time import new_uuid
 from app.drivers import DriverRegistry
-from app.models import ConfigSnapshot
+from app.models import ConfigSnapshot, SSHCompatibility
 from app.repositories.devices import DeviceRepository
 from app.repositories.events import EventRepository
 from app.repositories.snapshots import ConfigSnapshotRepository
+from app.services.connection_gate import ConnectionOperation
 from app.services.devices import DeviceService
 
 
@@ -34,13 +35,20 @@ class SnapshotService:
 
     def capture(self, device_id: UUID, *, job_id: UUID | None = None) -> ConfigSnapshot:
         device = self._devices.get(device_id, for_update=True)
-        driver = self._drivers.get(device.vendor)
-        parameters = self._device_service.connection_parameters(
-            profile_id=device.credential_profile_id,
+        with self._device_service.admitted_connection(
+            device_id=device.id,
             host=device.management_address,
             port=device.port,
-        )
-        content = driver.get_running_config(parameters)
+            profile_id=device.credential_profile_id,
+            compatibility=device.ssh_compatibility,
+            group1_risk_acknowledged=(
+                device.ssh_compatibility is SSHCompatibility.CISCO_LEGACY_GROUP1
+            ),
+            operation=ConnectionOperation.STRUCTURED_READ,
+        ) as parameters:
+            driver = self._drivers.get(device.vendor)
+            content = driver.get_running_config(parameters)
+        del parameters
         snapshot_id = new_uuid()
         artifact = self._store.put(
             snapshot_id=snapshot_id,

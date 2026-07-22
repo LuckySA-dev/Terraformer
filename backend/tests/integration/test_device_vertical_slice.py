@@ -11,7 +11,9 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.container import ApplicationContainer
 from app.core.errors import DriverTerminalIOError, DriverTimeoutError
 from app.jobs import tasks
-from app.models import ConfigSnapshot, Job
+from app.models import ConfigSnapshot, Event, Job
+from app.services.connection_gate import ConnectionOperation
+from app.services.devices import DeviceService
 
 
 def _device_payload(profile_id: str) -> dict[str, object]:
@@ -353,3 +355,395 @@ def test_queue_failure_marks_job_failed_and_returns_503(
         job = session.query(Job).one()
         assert job.state.value == "failed"
         assert job.error_message == "The background job queue is unavailable"
+
+
+def test_device_test_create_and_registered_paths_default_to_modern_and_retest(
+    authenticated_client: TestClient,
+    credential_profile: dict[str, object],
+    transport_factory,
+    fake_connection_gate,
+) -> None:
+    payload = _device_payload(str(credential_profile["id"]))
+
+    candidate = authenticated_client.post(
+        "/api/devices/connection-test",
+        json={key: value for key, value in payload.items() if key != "name"},
+    )
+    created = authenticated_client.post("/api/devices", json=payload)
+    registered = authenticated_client.post(f"/api/devices/{created.json()['id']}/test-connection")
+
+    assert candidate.status_code == 200, candidate.text
+    assert created.status_code == 201, created.text
+    assert registered.status_code == 200, registered.text
+    assert created.json()["ssh_compatibility"] == "modern"
+    assert [item.ssh_compatibility.value for item in transport_factory.parameters] == [
+        "modern",
+        "modern",
+        "modern",
+    ]
+    assert [permit.operation for permit in fake_connection_gate.acquired] == [
+        ConnectionOperation.CONNECTION_TEST,
+        ConnectionOperation.CONNECTION_TEST,
+        ConnectionOperation.CONNECTION_TEST,
+    ]
+    assert fake_connection_gate.released == fake_connection_gate.acquired
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("management_address", "192.0.2.11"),
+        ("port", 2222),
+        ("vendor", "generic"),
+        ("ssh_compatibility", "cisco_legacy"),
+    ],
+)
+def test_connection_relevant_edit_retests_before_save(
+    authenticated_client: TestClient,
+    credential_profile: dict[str, object],
+    container: ApplicationContainer,
+    transport_factory,
+    field: str,
+    value: object,
+) -> None:
+    created = authenticated_client.post(
+        "/api/devices", json=_device_payload(str(credential_profile["id"]))
+    )
+    if field == "ssh_compatibility":
+        container.settings.ssh_legacy_enabled = True
+    call_count = len(transport_factory.parameters)
+
+    updated = authenticated_client.patch(
+        f"/api/devices/{created.json()['id']}", json={field: value}
+    )
+
+    assert updated.status_code == 200, updated.text
+    assert updated.json()[field] == value
+    assert len(transport_factory.parameters) == call_count + 1
+
+
+def test_credential_profile_edit_retests_before_save(
+    authenticated_client: TestClient,
+    credential_profile: dict[str, object],
+    transport_factory,
+) -> None:
+    created = authenticated_client.post(
+        "/api/devices", json=_device_payload(str(credential_profile["id"]))
+    )
+    replacement = authenticated_client.post(
+        "/api/credential-profiles",
+        json={
+            "name": "replacement-readonly",
+            "username": "replacement-user",
+            "password": "replacement-password",
+        },
+    )
+    call_count = len(transport_factory.parameters)
+
+    updated = authenticated_client.patch(
+        f"/api/devices/{created.json()['id']}",
+        json={"credential_profile_id": replacement.json()["id"]},
+    )
+
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["credential_profile_id"] == replacement.json()["id"]
+    assert len(transport_factory.parameters) == call_count + 1
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "management_address",
+        "port",
+        "vendor",
+        "credential_profile_id",
+        "ssh_compatibility",
+    ],
+)
+def test_failed_edit_retest_does_not_mutate_saved_device(
+    authenticated_client: TestClient,
+    credential_profile: dict[str, object],
+    container: ApplicationContainer,
+    transport_factory,
+    field: str,
+) -> None:
+    created = authenticated_client.post(
+        "/api/devices", json=_device_payload(str(credential_profile["id"]))
+    ).json()
+    values: dict[str, object] = {
+        "management_address": "192.0.2.99",
+        "port": 2222,
+        "vendor": "generic",
+        "ssh_compatibility": "cisco_legacy",
+    }
+    if field == "credential_profile_id":
+        replacement = authenticated_client.post(
+            "/api/credential-profiles",
+            json={
+                "name": "failed-retest-profile",
+                "username": "replacement-user",
+                "password": "replacement-password",
+            },
+        )
+        values[field] = replacement.json()["id"]
+    if field == "ssh_compatibility":
+        container.settings.ssh_legacy_enabled = True
+    transport_factory.open_error = ScrapliAuthenticationFailed("denied")
+
+    failed = authenticated_client.patch(
+        f"/api/devices/{created['id']}",
+        json={field: values[field]},
+    )
+    stored = authenticated_client.get(f"/api/devices/{created['id']}").json()
+
+    assert failed.status_code == 401
+    for field in (
+        "management_address",
+        "port",
+        "vendor",
+        "credential_profile_id",
+        "ssh_compatibility",
+        "status",
+        "last_error_code",
+    ):
+        assert stored[field] == created[field]
+
+
+def test_policy_denials_precede_transport_and_preserve_saved_status(
+    authenticated_client: TestClient,
+    credential_profile: dict[str, object],
+    container: ApplicationContainer,
+    transport_factory,
+    fake_connection_gate,
+) -> None:
+    created = authenticated_client.post(
+        "/api/devices", json=_device_payload(str(credential_profile["id"]))
+    ).json()
+    transport_count = len(transport_factory.parameters)
+    permit_count = len(fake_connection_gate.acquired)
+
+    legacy = authenticated_client.patch(
+        f"/api/devices/{created['id']}",
+        json={"ssh_compatibility": "cisco_legacy"},
+    )
+
+    assert legacy.status_code == 403
+    assert legacy.json()["error"]["code"] == "legacy_mode_disabled_by_policy"
+    stored = authenticated_client.get(f"/api/devices/{created['id']}").json()
+    assert stored["ssh_compatibility"] == "modern"
+    assert stored["status"] == "reachable"
+    assert len(transport_factory.parameters) == transport_count
+    assert len(fake_connection_gate.acquired) == permit_count
+
+    container.settings.ssh_legacy_enabled = True
+    container.settings.ssh_group1_enabled = True
+    group1 = authenticated_client.post(
+        "/api/devices/connection-test",
+        json={
+            **{
+                key: value
+                for key, value in _device_payload(str(credential_profile["id"])).items()
+                if key != "name"
+            },
+            "ssh_compatibility": "cisco_legacy_group1",
+        },
+    )
+    assert group1.status_code == 403
+    assert group1.json()["error"]["code"] == "legacy_group1_disabled_by_policy"
+    assert len(transport_factory.parameters) == transport_count
+    assert len(fake_connection_gate.acquired) == permit_count
+
+    container.settings.ssh_group1_enabled = False
+    disabled_group1 = authenticated_client.post(
+        "/api/devices/connection-test",
+        json={
+            **{
+                key: value
+                for key, value in _device_payload(str(credential_profile["id"])).items()
+                if key != "name"
+            },
+            "ssh_compatibility": "cisco_legacy_group1",
+            "group1_risk_acknowledged": True,
+        },
+    )
+    assert disabled_group1.status_code == 403
+    assert disabled_group1.json()["error"]["code"] == "legacy_group1_disabled_by_policy"
+    assert len(transport_factory.parameters) == transport_count
+    assert len(fake_connection_gate.acquired) == permit_count
+
+
+def test_admission_happens_before_decryption_and_auth_accounting_is_tuple_scoped(
+    authenticated_client: TestClient,
+    credential_profile: dict[str, object],
+    container: ApplicationContainer,
+    transport_factory,
+    fake_connection_gate,
+    monkeypatch,
+) -> None:
+    vault = container.credential_vault
+    original_decrypt = vault.decrypt
+
+    def checked_decrypt(profile):
+        assert len(fake_connection_gate.acquired) > len(fake_connection_gate.released)
+        return original_decrypt(profile)
+
+    monkeypatch.setattr(vault, "decrypt", checked_decrypt)
+    transport_factory.open_error = ScrapliAuthenticationFailed("denied")
+
+    failed = authenticated_client.post(
+        "/api/devices", json=_device_payload(str(credential_profile["id"]))
+    )
+
+    assert failed.status_code == 401
+    assert fake_connection_gate.authentication_failures == [fake_connection_gate.acquired[0].target]
+    assert fake_connection_gate.authentication_successes == []
+    assert fake_connection_gate.released == fake_connection_gate.acquired
+    assert len(fake_connection_gate.released) == 1
+    assert "192.0.2.10" not in fake_connection_gate.acquired[0].target.endpoint_digest
+
+    transport_factory.open_error = None
+    succeeded = authenticated_client.post(
+        "/api/devices", json=_device_payload(str(credential_profile["id"]))
+    )
+
+    assert succeeded.status_code == 201, succeeded.text
+    assert fake_connection_gate.authentication_successes == [
+        fake_connection_gate.acquired[1].target
+    ]
+    assert (
+        fake_connection_gate.authentication_failures[0]
+        == fake_connection_gate.authentication_successes[0]
+    )
+
+
+def test_non_auth_driver_failure_releases_once_without_changing_auth_counters(
+    authenticated_client: TestClient,
+    credential_profile: dict[str, object],
+    container: ApplicationContainer,
+    transport_factory,
+    fake_connection_gate,
+    monkeypatch,
+) -> None:
+    created = authenticated_client.post(
+        "/api/devices", json=_device_payload(str(credential_profile["id"]))
+    ).json()
+    fake_connection_gate.acquired.clear()
+    fake_connection_gate.released.clear()
+    fake_connection_gate.authentication_failures.clear()
+    fake_connection_gate.authentication_successes.clear()
+    transport_factory.command_error = ScrapliTimeout("timed out")
+    monkeypatch.setattr(tasks, "get_default_container", lambda: container)
+    job = authenticated_client.post(f"/api/devices/{created['id']}/refresh").json()
+
+    with pytest.raises(DriverTimeoutError):
+        tasks.execute_job(job["id"])
+
+    assert len(fake_connection_gate.acquired) == 1
+    assert fake_connection_gate.released == fake_connection_gate.acquired
+    assert fake_connection_gate.authentication_failures == []
+    assert fake_connection_gate.authentication_successes == []
+
+
+def test_audit_failure_still_releases_the_permit_once(
+    authenticated_client: TestClient,
+    credential_profile: dict[str, object],
+    fake_connection_gate,
+    monkeypatch,
+) -> None:
+    def fail_audit(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("audit unavailable")
+
+    monkeypatch.setattr(DeviceService, "_audit_connection", fail_audit)
+
+    response = authenticated_client.post(
+        "/api/devices", json=_device_payload(str(credential_profile["id"]))
+    )
+
+    assert response.status_code == 500
+    assert len(fake_connection_gate.acquired) == 1
+    assert fake_connection_gate.released == fake_connection_gate.acquired
+
+
+def test_refresh_and_snapshot_each_use_one_structured_read_permit(
+    authenticated_client: TestClient,
+    credential_profile: dict[str, object],
+    container: ApplicationContainer,
+    fake_connection_gate,
+    monkeypatch,
+) -> None:
+    created = authenticated_client.post(
+        "/api/devices", json=_device_payload(str(credential_profile["id"]))
+    ).json()
+    fake_connection_gate.acquired.clear()
+    fake_connection_gate.released.clear()
+    fake_connection_gate.authentication_successes.clear()
+    monkeypatch.setattr(tasks, "get_default_container", lambda: container)
+
+    refresh_job = authenticated_client.post(f"/api/devices/{created['id']}/refresh").json()
+    tasks.execute_job(refresh_job["id"])
+    snapshot_job = authenticated_client.post(
+        f"/api/devices/{created['id']}/config-snapshots"
+    ).json()
+    tasks.execute_job(snapshot_job["id"])
+
+    assert [permit.operation for permit in fake_connection_gate.acquired] == [
+        ConnectionOperation.STRUCTURED_READ,
+        ConnectionOperation.STRUCTURED_READ,
+    ]
+    assert fake_connection_gate.released == fake_connection_gate.acquired
+    assert fake_connection_gate.authentication_successes == [
+        permit.target for permit in fake_connection_gate.acquired
+    ]
+
+
+def test_connection_admission_audit_uses_only_the_approved_metadata_allowlist(
+    authenticated_client: TestClient,
+    credential_profile: dict[str, object],
+    session_factory: sessionmaker[Session],
+) -> None:
+    created = authenticated_client.post(
+        "/api/devices", json=_device_payload(str(credential_profile["id"]))
+    )
+    assert created.status_code == 201, created.text
+    registered = authenticated_client.post(f"/api/devices/{created.json()['id']}/test-connection")
+    assert registered.status_code == 200, registered.text
+
+    with session_factory() as session:
+        events = (
+            session.query(Event)
+            .filter_by(event_type="ssh.connection_admission")
+            .order_by(Event.created_at)
+            .all()
+        )
+    event = next(item for item in events if item.device_id == UUID(created.json()["id"]))
+
+    assert str(event.device_id) == created.json()["id"]
+    assert set(event.details) == {
+        "principal",
+        "requested_mode",
+        "group1_risk_acknowledged",
+        "compatibility_policy_version",
+        "operation",
+        "phase",
+        "policy_decision",
+        "duration_ms",
+        "result_code",
+    }
+    assert event.details["principal"] == "local-admin"
+    assert event.details["requested_mode"] == "modern"
+    assert event.details["operation"] == "connection_test"
+    assert event.details["policy_decision"] == "allowed"
+    assert event.details["result_code"] == "success"
+    assert isinstance(event.details["duration_ms"], int)
+    assert all(set(item.details) == set(event.details) for item in events)
+    for item in events:
+        rendered = repr(item.details)
+        for prohibited in (
+            "192.0.2.10",
+            "edge-rtr-01",
+            "fixture-password",
+            "peer_algorithms",
+            "negotiated_algorithm",
+            "terminal_content",
+        ):
+            assert prohibited not in rendered

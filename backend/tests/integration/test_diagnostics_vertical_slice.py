@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.container import ApplicationContainer
 from app.jobs import tasks
 from app.models import Event, Job
+from app.services.connection_gate import ConnectionOperation
 
 
 def _device_payload(profile_id: str, *, vendor: str = "cisco_iosxe") -> dict[str, object]:
@@ -138,3 +139,30 @@ def test_ping_requires_one_valid_target_and_uses_bounded_command(
     assert transport_factory.transports[-1].sent_commands == [
         "ping 198.51.100.10 repeat 3 timeout 1"
     ]
+
+
+def test_diagnostic_uses_one_structured_read_permit(
+    authenticated_client: TestClient,
+    credential_profile: dict[str, object],
+    container: ApplicationContainer,
+    fake_connection_gate,
+    monkeypatch,
+) -> None:
+    created = authenticated_client.post(
+        "/api/devices",
+        json=_device_payload(str(credential_profile["id"])),
+    ).json()
+    fake_connection_gate.acquired.clear()
+    fake_connection_gate.released.clear()
+    monkeypatch.setattr(tasks, "get_default_container", lambda: container)
+    queued = authenticated_client.post(
+        "/api/diagnostics",
+        json={"device_id": created["id"], "action": "routing_table"},
+    )
+
+    tasks.execute_job(queued.json()["id"])
+
+    assert [permit.operation for permit in fake_connection_gate.acquired] == [
+        ConnectionOperation.STRUCTURED_READ
+    ]
+    assert fake_connection_gate.released == fake_connection_gate.acquired

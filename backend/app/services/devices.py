@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+from time import monotonic
 from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
-from app.core.errors import AppError, ConflictError
+from app.core.errors import AppError, ConfigurationError, ConflictError
 from app.core.logging import sanitize_text
 from app.core.time import utc_now
 from app.drivers import (
@@ -15,13 +18,58 @@ from app.drivers import (
     DiagnosticAction,
     DriverRegistry,
 )
-from app.models import Device, DeviceStatus, EventSeverity, Interface, Neighbor
+from app.drivers.ssh_compatibility import (
+    SSH_COMPATIBILITY_POLICY_VERSION,
+    enforce_compatibility_policy,
+)
+from app.models import (
+    Device,
+    DeviceStatus,
+    EventSeverity,
+    Interface,
+    Neighbor,
+    SSHCompatibility,
+)
 from app.repositories.credentials import CredentialProfileRepository
 from app.repositories.devices import DeviceRepository
 from app.repositories.events import EventRepository
 from app.schemas.devices import DeviceConnectionFields, DeviceCreate, DeviceUpdate
 from app.schemas.diagnostics import DiagnosticResult
+from app.services.connection_gate import (
+    ConnectionGateUnavailableError,
+    ConnectionOperation,
+    ConnectionPermit,
+    ConnectionTarget,
+    RedisConnectionGate,
+)
 from app.services.credentials import CredentialVault
+
+_MAX_AUDIT_DURATION_MS = 86_400_000
+_POLICY_ERROR_DETAILS = {"phase": "authorization", "retryable": False}
+_AUDIT_PHASES = frozenset(
+    {
+        "authorization",
+        "complete",
+        "tcp_connection",
+        "ssh_negotiation",
+        "host_key_verification",
+        "authentication",
+        "pty_creation",
+        "terminal_io",
+    }
+)
+
+
+class LegacyModeDisabledByPolicyError(AppError):
+    code = "legacy_mode_disabled_by_policy"
+    status_code = 403
+    default_message = "Legacy SSH compatibility is not authorized"
+
+
+class LegacyGroup1DisabledByPolicyError(AppError):
+    code = "legacy_group1_disabled_by_policy"
+    status_code = 403
+    default_message = "Group1 SSH compatibility is not authorized"
 
 
 class DeviceService:
@@ -32,11 +80,13 @@ class DeviceService:
         settings: Settings,
         drivers: DriverRegistry,
         vault: CredentialVault,
+        connection_gate: RedisConnectionGate | None = None,
     ) -> None:
         self._session = session
         self._settings = settings
         self._drivers = drivers
         self._vault = vault
+        self._connection_gate = connection_gate
         self._devices = DeviceRepository(session)
         self._credentials = CredentialProfileRepository(session)
         self._events = EventRepository(session)
@@ -58,6 +108,7 @@ class DeviceService:
             port=request.port,
             vendor=request.vendor,
             credential_profile_id=request.credential_profile_id,
+            ssh_compatibility=request.ssh_compatibility,
             status=DeviceStatus.REACHABLE if result.reachable else DeviceStatus.UNREACHABLE,
             last_seen_at=utc_now() if result.reachable else None,
             facts={},
@@ -81,7 +132,14 @@ class DeviceService:
     def update(self, device_id: UUID, request: DeviceUpdate) -> Device:
         device = self._devices.get(device_id, for_update=True)
         changes = request.model_dump(exclude_unset=True)
-        connection_fields = {"management_address", "port", "vendor", "credential_profile_id"}
+        group1_risk_acknowledged = bool(changes.pop("group1_risk_acknowledged", False))
+        connection_fields = {
+            "management_address",
+            "port",
+            "vendor",
+            "credential_profile_id",
+            "ssh_compatibility",
+        }
         candidate = DeviceConnectionFields(
             management_address=changes.get("management_address", device.management_address),
             port=changes.get("port", device.port),
@@ -89,6 +147,8 @@ class DeviceService:
             credential_profile_id=changes.get(
                 "credential_profile_id", device.credential_profile_id
             ),
+            ssh_compatibility=changes.get("ssh_compatibility", device.ssh_compatibility),
+            group1_risk_acknowledged=group1_risk_acknowledged,
         )
         if changes.keys() & connection_fields:
             other = self._devices.find_by_endpoint(candidate.management_address, candidate.port)
@@ -133,28 +193,36 @@ class DeviceService:
         *,
         device_id: UUID | None = None,
     ) -> ConnectionTestResult:
-        driver = self._drivers.get(request.vendor)
-        parameters = self.connection_parameters(
-            profile_id=request.credential_profile_id,
+        with self.admitted_connection(
+            device_id=device_id,
             host=request.management_address,
             port=request.port,
-        )
-        try:
-            result = driver.test_connection(parameters)
-        except AppError as exc:
-            if device_id is not None:
-                device = self._devices.get(device_id, for_update=True)
-                device.status = DeviceStatus.UNREACHABLE
-                device.last_error_code = exc.code
-                self._events.record(
-                    event_type="device.connection_failed",
-                    severity=EventSeverity.ERROR,
-                    message=exc.message,
-                    device_id=device.id,
-                    details={"error_code": exc.code},
-                )
-                self._session.commit()
-            raise
+            profile_id=request.credential_profile_id,
+            compatibility=request.ssh_compatibility,
+            group1_risk_acknowledged=request.group1_risk_acknowledged,
+            operation=ConnectionOperation.CONNECTION_TEST,
+        ) as parameters:
+            driver = self._drivers.get(request.vendor)
+            try:
+                result = driver.test_connection(parameters)
+            except AppError as exc:
+                if device_id is not None and exc.code not in {
+                    LegacyModeDisabledByPolicyError.code,
+                    LegacyGroup1DisabledByPolicyError.code,
+                }:
+                    device = self._devices.get(device_id, for_update=True)
+                    device.status = DeviceStatus.UNREACHABLE
+                    device.last_error_code = exc.code
+                    self._events.record(
+                        event_type="device.connection_failed",
+                        severity=EventSeverity.ERROR,
+                        message=exc.message,
+                        device_id=device.id,
+                        details={"error_code": exc.code},
+                    )
+                    self._session.commit()
+                raise
+        del parameters
         if device_id is not None:
             device = self._devices.get(device_id, for_update=True)
             device.status = DeviceStatus.REACHABLE
@@ -167,6 +235,8 @@ class DeviceService:
                 details={"driver": driver.name, "latency_ms": result.latency_ms},
             )
             self._session.commit()
+        else:
+            self._session.commit()
         return result
 
     def test_registered_device(self, device_id: UUID) -> ConnectionTestResult:
@@ -176,32 +246,43 @@ class DeviceService:
             port=device.port,
             vendor=device.vendor,
             credential_profile_id=device.credential_profile_id,
+            ssh_compatibility=device.ssh_compatibility,
+            group1_risk_acknowledged=(
+                device.ssh_compatibility is SSHCompatibility.CISCO_LEGACY_GROUP1
+            ),
         )
         return self.test_connection(request, device_id=device.id)
 
     def refresh(self, device_id: UUID, *, job_id: UUID | None = None) -> dict[str, object]:
         device = self._devices.get(device_id, for_update=True)
-        driver = self._drivers.get(device.vendor)
-        parameters = self.connection_parameters(
-            profile_id=device.credential_profile_id,
+        with self.admitted_connection(
+            device_id=device.id,
             host=device.management_address,
             port=device.port,
-        )
-        try:
-            observations = driver.collect_observations(parameters)
-        except AppError as exc:
-            device.status = DeviceStatus.UNREACHABLE
-            device.last_error_code = exc.code
-            self._events.record(
-                event_type="device.refresh_failed",
-                severity=EventSeverity.ERROR,
-                message=exc.message,
-                device_id=device.id,
-                job_id=job_id,
-                details={"error_code": exc.code},
-            )
-            self._session.commit()
-            raise
+            profile_id=device.credential_profile_id,
+            compatibility=device.ssh_compatibility,
+            group1_risk_acknowledged=(
+                device.ssh_compatibility is SSHCompatibility.CISCO_LEGACY_GROUP1
+            ),
+            operation=ConnectionOperation.STRUCTURED_READ,
+        ) as parameters:
+            driver = self._drivers.get(device.vendor)
+            try:
+                observations = driver.collect_observations(parameters)
+            except AppError as exc:
+                device.status = DeviceStatus.UNREACHABLE
+                device.last_error_code = exc.code
+                self._events.record(
+                    event_type="device.refresh_failed",
+                    severity=EventSeverity.ERROR,
+                    message=exc.message,
+                    device_id=device.id,
+                    job_id=job_id,
+                    details={"error_code": exc.code},
+                )
+                self._session.commit()
+                raise
+        del parameters
         device.facts = observations.facts.as_dict()
         device.status = DeviceStatus.REACHABLE
         device.last_seen_at = utc_now()
@@ -235,13 +316,20 @@ class DeviceService:
         job_id: UUID,
     ) -> dict[str, object]:
         device = self._devices.get(device_id, for_update=True)
-        driver = self._drivers.get(device.vendor)
-        parameters = self.connection_parameters(
-            profile_id=device.credential_profile_id,
+        with self.admitted_connection(
+            device_id=device.id,
             host=device.management_address,
             port=device.port,
-        )
-        sanitized = sanitize_text(driver.run_diagnostic(parameters, action, target))
+            profile_id=device.credential_profile_id,
+            compatibility=device.ssh_compatibility,
+            group1_risk_acknowledged=(
+                device.ssh_compatibility is SSHCompatibility.CISCO_LEGACY_GROUP1
+            ),
+            operation=ConnectionOperation.STRUCTURED_READ,
+        ) as parameters:
+            driver = self._drivers.get(device.vendor)
+            sanitized = sanitize_text(driver.run_diagnostic(parameters, action, target))
+        del parameters
         output_limit = 65_536
         result = DiagnosticResult(
             device_id=device.id,
@@ -287,4 +375,185 @@ class DeviceService:
             enable_password=material.enable_password,
             connect_timeout_seconds=self._settings.ssh_connect_timeout_seconds,
             command_timeout_seconds=self._settings.ssh_command_timeout_seconds,
+        )
+
+    @contextmanager
+    def admitted_connection(
+        self,
+        *,
+        device_id: UUID | None,
+        host: str,
+        port: int,
+        profile_id: UUID,
+        compatibility: SSHCompatibility,
+        group1_risk_acknowledged: bool,
+        operation: ConnectionOperation,
+    ) -> Iterator[ConnectionParameters]:
+        started = monotonic()
+        normalized_host = host.strip().lower()
+        mode = SSHCompatibility(compatibility)
+        try:
+            enforce_compatibility_policy(
+                mode,
+                self._settings,
+                group1_risk_acknowledged=group1_risk_acknowledged,
+            )
+        except ConfigurationError:
+            error: AppError
+            if not self._settings.ssh_legacy_enabled:
+                error = LegacyModeDisabledByPolicyError(details=_POLICY_ERROR_DETAILS)
+            else:
+                error = LegacyGroup1DisabledByPolicyError(details=_POLICY_ERROR_DETAILS)
+            self._audit_connection(
+                device_id=device_id,
+                compatibility=mode,
+                group1_risk_acknowledged=group1_risk_acknowledged,
+                operation=operation,
+                phase="authorization",
+                authorization_decision="denied",
+                result_code=error.code,
+                started=started,
+            )
+            self._session.commit()
+            raise error from None
+
+        gate = self._connection_gate
+        if gate is None:
+            error = ConnectionGateUnavailableError()
+            self._audit_connection(
+                device_id=device_id,
+                compatibility=mode,
+                group1_risk_acknowledged=group1_risk_acknowledged,
+                operation=operation,
+                phase="authorization",
+                authorization_decision="denied",
+                result_code=error.code,
+                started=started,
+            )
+            self._session.commit()
+            raise error
+
+        target = ConnectionTarget.from_endpoint(
+            host=normalized_host,
+            port=port,
+            credential_profile_id=profile_id,
+            device_id=device_id,
+        )
+        permit: ConnectionPermit | None = None
+        profile = None
+        material = None
+        parameters = None
+        try:
+            try:
+                permit = gate.acquire(operation, target)
+            except AppError as exc:
+                self._audit_connection(
+                    device_id=device_id,
+                    compatibility=mode,
+                    group1_risk_acknowledged=group1_risk_acknowledged,
+                    operation=operation,
+                    phase="authorization",
+                    authorization_decision="denied",
+                    result_code=exc.code,
+                    started=started,
+                )
+                self._session.commit()
+                raise
+
+            profile = self._credentials.get(profile_id)
+            material = self._vault.decrypt(profile)
+            parameters = ConnectionParameters(
+                host=normalized_host,
+                port=port,
+                username=material.username,
+                password=material.password,
+                enable_password=material.enable_password,
+                connect_timeout_seconds=self._settings.ssh_connect_timeout_seconds,
+                command_timeout_seconds=self._settings.ssh_command_timeout_seconds,
+                ssh_compatibility=mode,
+            )
+            try:
+                yield parameters
+            except AppError as exc:
+                if exc.details.get("phase") == "authentication":
+                    gate.authentication_failed(target)
+                failure_phase = exc.details.get("phase")
+                self._audit_connection(
+                    device_id=device_id,
+                    compatibility=mode,
+                    group1_risk_acknowledged=group1_risk_acknowledged,
+                    operation=operation,
+                    phase=(
+                        failure_phase
+                        if isinstance(failure_phase, str) and failure_phase in _AUDIT_PHASES
+                        else "complete"
+                    ),
+                    authorization_decision="allowed",
+                    result_code=exc.code,
+                    started=started,
+                )
+                self._session.commit()
+                raise
+            except Exception:
+                self._audit_connection(
+                    device_id=device_id,
+                    compatibility=mode,
+                    group1_risk_acknowledged=group1_risk_acknowledged,
+                    operation=operation,
+                    phase="complete",
+                    authorization_decision="allowed",
+                    result_code="internal_error",
+                    started=started,
+                )
+                self._session.commit()
+                raise
+            else:
+                gate.authentication_succeeded(target)
+                self._audit_connection(
+                    device_id=device_id,
+                    compatibility=mode,
+                    group1_risk_acknowledged=group1_risk_acknowledged,
+                    operation=operation,
+                    phase="complete",
+                    authorization_decision="allowed",
+                    result_code="success",
+                    started=started,
+                )
+        finally:
+            parameters = None
+            material = None
+            profile = None
+            if permit is not None:
+                gate.release(permit)
+
+    def _audit_connection(
+        self,
+        *,
+        device_id: UUID | None,
+        compatibility: SSHCompatibility,
+        group1_risk_acknowledged: bool,
+        operation: ConnectionOperation,
+        phase: str,
+        authorization_decision: str,
+        result_code: str,
+        started: float,
+    ) -> None:
+        self._events.record(
+            event_type="ssh.connection_admission",
+            message="SSH connection admission completed",
+            device_id=device_id,
+            details={
+                "principal": "local-admin",
+                "requested_mode": compatibility.value,
+                "group1_risk_acknowledged": group1_risk_acknowledged,
+                "compatibility_policy_version": SSH_COMPATIBILITY_POLICY_VERSION,
+                "operation": operation.value,
+                "phase": phase,
+                "policy_decision": authorization_decision,
+                "duration_ms": min(
+                    max(0, int((monotonic() - started) * 1_000)),
+                    _MAX_AUDIT_DURATION_MS,
+                ),
+                "result_code": result_code,
+            },
         )

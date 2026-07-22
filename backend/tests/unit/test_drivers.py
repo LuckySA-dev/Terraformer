@@ -14,6 +14,7 @@ from scrapli.exceptions import (
     ScrapliValueError,
 )
 
+from app.core import errors as core_errors
 from app.core.errors import (
     ConfigurationError,
     DriverAuthenticationError,
@@ -21,6 +22,7 @@ from app.core.errors import (
     DriverConnectionError,
     DriverHostKeyVerificationError,
     DriverSSHNegotiationError,
+    DriverTerminalIOError,
     DriverTerminalPTYError,
     DriverTimeoutError,
     UnsupportedCapabilityError,
@@ -94,6 +96,16 @@ def test_cisco_driver_is_read_only_and_closes_connections(
     assert all(transport.closed for transport in factory.transports)
     with pytest.raises(UnsupportedCapabilityError):
         driver.apply_configuration(parameters(), ["interface GigabitEthernet1"])
+
+
+def test_cisco_driver_closes_transport_when_open_fails() -> None:
+    factory = FakeTransportFactory({}, open_error=RuntimeError("raw-open-marker"))
+    driver = CiscoIOSXEDriver(factory)
+
+    with pytest.raises(DriverConnectionError):
+        driver.test_connection(parameters())
+
+    assert factory.transports[0].closed is True
 
 
 @pytest.mark.parametrize(
@@ -389,6 +401,60 @@ def test_ssh_error_catalog_is_typed_and_contains_only_fixed_metadata(
 
 
 @pytest.mark.parametrize(
+    ("error", "expected_code", "expected_type"),
+    [
+        (
+            ScrapliTimeout("Timed out connecting to host raw-timeout-marker"),
+            "device_connection_timeout",
+            "DriverTimeoutError",
+        ),
+        (
+            ScrapliAuthenticationFailed("Connection refused raw-refused-marker"),
+            "device_connection_refused",
+            "DriverConnectionRefusedError",
+        ),
+        (
+            ScrapliConnectionError("encountered EOF reading from transport raw-eof-marker"),
+            "device_connection_lost",
+            "DriverConnectionLostError",
+        ),
+        (
+            ScrapliAuthenticationFailed("Could not resolve address for host raw-resolution-marker"),
+            "device_name_resolution_failed",
+            "DriverNameResolutionError",
+        ),
+        (
+            ScrapliAuthenticationFailed(
+                "No ED25519 host key is known for edge-rtr-01.example.test raw-unknown-marker"
+            ),
+            "device_host_key_unknown",
+            "DriverHostKeyUnknownError",
+        ),
+        (
+            ScrapliAuthenticationFailed(
+                "REMOTE HOST IDENTIFICATION HAS CHANGED raw-changed-marker"
+            ),
+            "device_host_key_changed",
+            "DriverHostKeyChangedError",
+        ),
+    ],
+)
+def test_pinned_scrapli_failures_have_specific_stable_codes(
+    error: Exception,
+    expected_code: str,
+    expected_type: str,
+) -> None:
+    translated = translate_ssh_error(error, phase=ConnectionPhase.TCP)
+    error_type = getattr(core_errors, expected_type)
+
+    assert type(translated) is error_type
+    assert issubclass(error_type, DriverConnectionError | DriverTimeoutError)
+    assert translated.code == expected_code
+    assert "raw-" not in str(translated)
+    assert "raw-" not in repr(translated.details)
+
+
+@pytest.mark.parametrize(
     "marker",
     [
         "No matching key exchange found for host, their offer: raw-kex-offer",
@@ -413,24 +479,46 @@ def test_algorithm_mismatch_is_always_negotiation(marker: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "marker",
+    ("marker", "expected_type", "expected_code", "recommended_action"),
     [
-        "Host key verification failed raw-verification-marker",
-        "REMOTE HOST IDENTIFICATION HAS CHANGED raw-changed-marker",
-        "No ED25519 host key is known for edge-rtr-01.example.test raw-unknown-marker",
+        (
+            "Host key verification failed raw-verification-marker",
+            "DriverHostKeyVerificationError",
+            "device_connection_failed",
+            "Verify the saved SSH host key for this device.",
+        ),
+        (
+            "REMOTE HOST IDENTIFICATION HAS CHANGED raw-changed-marker",
+            "DriverHostKeyChangedError",
+            "device_host_key_changed",
+            "Verify the device identity before replacing its saved SSH host key.",
+        ),
+        (
+            "No ED25519 host key is known for edge-rtr-01.example.test raw-unknown-marker",
+            "DriverHostKeyUnknownError",
+            "device_host_key_unknown",
+            "Verify and enroll the device SSH host key.",
+        ),
     ],
 )
-def test_real_host_key_failures_are_host_key_phase(marker: str) -> None:
+def test_real_host_key_failures_are_host_key_phase(
+    marker: str,
+    expected_type: str,
+    expected_code: str,
+    recommended_action: str,
+) -> None:
     translated = translate_ssh_error(
         ScrapliAuthenticationFailed(marker),
         phase=ConnectionPhase.TCP,
     )
 
-    assert type(translated) is DriverHostKeyVerificationError
+    assert type(translated) is getattr(core_errors, expected_type)
+    assert isinstance(translated, DriverHostKeyVerificationError)
+    assert translated.code == expected_code
     assert translated.details == {
         "phase": "host_key_verification",
         "retryable": False,
-        "recommended_action": "Verify the saved SSH host key for this device.",
+        "recommended_action": recommended_action,
     }
     assert "raw-" not in str(translated)
     assert "raw-" not in repr(translated.details)
@@ -441,7 +529,7 @@ def test_real_host_key_failures_are_host_key_phase(marker: str) -> None:
     [
         (ConnectionPhase.TCP, "device_connection_failed", True),
         (ConnectionPhase.NEGOTIATION, "legacy_ssh_negotiation_failed", False),
-        (ConnectionPhase.HOST_KEY, "device_host_key_verification_failed", False),
+        (ConnectionPhase.HOST_KEY, "device_connection_failed", False),
         (ConnectionPhase.AUTHENTICATION, "device_authentication_failed", False),
         (ConnectionPhase.PTY, "terminal_pty_rejected", False),
         (ConnectionPhase.TERMINAL_IO, "terminal_transport_failed", True),
@@ -485,7 +573,7 @@ def test_command_transport_failure_is_terminal_io_and_sanitized(
         )
     )
 
-    with pytest.raises(DriverConnectionError) as captured:
+    with pytest.raises(DriverTerminalIOError) as captured:
         driver.run_diagnostic(parameters(), DiagnosticAction.ROUTING_TABLE)
 
     assert captured.value.code == "terminal_transport_failed"
@@ -494,6 +582,34 @@ def test_command_transport_failure_is_terminal_io_and_sanitized(
     assert "raw-command-marker" not in rendered
     assert "edge-rtr-01.example.test" not in rendered
     assert "fixture-password" not in rendered
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        DriverConnectionError("raw-typed-connection-marker"),
+        DriverAuthenticationError("raw-typed-auth-marker"),
+        ScrapliAuthenticationFailed("Permission denied raw-scrapli-auth-marker"),
+        ScrapliConnectionError("encountered EOF reading from transport raw-scrapli-eof-marker"),
+    ],
+)
+def test_command_connection_and_auth_failures_are_terminal_io(
+    sanitized_outputs: dict[str, str],
+    error: Exception,
+) -> None:
+    driver = CiscoIOSXEDriver(FakeTransportFactory(sanitized_outputs, command_error=error))
+
+    with pytest.raises(DriverTerminalIOError) as captured:
+        driver.run_diagnostic(parameters(), DiagnosticAction.ROUTING_TABLE)
+
+    assert type(captured.value) is DriverTerminalIOError
+    assert captured.value.code == "terminal_transport_failed"
+    assert captured.value.details == {
+        "phase": "terminal_io",
+        "retryable": True,
+        "recommended_action": "Retry the device operation after checking connectivity.",
+    }
+    assert "raw-" not in str(captured.value)
 
 
 def test_typed_command_error_is_rebuilt_without_raw_state(

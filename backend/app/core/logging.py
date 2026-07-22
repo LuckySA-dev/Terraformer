@@ -61,6 +61,17 @@ def redaction_processor(
     return {key: redact_value(value, key=key) for key, value in event_dict.items()}
 
 
+def _sanitize_exception_info(
+    _logger: Any,
+    _method_name: str,
+    event_dict: MutableMapping[str, Any],
+) -> MutableMapping[str, Any]:
+    has_exception = bool(event_dict.pop("exc_info", None))
+    if has_exception or "exception" in event_dict:
+        event_dict["exception"] = _REDACTED
+    return event_dict
+
+
 def configure_logging(level: str = "INFO") -> None:
     numeric_level = getattr(logging, level.upper(), logging.INFO)
     logging.basicConfig(format="%(message)s", stream=sys.stdout, level=numeric_level, force=True)
@@ -78,6 +89,7 @@ def configure_logging(level: str = "INFO") -> None:
     structlog.configure(
         processors=[
             *shared_processors,
+            _sanitize_exception_info,
             structlog.processors.format_exc_info,
             redaction_processor,
             structlog.processors.JSONRenderer(),

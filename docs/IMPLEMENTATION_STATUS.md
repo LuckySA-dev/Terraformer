@@ -34,7 +34,7 @@ in `network-automation-final-plan.md`.
 | Shared API/worker image and one-shot migration gate | Implemented | Clean image build; migrate exited 0 before API/worker startup |
 | API, worker, database, queue and web health | Implemented | All five long-running services reported healthy |
 | Master-password setup and encrypted credentials | Implemented | Argon2id and AES-GCM tests plus API/UI integration coverage |
-| Sanitized structured logging and typed errors | Implemented | Unit/integration tests and runtime log review |
+| Sanitized structured logging and typed errors | Implemented | Unit/integration tests cover fixed SSH failure codes/phases, traceback replacement before rendering, and worker records without exception names or raw values |
 | Default loopback exposure | Implemented | Only web is published, on `127.0.0.1:8080` |
 | No model runtime in base deployment | Implemented | No model/AI service exists in Compose |
 
@@ -42,7 +42,7 @@ in `network-automation-final-plan.md`.
 
 | Item | Status | Evidence |
 |---|---|---|
-| Cisco IOS/IOS-XE connection test | Implemented; lab unverified | Capability/transport unit tests and opt-in lab harness |
+| Cisco IOS/IOS-XE connection test | Implemented; lab unverified | Password-only Scrapli system-transport policy, sanitized phase-specific error mapping, capability/transport unit tests, and opt-in lab harness |
 | Exact-target manual add | Implemented; lab unverified | API/service/UI vertical-slice tests; no CIDR discovery path |
 | Facts collection | Implemented; lab unverified | Sanitized golden fixtures and parser/driver tests |
 | Interface inventory/state | Implemented; lab unverified | Sanitized golden fixtures and API/UI tests |
@@ -95,6 +95,7 @@ in `network-automation-final-plan.md`.
 | 2026-07-20 | Serving policy | Static Nginx/Vite regression plus hidden loopback Vite and production Compose `HEAD /` checks | Development and production responses contained `camera=(), microphone=(), geolocation=(), serial=(self)`; both local launchers/listeners and the Compose stack were explicitly stopped and confirmed absent |
 | 2026-07-20 | Manual USB Console UI polish | CSS-source regression; USB component regression; `npm.cmd run verify` | Scoped light-surface and privacy-note declarations passed source and component checks; 12 files / 91 tests, type check, lint, and production build passed; browser visual validation remains pending; no hardware contacted |
 | 2026-07-21 | SSH runtime hardening and multi-port SSH-aware discovery | Backend Ruff, Pyright and `python -m pytest`; frontend `npm.cmd run verify`; normal/dev Compose `config --quiet`; focused fake transport/banner, logging, RQ-formatting and approval regressions | **Automated verification passed; hardware validation pending.** Backend 85 passed/1 opt-in lab skipped; frontend 12 files/92 tests plus typecheck, lint and production build passed; both Compose configs valid. Docker image smoke-test remains pending because the local Docker Desktop daemon was unavailable; no device connection or real network probe was performed. |
+| 2026-07-22 | Cisco legacy SSH transport and sanitized failure hardening | Targeted Ruff format; repository Ruff; Pyright; `python -m pytest`; normal/dev Compose `config --quiet`; fake Scrapli/open/command/logging/worker regressions | **Automated verification passed; hardware validation pending.** Backend 136 passed/1 opt-in lab skipped; Pyright 0 errors/0 warnings; both Compose configs valid. Password-only OpenSSH options are request-scoped; open failures close transports; stable phase-specific errors and worker records contain no raw exception content or class names. No device connection or external network operation was performed. |
 
 ## Security decisions verified
 

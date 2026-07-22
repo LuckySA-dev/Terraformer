@@ -156,17 +156,18 @@ class CiscoIOSXEDriver(DeviceDriver):
     def _session(self, parameters: ConnectionParameters) -> Iterator[NetworkTransport]:
         transport = self._transport_factory(parameters)
         try:
-            transport.open()
-        except Exception as exc:
-            raise translate_transport_error(
-                exc,
-                phase=ConnectionPhase.TCP,
-            ) from None
-        try:
-            yield transport
-        except Exception as exc:
-            translated = translate_transport_error(exc, phase=ConnectionPhase.TERMINAL_IO)
-            raise translated from None
+            try:
+                transport.open()
+            except Exception as exc:
+                raise translate_transport_error(
+                    exc,
+                    phase=ConnectionPhase.TCP,
+                ) from None
+            try:
+                yield transport
+            except Exception as exc:
+                translated = translate_transport_error(exc, phase=ConnectionPhase.TERMINAL_IO)
+                raise translated from None
         finally:
             try:
                 transport.close()

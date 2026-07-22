@@ -40,20 +40,28 @@ def test_text_redaction_covers_cisco_secrets_and_url_passwords() -> None:
     assert sanitized.count("[REDACTED]") == 3
 
 
-def test_exception_traceback_is_redacted_after_rendering(capsys) -> None:
+def test_exception_traceback_is_replaced_before_rendering(capsys) -> None:
     configure_logging("INFO")
     logger = structlog.get_logger("redaction-test")
     try:
-        raise RuntimeError("password hunter2 token abc123 community public")
-    except RuntimeError:
+        raise ScrapliAuthenticationFailed(
+            "raw-traceback-marker edge-rtr-01.example.test fixture-password "
+            "their offer: peer-offered-ssh-rsa"
+        )
+    except ScrapliAuthenticationFailed:
         logger.exception("fixture_failure", api_key="key-value")
 
     output = capsys.readouterr().out
-    assert "hunter2" not in output
-    assert "abc123" not in output
-    assert "public" not in output
-    assert "key-value" not in output
-    assert output.count("[REDACTED]") >= 4
+    for prohibited in (
+        "ScrapliAuthenticationFailed",
+        "raw-traceback-marker",
+        "edge-rtr-01.example.test",
+        "fixture-password",
+        "peer-offered-ssh-rsa",
+        "key-value",
+    ):
+        assert prohibited not in output
+    assert output.count("[REDACTED]") >= 2
 
 
 def test_scrapli_raw_messages_do_not_reach_application_logs(capsys) -> None:

@@ -1,6 +1,6 @@
 # Capability matrix
 
-Last updated: 2026-07-21
+Last updated: 2026-07-22
 Scope: phases 0–2
 
 ## Status definitions
@@ -44,6 +44,11 @@ the resulting device and audit linkage are committed together.
 The shared backend runtime includes the OpenSSH client required by the explicit
 Scrapli system transport; this packaging evidence does not replace authorized
 real-device validation, so SSH capabilities remain lab-unverified.
+Both Scrapli adapters apply the same request-scoped password-only OpenSSH policy.
+Fixture-backed tests cover the pinned system-transport messages for connection
+timeout/refusal/loss, name resolution, host-key unknown/changed, negotiation,
+authentication, PTY, and terminal I/O failures. These mappings are sanitized
+software evidence only and do not promote any vendor capability to Lab verified.
 The topology canvas is a UI projection, not a new device capability. It can show
 any registered device, but current observed links come only from lab-unverified
 Cisco CDP/LLDP records. Dashed observed nodes never become inventory implicitly.

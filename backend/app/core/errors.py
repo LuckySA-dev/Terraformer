@@ -70,6 +70,21 @@ class DriverConnectionError(DriverError):
     default_message = "Unable to connect to the device"
 
 
+class DriverConnectionRefusedError(DriverConnectionError):
+    code = "device_connection_refused"
+    default_message = "The device refused the SSH connection"
+
+
+class DriverConnectionLostError(DriverConnectionError):
+    code = "device_connection_lost"
+    default_message = "The device connection was lost"
+
+
+class DriverNameResolutionError(DriverConnectionError):
+    code = "device_name_resolution_failed"
+    default_message = "The device address could not be resolved"
+
+
 class DriverAuthenticationError(DriverError):
     code = "device_authentication_failed"
     status_code = 401
@@ -77,8 +92,17 @@ class DriverAuthenticationError(DriverError):
 
 
 class DriverHostKeyVerificationError(DriverConnectionError):
-    code = "device_host_key_verification_failed"
     default_message = "SSH host key verification failed"
+
+
+class DriverHostKeyUnknownError(DriverHostKeyVerificationError):
+    code = "device_host_key_unknown"
+    default_message = "The device SSH host key is unknown"
+
+
+class DriverHostKeyChangedError(DriverHostKeyVerificationError):
+    code = "device_host_key_changed"
+    default_message = "The device SSH host key has changed"
 
 
 class DriverSSHNegotiationError(DriverConnectionError):
@@ -97,7 +121,7 @@ class DriverTerminalIOError(DriverConnectionError):
 
 
 class DriverTimeoutError(DriverError):
-    code = "device_timeout"
+    code = "device_connection_timeout"
     status_code = 504
     default_message = "The device operation timed out"
 

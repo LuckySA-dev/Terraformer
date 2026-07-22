@@ -16,6 +16,14 @@ from app.services.discovery import run_discovery
 from app.services.snapshots import SnapshotService
 
 logger = structlog.get_logger(__name__)
+_SSH_FAILURE_PHASES = {
+    "tcp_connection",
+    "ssh_negotiation",
+    "host_key_verification",
+    "authentication",
+    "pty_creation",
+    "terminal_io",
+}
 
 
 def execute_job(job_id: str) -> dict[str, object]:
@@ -78,15 +86,14 @@ def execute_job(job_id: str) -> dict[str, object]:
     except Exception as exc:
         code = exc.code if isinstance(exc, AppError) else "job_execution_failed"
         message = exc.message if isinstance(exc, AppError) else "Background job execution failed"
+        phase = exc.details.get("phase") if isinstance(exc, AppError) else None
         sanitized_error: Exception = (
             type(exc)(message) if isinstance(exc, AppError) else RuntimeError(message)
         )
-        logger.error(
-            "device_job_failed",
-            job_id=job_id,
-            error_code=code,
-            error_type=type(exc).__name__,
-        )
+        log_fields: dict[str, object] = {"job_id": job_id, "error_code": code}
+        if phase in _SSH_FAILURE_PHASES:
+            log_fields["phase"] = phase
+        logger.error("device_job_failed", **log_fields)
         with container.session_factory() as session:
             jobs = JobRepository(session)
             failed_job = jobs.get(parsed_job_id, for_update=True)

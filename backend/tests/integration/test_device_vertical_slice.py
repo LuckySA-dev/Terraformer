@@ -11,8 +11,8 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.container import ApplicationContainer
 from app.core.errors import DriverTerminalIOError, DriverTimeoutError
 from app.jobs import tasks
-from app.models import ConfigSnapshot, Event, Job
-from app.services.connection_gate import ConnectionOperation
+from app.models import ConfigSnapshot, Device, Event, Job
+from app.services.connection_gate import ConnectionOperation, ConnectionTarget
 from app.services.devices import DeviceService
 
 
@@ -450,6 +450,82 @@ def test_credential_profile_edit_retests_before_save(
     assert len(transport_factory.parameters) == call_count + 1
 
 
+def test_connection_edit_commits_only_the_exact_tuple_that_was_tested(
+    authenticated_client: TestClient,
+    credential_profile: dict[str, object],
+    container: ApplicationContainer,
+    transport_factory,
+    monkeypatch,
+) -> None:
+    created = authenticated_client.post(
+        "/api/devices", json=_device_payload(str(credential_profile["id"]))
+    ).json()
+    replacement = authenticated_client.post(
+        "/api/credential-profiles",
+        json={
+            "name": "atomic-retest-profile",
+            "username": "atomic-retest-user",
+            "password": "atomic-retest-password",
+        },
+    ).json()
+    container.settings.ssh_legacy_enabled = True
+    device_id = UUID(created["id"])
+    committed_tuples: list[tuple[object, ...]] = []
+    original_commit = Session.commit
+
+    def record_committed_tuple(session: Session) -> None:
+        device = session.get(Device, device_id)
+        if device is not None:
+            committed_tuples.append(
+                (
+                    device.management_address,
+                    device.port,
+                    device.vendor.value,
+                    str(device.credential_profile_id),
+                    device.ssh_compatibility.value,
+                )
+            )
+        original_commit(session)
+
+    monkeypatch.setattr(Session, "commit", record_committed_tuple)
+    requested_tuple = (
+        "192.0.2.77",
+        2222,
+        "generic",
+        replacement["id"],
+        "cisco_legacy",
+    )
+
+    updated = authenticated_client.patch(
+        f"/api/devices/{created['id']}",
+        json={
+            "management_address": requested_tuple[0],
+            "port": requested_tuple[1],
+            "vendor": requested_tuple[2],
+            "credential_profile_id": requested_tuple[3],
+            "ssh_compatibility": requested_tuple[4],
+        },
+    )
+
+    assert updated.status_code == 200, updated.text
+    tested = transport_factory.parameters[-1]
+    saved_tuple = (
+        updated.json()["management_address"],
+        updated.json()["port"],
+        updated.json()["vendor"],
+        updated.json()["credential_profile_id"],
+        updated.json()["ssh_compatibility"],
+    )
+    assert saved_tuple == requested_tuple
+    assert (tested.host, tested.port, tested.username, tested.ssh_compatibility.value) == (
+        requested_tuple[0],
+        requested_tuple[1],
+        "atomic-retest-user",
+        requested_tuple[4],
+    )
+    assert committed_tuples == [requested_tuple]
+
+
 @pytest.mark.parametrize(
     "field",
     [
@@ -464,6 +540,7 @@ def test_failed_edit_retest_does_not_mutate_saved_device(
     authenticated_client: TestClient,
     credential_profile: dict[str, object],
     container: ApplicationContainer,
+    session_factory: sessionmaker[Session],
     transport_factory,
     field: str,
 ) -> None:
@@ -489,14 +566,23 @@ def test_failed_edit_retest_does_not_mutate_saved_device(
     if field == "ssh_compatibility":
         container.settings.ssh_legacy_enabled = True
     transport_factory.open_error = ScrapliAuthenticationFailed("denied")
+    with session_factory() as session:
+        admission_count = (
+            session.query(Event).filter_by(event_type="ssh.connection_admission").count()
+        )
 
     failed = authenticated_client.patch(
         f"/api/devices/{created['id']}",
         json={field: values[field]},
     )
     stored = authenticated_client.get(f"/api/devices/{created['id']}").json()
+    with session_factory() as session:
+        persisted_admission_count = (
+            session.query(Event).filter_by(event_type="ssh.connection_admission").count()
+        )
 
     assert failed.status_code == 401
+    assert persisted_admission_count == admission_count
     for field in (
         "management_address",
         "port",
@@ -616,7 +702,7 @@ def test_admission_happens_before_decryption_and_auth_accounting_is_tuple_scoped
     )
 
 
-def test_non_auth_driver_failure_releases_once_without_changing_auth_counters(
+def test_terminal_io_failure_after_auth_clears_prior_tuple_failures(
     authenticated_client: TestClient,
     credential_profile: dict[str, object],
     container: ApplicationContainer,
@@ -631,6 +717,24 @@ def test_non_auth_driver_failure_releases_once_without_changing_auth_counters(
     fake_connection_gate.released.clear()
     fake_connection_gate.authentication_failures.clear()
     fake_connection_gate.authentication_successes.clear()
+    prior_target = ConnectionTarget.from_endpoint(
+        host=created["management_address"],
+        port=created["port"],
+        credential_profile_id=UUID(created["credential_profile_id"]),
+        device_id=UUID(created["id"]),
+    )
+    active_failure_tuples = {prior_target}
+    fake_connection_gate.authentication_failures.append(prior_target)
+
+    def clear_prior_failures(target: ConnectionTarget) -> None:
+        active_failure_tuples.discard(target)
+        fake_connection_gate.authentication_successes.append(target)
+
+    monkeypatch.setattr(
+        fake_connection_gate,
+        "authentication_succeeded",
+        clear_prior_failures,
+    )
     transport_factory.command_error = ScrapliTimeout("timed out")
     monkeypatch.setattr(tasks, "get_default_container", lambda: container)
     job = authenticated_client.post(f"/api/devices/{created['id']}/refresh").json()
@@ -640,8 +744,9 @@ def test_non_auth_driver_failure_releases_once_without_changing_auth_counters(
 
     assert len(fake_connection_gate.acquired) == 1
     assert fake_connection_gate.released == fake_connection_gate.acquired
-    assert fake_connection_gate.authentication_failures == []
-    assert fake_connection_gate.authentication_successes == []
+    assert fake_connection_gate.authentication_failures == [prior_target]
+    assert fake_connection_gate.authentication_successes == [prior_target]
+    assert active_failure_tuples == set()
 
 
 def test_audit_failure_still_releases_the_permit_once(

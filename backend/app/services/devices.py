@@ -58,6 +58,7 @@ _AUDIT_PHASES = frozenset(
         "terminal_io",
     }
 )
+_POST_AUTHENTICATION_PHASES = frozenset({"pty_creation", "terminal_io"})
 
 
 class LegacyModeDisabledByPolicyError(AppError):
@@ -154,7 +155,7 @@ class DeviceService:
             other = self._devices.find_by_endpoint(candidate.management_address, candidate.port)
             if other is not None and other.id != device.id:
                 raise ConflictError("A device with this management endpoint already exists")
-            self.test_connection(candidate)
+            self.test_connection(candidate, _commit=False)
         for field, value in changes.items():
             setattr(device, field, value.strip() if field == "name" else value)
         if changes.keys() & connection_fields:
@@ -192,6 +193,7 @@ class DeviceService:
         request: DeviceConnectionFields,
         *,
         device_id: UUID | None = None,
+        _commit: bool = True,
     ) -> ConnectionTestResult:
         with self.admitted_connection(
             device_id=device_id,
@@ -201,6 +203,7 @@ class DeviceService:
             compatibility=request.ssh_compatibility,
             group1_risk_acknowledged=request.group1_risk_acknowledged,
             operation=ConnectionOperation.CONNECTION_TEST,
+            _commit=_commit,
         ) as parameters:
             driver = self._drivers.get(request.vendor)
             try:
@@ -220,7 +223,8 @@ class DeviceService:
                         device_id=device.id,
                         details={"error_code": exc.code},
                     )
-                    self._session.commit()
+                    if _commit:
+                        self._session.commit()
                 raise
         del parameters
         if device_id is not None:
@@ -234,8 +238,9 @@ class DeviceService:
                 device_id=device.id,
                 details={"driver": driver.name, "latency_ms": result.latency_ms},
             )
-            self._session.commit()
-        else:
+            if _commit:
+                self._session.commit()
+        elif _commit:
             self._session.commit()
         return result
 
@@ -388,6 +393,7 @@ class DeviceService:
         compatibility: SSHCompatibility,
         group1_risk_acknowledged: bool,
         operation: ConnectionOperation,
+        _commit: bool = True,
     ) -> Iterator[ConnectionParameters]:
         started = monotonic()
         normalized_host = host.strip().lower()
@@ -414,7 +420,8 @@ class DeviceService:
                 result_code=error.code,
                 started=started,
             )
-            self._session.commit()
+            if _commit:
+                self._session.commit()
             raise error from None
 
         gate = self._connection_gate
@@ -430,7 +437,8 @@ class DeviceService:
                 result_code=error.code,
                 started=started,
             )
-            self._session.commit()
+            if _commit:
+                self._session.commit()
             raise error
 
         target = ConnectionTarget.from_endpoint(
@@ -457,7 +465,8 @@ class DeviceService:
                     result_code=exc.code,
                     started=started,
                 )
-                self._session.commit()
+                if _commit:
+                    self._session.commit()
                 raise
 
             profile = self._credentials.get(profile_id)
@@ -475,9 +484,11 @@ class DeviceService:
             try:
                 yield parameters
             except AppError as exc:
-                if exc.details.get("phase") == "authentication":
-                    gate.authentication_failed(target)
                 failure_phase = exc.details.get("phase")
+                if failure_phase == "authentication":
+                    gate.authentication_failed(target)
+                elif failure_phase in _POST_AUTHENTICATION_PHASES:
+                    gate.authentication_succeeded(target)
                 self._audit_connection(
                     device_id=device_id,
                     compatibility=mode,
@@ -492,7 +503,8 @@ class DeviceService:
                     result_code=exc.code,
                     started=started,
                 )
-                self._session.commit()
+                if _commit:
+                    self._session.commit()
                 raise
             except Exception:
                 self._audit_connection(
@@ -505,7 +517,8 @@ class DeviceService:
                     result_code="internal_error",
                     started=started,
                 )
-                self._session.commit()
+                if _commit:
+                    self._session.commit()
                 raise
             else:
                 gate.authentication_succeeded(target)

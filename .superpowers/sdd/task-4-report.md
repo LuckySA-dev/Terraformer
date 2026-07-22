@@ -25,8 +25,16 @@
 - `python -m ruff check --no-cache .`: passed.
 - `ruff format --check` on all nine changed backend files: passed.
 - `pyright`: 0 errors, 0 warnings.
-- `pytest`: 200 passed, 1 skipped. The skipped test is the opt-in read-only lab test; no device or network target was contacted.
+- Initial `pytest`: 200 passed, 1 skipped. After the review regression was added: 201 passed, 1 skipped. The skipped test is the opt-in read-only lab test; no device or network target was contacted.
 - Production and development `docker compose ... config --quiet`: passed. Docker emitted only local config permission warnings.
 - `git diff --check`: passed.
 
 The immutable final plan was not changed. No device write capability was added.
+
+## Review follow-up
+
+- Update retests now use a private, default-on commit policy so the row lock remains held from candidate construction through the one final mutation commit. Candidate API tests, create, and registered-device tests retain their existing commit, status, and audit behavior.
+- A failed update retest leaves its safe audit row transaction-local; the request rollback discards that row together with any pending database state. Redis authentication accounting and permit cleanup remain outside that rollback.
+- Sanitized `authentication` failures increment only the admitted tuple. Sanitized `pty_creation` and `terminal_io` failures prove authentication completed and clear that tuple's prior failures before the later error is re-raised. Pre-auth, policy, and unknown/internal failures do not clear authentication state.
+- RED review regressions failed with two observed update commits and no post-auth reset. GREEN focused verification passed 45 tests, including the unchanged terminal suite.
+- GitNexus comparison from `1015142` reports HIGH for 3 files, 5 indexed symbols, and 12 flows, all within the previously approved `DeviceService.test_connection` seam and its expected callers.

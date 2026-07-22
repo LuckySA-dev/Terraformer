@@ -5,7 +5,10 @@ export class SshWebSocketTransport implements TerminalTransport {
   private socket: WebSocket | null = null;
   private closePromise: Promise<void> | null = null;
 
-  constructor(private readonly deviceId: string) {}
+  constructor(
+    private readonly deviceId: string,
+    private readonly group1RiskAcknowledged = false,
+  ) {}
 
   open(listener: TerminalTransportListener): Promise<void> {
     listener({ type: 'status', status: 'connecting' });
@@ -14,7 +17,10 @@ export class SshWebSocketTransport implements TerminalTransport {
       `${protocol}//${window.location.host}/ws/terminal/${encodeURIComponent(this.deviceId)}`,
     );
     this.socket.onopen = () => {
-      this.socket?.send(JSON.stringify({ type: 'accept_direct_mode' }));
+      this.socket?.send(JSON.stringify({
+        type: 'accept_direct_mode',
+        group1_risk_acknowledged: this.group1RiskAcknowledged,
+      }));
     };
     this.socket.onmessage = (event) => {
       try {
@@ -32,13 +38,29 @@ export class SshWebSocketTransport implements TerminalTransport {
           message.type === 'error'
           && typeof message.code === 'string'
           && typeof message.message === 'string'
+          && typeof message.retryable === 'boolean'
+          && (message.phase === undefined || typeof message.phase === 'string')
+          && (
+            message.recommended_action === undefined
+            || typeof message.recommended_action === 'string'
+          )
         ) {
-          listener({ type: 'error', code: message.code, message: message.message });
+          listener({
+            type: 'error',
+            code: message.code,
+            message: message.message,
+            retryable: message.retryable,
+            ...(typeof message.phase === 'string' ? { phase: message.phase } : {}),
+            ...(typeof message.recommended_action === 'string'
+              ? { recommendedAction: message.recommended_action }
+              : {}),
+          });
         } else {
           listener({
             type: 'error',
             code: 'invalid_terminal_message',
             message: 'The terminal server returned an invalid message.',
+            retryable: false,
           });
         }
       } catch {
@@ -46,6 +68,7 @@ export class SshWebSocketTransport implements TerminalTransport {
           type: 'error',
           code: 'invalid_terminal_message',
           message: 'The terminal server returned an invalid message.',
+          retryable: false,
         });
       }
     };
@@ -53,6 +76,7 @@ export class SshWebSocketTransport implements TerminalTransport {
       type: 'error',
       code: 'terminal_service_unavailable',
       message: 'Unable to reach the terminal service.',
+      retryable: true,
     });
     this.socket.onclose = () => listener({ type: 'status', status: 'closed' });
     return Promise.resolve();

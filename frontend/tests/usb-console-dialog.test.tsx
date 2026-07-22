@@ -197,7 +197,7 @@ describe('Manual USB Console', () => {
     });
 
     act(() => terminalMocks.instances[0]?.emitInput('show version\r\nreload'));
-    expect(screen.getByRole('alert')).toHaveTextContent('2 lines are waiting');
+    expect(screen.getByRole('alert')).toHaveTextContent('2 lines and 20 characters are waiting');
     expect(fixture.write).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole('button', { name: 'Send 2 lines' }));
     await waitFor(() => expect(fixture.write).toHaveBeenCalledOnce());

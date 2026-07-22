@@ -9,6 +9,7 @@ import type {
 } from '../src/features/terminal/transport';
 
 const terminalMocks = vi.hoisted(() => ({
+  options: [] as unknown[],
   instances: [] as {
     emitInput: (data: string) => void;
     write: ReturnType<typeof vi.fn>;
@@ -30,7 +31,8 @@ vi.mock('@xterm/xterm', () => ({
     private input: (data: string) => void = () => undefined;
     readonly write = vi.fn();
     readonly dispose = vi.fn();
-    constructor() {
+    constructor(options: unknown) {
+      terminalMocks.options.push(options);
       terminalMocks.instances.push({
         emitInput: (data: string) => this.input(data),
         write: this.write,
@@ -75,7 +77,7 @@ class FakeWebSocket {
     this.sent.push(data);
   }
 
-  close() { return undefined; }
+  readonly close = vi.fn(() => undefined);
 }
 
 class FakeTransport implements TerminalTransport {
@@ -94,6 +96,7 @@ class FakeTransport implements TerminalTransport {
 
 const renderUsbLikeSession = (
   value: FakeTransport | (() => FakeTransport),
+  active = true,
 ) => render(
   <TerminalSession
     createTransport={typeof value === 'function' ? value : () => value}
@@ -103,6 +106,7 @@ const renderUsbLikeSession = (
     inputPolicy={{ lineEnding: 'cr', localEcho: false, confirmMultiline: true }}
     ariaLabel="Test terminal"
     note="Test session"
+    active={active}
   />,
 );
 
@@ -110,16 +114,18 @@ describe('Direct Mode terminal', () => {
   beforeEach(() => {
     FakeWebSocket.instances = [];
     terminalMocks.instances = [];
+    terminalMocks.options = [];
     fitMocks.instances = [];
     vi.stubGlobal('WebSocket', FakeWebSocket);
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
-  it('keeps SSH raw and sends the existing Direct Mode acknowledgement', async () => {
+  it('keeps SSH raw, confirms multiline input, and acknowledges Group1 only on open', async () => {
     const user = userEvent.setup();
     render(<TerminalPanel deviceId="2ad0db14-5a87-4147-a4e7-c98f88322464" />);
 
@@ -132,13 +138,91 @@ describe('Direct Mode terminal', () => {
     if (socket === undefined) throw new Error('Terminal WebSocket was not created.');
     socket.readyState = FakeWebSocket.OPEN;
     socket.onopen?.();
-    terminalMocks.instances[0]?.emitInput('show version\r\nreload');
+    act(() => terminalMocks.instances[0]?.emitInput('show version\r\nreload'));
 
     expect(socket.sent).toEqual([
-      JSON.stringify({ type: 'accept_direct_mode' }),
+      JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: false }),
+    ]);
+    expect(screen.getByText('2 lines and 20 characters are waiting. Review before sending.'))
+      .toBeVisible();
+    expect(screen.queryByText('show version')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Send 2 lines' }));
+    expect(socket.sent).toEqual([
+      JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: false }),
       JSON.stringify({ type: 'input', data: 'show version\r\nreload' }),
     ]);
-    expect(screen.queryByRole('button', { name: /Send \d+ lines/ })).not.toBeInTheDocument();
+  });
+
+  it('sends an acknowledged Group1 risk only in the initial Direct Mode message', async () => {
+    const user = userEvent.setup();
+    render(
+      <TerminalPanel
+        deviceId="2ad0db14-5a87-4147-a4e7-c98f88322464"
+        group1RiskAcknowledged
+      />,
+    );
+    await user.click(screen.getByRole('button', { name: /open Direct Mode/ }));
+    const socket = FakeWebSocket.instances[0];
+    if (socket === undefined) throw new Error('Expected an SSH WebSocket.');
+    socket.readyState = FakeWebSocket.OPEN;
+    socket.onopen?.();
+    terminalMocks.instances[0]?.emitInput('show version');
+
+    expect(socket.sent).toEqual([
+      JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: true }),
+      JSON.stringify({ type: 'input', data: 'show version' }),
+    ]);
+  });
+
+  it('creates xterm with privileged APIs, window operations, and links disabled', async () => {
+    render(<TerminalPanel deviceId="2ad0db14-5a87-4147-a4e7-c98f88322464" />);
+    await userEvent.click(screen.getByRole('button', { name: /open Direct Mode/ }));
+
+    expect(terminalMocks.options[0]).toMatchObject({
+      allowProposedApi: false,
+      windowOptions: {},
+      linkHandler: null,
+    });
+  });
+
+  it('does not persist terminal data or invoke privileged browser APIs', async () => {
+    const fetchSpy = vi.fn();
+    const clipboardSpy = vi.fn();
+    const notificationSpy = vi.fn();
+    const indexedDbSpy = vi.fn();
+    const analyticsSpy = vi.fn();
+    const storageSpy = vi.spyOn(Storage.prototype, 'setItem');
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+    const downloadSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click');
+    const navigatorStub = Object.create(navigator) as Navigator;
+    Object.defineProperty(navigatorStub, 'clipboard', {
+      configurable: true,
+      value: { writeText: clipboardSpy },
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+    vi.stubGlobal('navigator', navigatorStub);
+    vi.stubGlobal('Notification', notificationSpy);
+    vi.stubGlobal('indexedDB', { open: indexedDbSpy });
+    vi.stubGlobal('gtag', analyticsSpy);
+    render(<TerminalPanel deviceId="2ad0db14-5a87-4147-a4e7-c98f88322464" />);
+    await userEvent.click(screen.getByRole('button', { name: /open Direct Mode/ }));
+    const socket = FakeWebSocket.instances[0];
+    if (socket === undefined) throw new Error('Expected an SSH WebSocket.');
+
+    act(() => socket.onmessage?.({
+      data: JSON.stringify({ type: 'output', data: '\u001b]8;;https://invalid.example\u0007link' }),
+    }));
+
+    expect(terminalMocks.instances[0]?.write).toHaveBeenCalledOnce();
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(storageSpy).not.toHaveBeenCalled();
+    expect(indexedDbSpy).not.toHaveBeenCalled();
+    expect(analyticsSpy).not.toHaveBeenCalled();
+    expect(openSpy).not.toHaveBeenCalled();
+    expect(clipboardSpy).not.toHaveBeenCalled();
+    expect(notificationSpy).not.toHaveBeenCalled();
+    expect(downloadSpy).not.toHaveBeenCalled();
   });
 
   it('sends terminal dimensions when the SSH session resizes', async () => {
@@ -199,6 +283,52 @@ describe('Direct Mode terminal', () => {
     expect(add).toBeDisabled();
   });
 
+  it('clears pending input when switching tabs without closing either transport', async () => {
+    const user = userEvent.setup();
+    render(<TerminalPanel deviceId="2ad0db14-5a87-4147-a4e7-c98f88322464" />);
+    await user.click(screen.getByRole('button', { name: /open Direct Mode/ }));
+    const firstSocket = FakeWebSocket.instances[0];
+    if (firstSocket === undefined) throw new Error('Expected an SSH WebSocket.');
+    firstSocket.readyState = FakeWebSocket.OPEN;
+    act(() => terminalMocks.instances[0]?.emitInput('show version\nreload'));
+    expect(screen.getByRole('button', { name: 'Send 2 lines' })).toBeVisible();
+
+    await user.click(screen.getByRole('button', { name: 'New terminal' }));
+    act(() => terminalMocks.instances[0]?.emitInput('stale\ninput'));
+    await user.click(screen.getByRole('tab', { name: 'Terminal 1' }));
+
+    expect(screen.queryByRole('button', { name: 'Send 2 lines' })).not.toBeInTheDocument();
+    expect(firstSocket.close).not.toHaveBeenCalled();
+  });
+
+  it('clears pending input when removing a tab', async () => {
+    const user = userEvent.setup();
+    render(<TerminalPanel deviceId="2ad0db14-5a87-4147-a4e7-c98f88322464" />);
+    await user.click(screen.getByRole('button', { name: /open Direct Mode/ }));
+    const socket = FakeWebSocket.instances[0];
+    if (socket === undefined) throw new Error('Expected an SSH WebSocket.');
+    act(() => terminalMocks.instances[0]?.emitInput('show version\nreload'));
+    expect(screen.getByRole('button', { name: 'Send 2 lines' })).toBeVisible();
+
+    await user.click(screen.getByRole('button', { name: 'Close terminal 1' }));
+    await act(() => Promise.resolve());
+
+    expect(screen.queryByRole('button', { name: 'Send 2 lines' })).not.toBeInTheDocument();
+    expect(socket.close).toHaveBeenCalledOnce();
+  });
+
+  it('rejects input above 4,096 UTF-8 bytes before buffering or writing', async () => {
+    const transport = new FakeTransport();
+    renderUsbLikeSession(transport);
+    await userEvent.click(screen.getByRole('button', { name: 'Open test session' }));
+
+    act(() => terminalMocks.instances[0]?.emitInput('🙂'.repeat(1_025)));
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Terminal input is too large.');
+    expect(screen.queryByRole('button', { name: /Send/ })).not.toBeInTheDocument();
+    expect(transport.write).not.toHaveBeenCalled();
+  });
+
   it('clears a pending multiline confirmation on close', async () => {
     const transport = new FakeTransport();
     const { unmount } = renderUsbLikeSession(transport);
@@ -256,6 +386,76 @@ describe('Direct Mode terminal', () => {
     expect(screen.queryByRole('button', { name: 'Send 2 lines' })).not.toBeInTheDocument();
   });
 
+  it('clears pending input after an open failure', async () => {
+    const transport = new FakeTransport();
+    transport.open.mockRejectedValueOnce(new Error('raw browser detail'));
+    renderUsbLikeSession(transport);
+    await userEvent.click(screen.getByRole('button', { name: 'Open test session' }));
+    act(() => terminalMocks.instances[0]?.emitInput('show version\nreload'));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Unable to open the terminal session.');
+    expect(screen.queryByRole('button', { name: 'Send 2 lines' })).not.toBeInTheDocument();
+  });
+
+  it('clears pending input on disconnect', async () => {
+    const transport = new FakeTransport();
+    renderUsbLikeSession(transport);
+    await userEvent.click(screen.getByRole('button', { name: 'Open test session' }));
+    act(() => terminalMocks.instances[0]?.emitInput('show version\nreload'));
+
+    await userEvent.click(screen.getByRole('button', { name: 'Disconnect' }));
+
+    expect(screen.queryByRole('button', { name: 'Send 2 lines' })).not.toBeInTheDocument();
+    expect(transport.write).not.toHaveBeenCalled();
+  });
+
+  it('retries a retryable failure with fresh WebSocket and xterm objects', async () => {
+    const user = userEvent.setup();
+    render(<TerminalPanel deviceId="2ad0db14-5a87-4147-a4e7-c98f88322464" />);
+    await user.click(screen.getByRole('button', { name: /open Direct Mode/ }));
+    const firstSocket = FakeWebSocket.instances[0];
+    if (firstSocket === undefined) throw new Error('Expected an SSH WebSocket.');
+    act(() => terminalMocks.instances[0]?.emitInput('show version\nreload'));
+    expect(screen.getByRole('button', { name: 'Send 2 lines' })).toBeVisible();
+    act(() => firstSocket.onmessage?.({ data: JSON.stringify({
+      type: 'error',
+      code: 'device_connection_timeout',
+      message: 'The device connection timed out.',
+      phase: 'tcp_connection',
+      retryable: true,
+      recommended_action: 'Try the connection again.',
+    }) }));
+
+    await user.click(await screen.findByRole('button', { name: 'Retry' }));
+
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    expect(terminalMocks.instances).toHaveLength(2);
+    expect(screen.queryByRole('button', { name: 'Send 2 lines' })).not.toBeInTheDocument();
+    expect(firstSocket.close).toHaveBeenCalledOnce();
+    act(() => firstSocket.onmessage?.({ data: JSON.stringify({ type: 'output', data: 'late output' }) }));
+    expect(terminalMocks.instances[1]?.write).not.toHaveBeenCalledWith('late output');
+  });
+
+  it('shows fixed guidance without Retry for a non-retryable failure', async () => {
+    render(<TerminalPanel deviceId="2ad0db14-5a87-4147-a4e7-c98f88322464" />);
+    await userEvent.click(screen.getByRole('button', { name: /open Direct Mode/ }));
+    const socket = FakeWebSocket.instances[0];
+    if (socket === undefined) throw new Error('Expected an SSH WebSocket.');
+    act(() => socket.onmessage?.({ data: JSON.stringify({
+      type: 'error',
+      code: 'device_authentication_failed',
+      message: 'Device authentication failed.',
+      phase: 'authentication',
+      retryable: false,
+      recommended_action: 'Verify the selected credential profile and device login policy.',
+    }) }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Device authentication failed.');
+    expect(screen.getByText('Verify the selected credential profile and device login policy.'))
+      .toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+  });
+
   it('resets after pagehide and reopens with fresh session objects', async () => {
     const user = userEvent.setup();
     const transports: FakeTransport[] = [];
@@ -306,6 +506,8 @@ describe('Direct Mode terminal', () => {
       return transport;
     });
     await userEvent.click(screen.getByRole('button', { name: 'Open test session' }));
+    act(() => terminalMocks.instances[0]?.emitInput('show version\nreload'));
+    expect(screen.getByRole('button', { name: 'Send 2 lines' })).toBeVisible();
 
     transports[0]?.emit({ type: 'status', status: 'closed' });
     await userEvent.click(await screen.findByRole('button', { name: 'Open test session' }));
@@ -313,6 +515,7 @@ describe('Direct Mode terminal', () => {
     expect(transports).toHaveLength(2);
     expect(terminalMocks.instances).toHaveLength(2);
     expect(transports[1]).not.toBe(transports[0]);
+    expect(screen.queryByRole('button', { name: 'Send 2 lines' })).not.toBeInTheDocument();
   });
 
   it('disposes UI resources after the five-second cleanup deadline', async () => {

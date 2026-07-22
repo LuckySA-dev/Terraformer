@@ -8,6 +8,7 @@ import { prepareTerminalInput, type TerminalInputPolicy } from './inputPolicy';
 import {
   TERMINAL_CLEANUP_TIMEOUT_MS,
   TerminalTransportError,
+  type TerminalFailure,
   type TerminalTransport,
   type TerminalTransportEvent,
 } from './transport';
@@ -25,11 +26,7 @@ interface TerminalSessionProps {
   openDisabled?: boolean;
   configuration?: ReactNode;
   onReset?: () => void;
-}
-
-interface SessionError {
-  code: string;
-  message: string;
+  active?: boolean;
 }
 
 interface SessionToken {
@@ -53,9 +50,9 @@ async function withCleanupTimeout(cleanup: Promise<void>, milliseconds: number):
   }
 }
 
-function sanitizedError(error: unknown, fallback: SessionError): SessionError {
+function sanitizedError(error: unknown, fallback: TerminalFailure): TerminalFailure {
   return error instanceof TerminalTransportError
-    ? { code: error.code, message: error.message }
+    ? { code: error.code, message: error.message, retryable: false }
     : fallback;
 }
 
@@ -72,6 +69,7 @@ export function TerminalSession({
   openDisabled = false,
   configuration,
   onReset,
+  active = true,
 }: TerminalSessionProps) {
   const container = useRef<HTMLDivElement>(null);
   const transportRef = useRef<TerminalTransport | null>(null);
@@ -83,15 +81,20 @@ export function TerminalSession({
   const pageHideHandler = useRef<(() => void) | null>(null);
   const sessionToken = useRef<SessionToken | null>(null);
   const shutdownPromise = useRef<Promise<void> | null>(null);
-  const shutdownRef = useRef<(error?: SessionError, disposed?: boolean) => Promise<void>>(
+  const shutdownRef = useRef<(error?: TerminalFailure, disposed?: boolean) => Promise<void>>(
     () => Promise.resolve(),
   );
   const acceptingInput = useRef(false);
+  const activeRef = useRef(active);
   const [accepted, setAccepted] = useState(false);
   const [authorized, setAuthorized] = useState(false);
   const [status, setStatus] = useState<'idle' | 'connecting' | 'connected'>('idle');
-  const [error, setError] = useState<SessionError>();
-  const [pendingPaste, setPendingPaste] = useState<{ data: string; lineCount: number }>();
+  const [error, setError] = useState<TerminalFailure>();
+  const [pendingPaste, setPendingPaste] = useState<{
+    data: string;
+    lineCount: number;
+    characterCount: number;
+  }>();
 
   const clearAllSessionRefs = () => {
     transportRef.current = null;
@@ -104,7 +107,7 @@ export function TerminalSession({
     sessionToken.current = null;
   };
 
-  const shutdown = async (shutdownError?: SessionError, disposed = false) => {
+  const shutdown = async (shutdownError?: TerminalFailure, disposed = false) => {
     if (shutdownPromise.current !== null) return shutdownPromise.current;
     shutdownPromise.current = (async () => {
       acceptingInput.current = false;
@@ -116,7 +119,11 @@ export function TerminalSession({
           TERMINAL_CLEANUP_TIMEOUT_MS,
         );
       } catch {
-        shutdownError = { code: 'cleanup_timed_out', message: 'Cleanup timed out' };
+        shutdownError = {
+          code: 'cleanup_timed_out',
+          message: 'Cleanup timed out',
+          retryable: true,
+        };
       } finally {
         inputSubscription.current?.dispose();
         resizeObserver.current?.disconnect();
@@ -145,6 +152,11 @@ export function TerminalSession({
     shutdownRef.current = shutdown;
   });
 
+  useEffect(() => {
+    activeRef.current = active;
+    if (!active) queueMicrotask(() => setPendingPaste(undefined));
+  }, [active]);
+
   useEffect(() => () => {
     if (sessionToken.current !== null) sessionToken.current.disposed = true;
     void shutdownRef.current(undefined, true);
@@ -155,7 +167,11 @@ export function TerminalSession({
     token.disposed = true;
     setPendingPaste(undefined);
     void shutdown(
-      sanitizedError(writeError, { code: 'terminal_write_failed', message: 'Terminal write failed' }),
+      sanitizedError(writeError, {
+        code: 'terminal_write_failed',
+        message: 'Terminal write failed',
+        retryable: false,
+      }),
     );
   };
 
@@ -183,7 +199,15 @@ export function TerminalSession({
     } else if (event.type === 'error') {
       token.disposed = true;
       setPendingPaste(undefined);
-      void shutdown({ code: event.code, message: event.message });
+      void shutdown({
+        code: event.code,
+        message: event.message,
+        retryable: event.retryable ?? false,
+        ...(event.phase === undefined ? {} : { phase: event.phase }),
+        ...(event.recommendedAction === undefined
+          ? {}
+          : { recommendedAction: event.recommendedAction }),
+      });
     }
   };
 
@@ -201,12 +225,15 @@ export function TerminalSession({
       const transport = createTransport();
       transportRef.current = transport;
       const nextTerminal = new Terminal({
+        allowProposedApi: false,
         convertEol: true,
         cursorBlink: true,
         fontFamily: '"DM Mono", monospace',
         fontSize: 12,
         scrollback: 2_000,
         theme: { background: '#10191b', foreground: '#b8cbc6' },
+        windowOptions: {},
+        linkHandler: null,
       });
       const nextFitAddon = new FitAddon();
       terminal.current = nextTerminal;
@@ -217,10 +244,24 @@ export function TerminalSession({
       acceptingInput.current = true;
 
       inputSubscription.current = nextTerminal.onData((input) => {
-        if (!acceptingInput.current || token.disposed) return;
+        if (!activeRef.current || !acceptingInput.current || token.disposed) return;
         const prepared = prepareTerminalInput(input, inputPolicy);
+        if (prepared.byteCount > 4_096) {
+          setPendingPaste(undefined);
+          setError({
+            code: 'terminal_input_limit',
+            message: 'Terminal input is too large.',
+            retryable: false,
+          });
+          return;
+        }
+        setError(undefined);
         if (prepared.requiresConfirmation) {
-          setPendingPaste({ data: prepared.data, lineCount: prepared.lineCount });
+          setPendingPaste({
+            data: prepared.data,
+            lineCount: prepared.lineCount,
+            characterCount: prepared.characterCount,
+          });
         } else {
           send(prepared.data, token);
         }
@@ -249,6 +290,7 @@ export function TerminalSession({
         void shutdown(sanitizedError(openError, {
           code: 'terminal_open_failed',
           message: 'Unable to open the terminal session.',
+          retryable: true,
         }));
       });
     } catch (openError) {
@@ -256,6 +298,7 @@ export function TerminalSession({
       void shutdown(sanitizedError(openError, {
         code: 'terminal_open_failed',
         message: 'Unable to open the terminal session.',
+        retryable: true,
       }));
     }
   };
@@ -305,7 +348,10 @@ export function TerminalSession({
         <div ref={container} className="terminal-session__canvas" aria-label={ariaLabel} />
         {pendingPaste === undefined ? null : (
           <div className="terminal-multiline-warning" role="alert">
-            <span>{pendingPaste.lineCount} lines are waiting. Review before sending.</span>
+            <span>
+              {pendingPaste.lineCount} lines and {pendingPaste.characterCount} characters are
+              waiting. Review before sending.
+            </span>
             <div className="terminal-session__actions">
               <Button size="small" onClick={confirmPaste}>
                 Send {pendingPaste.lineCount} lines
@@ -320,7 +366,13 @@ export function TerminalSession({
           <Button size="small" variant="ghost" onClick={disconnect}>Disconnect</Button>
         </div>
       </div>
-      {error === undefined ? null : <div className="form-error" role="alert">{error.message}</div>}
+      {error === undefined ? null : (
+        <div className="form-error" role="alert">
+          <span>{error.message}</span>
+          {error.recommendedAction === undefined ? null : <span>{error.recommendedAction}</span>}
+          {error.retryable ? <Button size="small" onClick={open}>Retry</Button> : null}
+        </div>
+      )}
       <p className="terminal-note">{note}</p>
     </div>
   );

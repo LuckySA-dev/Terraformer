@@ -5,7 +5,13 @@ import { TerminalSession } from '../terminal/TerminalSession';
 
 const MAX_TERMINALS = 3;
 
-export function TerminalPanel({ deviceId }: { deviceId: string }) {
+export function TerminalPanel({
+  deviceId,
+  group1RiskAcknowledged = false,
+}: {
+  deviceId: string;
+  group1RiskAcknowledged?: boolean;
+}) {
   const [sessions, setSessions] = useState([1]);
   const [active, setActive] = useState(1);
   const nextId = useRef(2);
@@ -42,13 +48,14 @@ export function TerminalPanel({ deviceId }: { deviceId: string }) {
       {sessions.map((id) => (
         <div key={id} hidden={id !== active}>
           <TerminalSession
-            createTransport={() => new SshWebSocketTransport(deviceId)}
+            createTransport={() => new SshWebSocketTransport(deviceId, group1RiskAcknowledged)}
             warningTitle="Direct Mode — no rollback protection"
             warningBody="Commands run on the device exactly as typed and may change its configuration. The app does not parse, approve, record, or automatically undo terminal commands."
             acknowledgementLabel="I understand — open Direct Mode"
-            inputPolicy={{ lineEnding: 'raw', localEcho: false, confirmMultiline: false }}
+            inputPolicy={{ lineEnding: 'raw', localEcho: false, confirmMultiline: true }}
             ariaLabel="Device terminal"
             note="Idle sessions close after 15 minutes. Output is capped and never saved by the app."
+            active={id === active}
           />
         </div>
       ))}

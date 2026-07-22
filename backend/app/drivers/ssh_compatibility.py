@@ -41,11 +41,16 @@ def compatibility_policy(mode: SSHCompatibility) -> SSHCompatibilityPolicy:
         )
 
     group1 = mode is SSHCompatibility.CISCO_LEGACY_GROUP1
+    openssh_options = _LEGACY_OPENSSH_OPTIONS
+    if group1:
+        openssh_options = (
+            _LEGACY_OPENSSH_OPTIONS[0] + ",diffie-hellman-group1-sha1",
+            *_LEGACY_OPENSSH_OPTIONS[1:],
+        )
     return SSHCompatibilityPolicy(
         mode,
         SSH_COMPATIBILITY_POLICY_VERSION,
-        _LEGACY_OPENSSH_OPTIONS
-        + (("KexAlgorithms=+diffie-hellman-group1-sha1",) if group1 else ()),
+        openssh_options,
         _LEGACY_ASYNCSSH_KEX + (",diffie-hellman-group1-sha1" if group1 else ""),
         "+ssh-rsa",
         "+aes256-cbc,aes192-cbc,aes128-cbc",

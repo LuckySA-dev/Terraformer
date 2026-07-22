@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -11,6 +13,53 @@ from sqlalchemy import MetaData, create_engine, inspect, select
 from sqlalchemy.exc import IntegrityError
 
 from app.core.config import get_settings
+
+
+class PostgresMigrationOp:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, object, object | None, object | None]] = []
+
+    def get_bind(self) -> SimpleNamespace:
+        return SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+
+    def add_column(self, table: str, column: object) -> None:
+        self.calls.append(("add_column", table, column, None))
+
+    def create_check_constraint(self, name: str, table: str, condition: str) -> None:
+        self.calls.append(("create_check_constraint", name, table, condition))
+
+    def drop_constraint(self, name: str, table: str, type_: str) -> None:
+        self.calls.append(("drop_constraint", name, table, type_))
+
+    def drop_column(self, table: str, column: str) -> None:
+        self.calls.append(("drop_column", table, column, None))
+
+
+def test_postgresql_legacy_ssh_migration_manages_named_check_constraint(
+    monkeypatch,
+) -> None:
+    path = Path(__file__).parents[2] / "migrations/versions/20260722_0003_legacy_ssh.py"
+    spec = spec_from_file_location("legacy_ssh_migration", path)
+    assert spec is not None and spec.loader is not None
+    migration = module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    operations = PostgresMigrationOp()
+    monkeypatch.setattr(migration, "op", operations)
+
+    migration.upgrade()
+    migration.downgrade()
+
+    assert operations.calls == [
+        ("add_column", "devices", operations.calls[0][2], None),
+        (
+            "create_check_constraint",
+            "ck_devices_ssh_compatibility",
+            "devices",
+            "ssh_compatibility IN ('modern', 'cisco_legacy', 'cisco_legacy_group1')",
+        ),
+        ("drop_constraint", "ck_devices_ssh_compatibility", "devices", "check"),
+        ("drop_column", "devices", "ssh_compatibility", None),
+    ]
 
 
 def test_migration_chain_upgrade_and_downgrade(tmp_path: Path, monkeypatch) -> None:

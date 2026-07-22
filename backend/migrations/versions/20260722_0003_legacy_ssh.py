@@ -35,6 +35,11 @@ def upgrade() -> None:
             batch.add_column(column)
     else:
         op.add_column("devices", column)
+        op.create_check_constraint(
+            "ck_devices_ssh_compatibility",
+            "devices",
+            "ssh_compatibility IN ('modern', 'cisco_legacy', 'cisco_legacy_group1')",
+        )
 
 
 def downgrade() -> None:
@@ -43,4 +48,5 @@ def downgrade() -> None:
             batch.drop_constraint("ssh_compatibility", type_="check")
             batch.drop_column("ssh_compatibility")
     else:
+        op.drop_constraint("ck_devices_ssh_compatibility", "devices", type_="check")
         op.drop_column("devices", "ssh_compatibility")

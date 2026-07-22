@@ -26,10 +26,16 @@ def test_approved_policy_is_versioned_and_additive() -> None:
     assert "diffie-hellman-group1-sha1" not in " ".join(
         compatibility_policy(SSHCompatibility.CISCO_LEGACY).openssh_options
     )
-    assert compatibility_policy(SSHCompatibility.CISCO_LEGACY_GROUP1).version == 1
-    assert compatibility_policy(
-        SSHCompatibility.CISCO_LEGACY_GROUP1
-    ).asyncssh_kex_algs.endswith(",diffie-hellman-group1-sha1")
+    group1_policy = compatibility_policy(SSHCompatibility.CISCO_LEGACY_GROUP1)
+    assert group1_policy.version == 1
+    assert group1_policy.openssh_options == (
+        "KexAlgorithms=+diffie-hellman-group14-sha1,"
+        "diffie-hellman-group-exchange-sha1,diffie-hellman-group1-sha1",
+        "HostKeyAlgorithms=+ssh-rsa",
+        "Ciphers=+aes256-cbc,aes192-cbc,aes128-cbc",
+        "MACs=+hmac-sha1,hmac-sha1-96",
+    )
+    assert group1_policy.asyncssh_kex_algs.endswith(",diffie-hellman-group1-sha1")
 
 
 @pytest.mark.parametrize("prohibited", ["ssh-dss", "hmac-md5", "3des-cbc", "arcfour"])
@@ -79,6 +85,13 @@ def test_group1_requires_server_switch_and_request_acknowledgment() -> None:
             SSHCompatibility.CISCO_LEGACY_GROUP1,
             Settings(_env_file=None, ssh_legacy_enabled=True, ssh_group1_enabled=True),
             group1_risk_acknowledged=False,
+        )
+
+    with pytest.raises(ConfigurationError):
+        enforce_compatibility_policy(
+            SSHCompatibility.CISCO_LEGACY_GROUP1,
+            Settings(_env_file=None, ssh_legacy_enabled=True, ssh_group1_enabled=False),
+            group1_risk_acknowledged=True,
         )
 
     enforce_compatibility_policy(

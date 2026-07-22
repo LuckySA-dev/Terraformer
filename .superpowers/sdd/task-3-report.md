@@ -26,6 +26,8 @@ No HIGH or CRITICAL result required an edit stop.
 
 - Redis WATCH/MULTI/EXEC admission with eight bounded retries and fail-closed
   `connection_gate_unavailable` handling.
+- The test Redis now models optimistic concurrency with per-key WATCH versions and
+  atomic EXEC validation instead of serializing an entire pipeline behind one lock.
 - Redis server time read inside each watched transaction.
 - Rolling connection-test and terminal-open windows: five admissions in 60 seconds;
   the sixth is denied.
@@ -34,8 +36,12 @@ No HIGH or CRITICAL result required an edit stop.
 - Global SSH capacity uses `MAX_DEVICE_CONNECTIONS`; per-device SSH, global terminal,
   and per-device terminal defaults are all three.
 - Permit keys and global/device ZSET members expire after the bounded 3,900-second
-  default TTL. Expired ZSET members are pruned in the admitting transaction.
-- Release is idempotent and removes only the named permit member.
+  default TTL. The configured TTL must cover SSH connect timeout, PTY-open timeout,
+  and maximum terminal duration; equality is accepted and one second less is rejected.
+  Expired ZSET members are pruned in the admitting transaction.
+- Each permit key stores a deterministic SHA-256 binding of the operation and target.
+  Release validates that binding before removing active members, so release remains
+  idempotent while a forged target or operation is a no-op.
 - Endpoint/profile SHA-256 is computed before Redis access from lowercase
   `host:port:profile-id`. Redis keys contain only static dimension labels, the digest,
   and opaque UUIDs; no address, hostname, credential, or terminal content is stored.
@@ -57,13 +63,28 @@ No HIGH or CRITICAL result required an edit stop.
   made it pass.
 - Fake release-call RED: de-duplicating recorded calls hid a caller double-release; the
   fake now records every call while the concrete gate remains idempotent.
-- Focused GREEN: 24 passed.
+- Review RED: the fake Redis accepted an interleaved write because its pipeline lock
+  serialized every transaction; replacing it with key-version WATCH semantics made
+  the stale EXEC raise `WatchError`.
+- Review RED: releases with a forged target or operation freed capacity, permit values
+  were the constant `1`, and a permit TTL one second below the full terminal lifecycle
+  was accepted. The operation/target fingerprint and full-lifecycle TTL validator make
+  those tests pass.
+- Deterministic barrier tests cover global and per-device connection limits, global
+  and per-device terminal limits, connection-test rate limiting, and authentication
+  cooldown. Mutation checks proved their sensitivity: omitting active/rate watched
+  keys made all five admission cases over-admit, and omitting the authentication
+  failures key prevented cooldown.
+- Privacy coverage inspects Redis keys, string values, and ZSET members. It confirms
+  permit values are SHA-256 fingerprints, members are opaque identifiers, and neither
+  a hostname, documentation-range address, nor credential marker is stored.
+- Review-focused GREEN: 35 passed.
 
 ## Verification
 
 - `python -m ruff check --no-cache .`: passed.
 - `pyright`: 0 errors, 0 warnings.
-- `pytest`: 169 passed, 1 separately opted-in lab test skipped.
+- `pytest`: 180 passed, 1 separately opted-in lab test skipped.
 - Production Compose config: passed.
 - Development Compose overlay config: passed.
 - No lab opt-in was set and no real device, scan, authentication, or configuration was
@@ -79,3 +100,8 @@ Adjacent unchanged symbols reported from shared hunks (`session_factory`,
 `snapshot_store`, `trusted_origins`, `_read_database_password`, and `FakeTransport`)
 were inspected; their bodies are unchanged. The new gate symbols are not present in the
 older `cb90e06` index, as expected. No unexpected execution flow was found.
+
+The review-fix comparison against `55d8771` reports LOW risk: five files, three
+indexed symbols, and no affected execution process. The stale index recognizes the
+`Settings` validator and adjacent existing config/test symbols; the post-index gate
+and fake-Redis symbols remain unindexed. No unexpected scope was found.

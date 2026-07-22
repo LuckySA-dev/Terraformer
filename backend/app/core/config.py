@@ -86,9 +86,15 @@ class Settings(BaseSettings):
         if self.app_env.lower() == "production" and not self.session_cookie_secure:
             # Local HTTP is supported; SameSite and loopback binding remain in force.
             pass
-        if self.connection_permit_ttl_seconds < self.terminal_max_duration_seconds:
+        minimum_permit_ttl = (
+            self.ssh_connect_timeout_seconds
+            + self.terminal_pty_timeout_seconds
+            + self.terminal_max_duration_seconds
+        )
+        if self.connection_permit_ttl_seconds < minimum_permit_ttl:
             raise ValueError(
-                "CONNECTION_PERMIT_TTL_SECONDS must cover TERMINAL_MAX_DURATION_SECONDS"
+                "CONNECTION_PERMIT_TTL_SECONDS must cover SSH connect, terminal PTY, "
+                "and maximum terminal duration timeouts"
             )
         return self
 

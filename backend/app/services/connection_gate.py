@@ -159,7 +159,7 @@ class RedisConnectionGate:
                 pipe.expire(rate_key, self._settings.connection_rate_window_seconds)
             pipe.set(
                 permit_key,
-                "1",
+                self._permit_fingerprint(permit),
                 ex=self._settings.connection_permit_ttl_seconds,
             )
             for active_key in active_keys:
@@ -211,7 +211,8 @@ class RedisConnectionGate:
         active_keys = self._active_keys(permit)
 
         def release_permit(pipe: Pipeline) -> None:
-            if pipe.get(permit_key) is None:
+            stored_fingerprint = cast(bytes | None, pipe.get(permit_key))
+            if stored_fingerprint != self._permit_fingerprint(permit).encode():
                 return
             pipe.multi()
             pipe.delete(permit_key)
@@ -283,6 +284,15 @@ class RedisConnectionGate:
     @staticmethod
     def _permit_key(identifier: str) -> str:
         return f"{_NAMESPACE}:permit:{identifier}"
+
+    @staticmethod
+    def _permit_fingerprint(permit: ConnectionPermit) -> str:
+        target = permit.target
+        canonical = (
+            f"{permit.operation.value}:{target.endpoint_digest}:"
+            f"{target.credential_profile_id}:{target.device_id or '-'}"
+        )
+        return hashlib.sha256(canonical.encode()).hexdigest()
 
     @staticmethod
     def _global_active_key() -> str:

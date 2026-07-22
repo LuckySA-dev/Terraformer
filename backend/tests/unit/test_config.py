@@ -1,5 +1,8 @@
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from app.core.config import Settings
 
 
@@ -94,3 +97,26 @@ def test_connection_gate_settings_are_exposed_to_both_backend_services() -> None
     ):
         assert name in environment
         assert name in compose
+
+
+def test_connection_permit_ttl_accepts_the_full_terminal_boundary() -> None:
+    settings = Settings(
+        _env_file=None,
+        ssh_connect_timeout_seconds=11,
+        terminal_pty_timeout_seconds=12,
+        terminal_max_duration_seconds=100,
+        connection_permit_ttl_seconds=123,
+    )
+
+    assert settings.connection_permit_ttl_seconds == 123
+
+
+def test_connection_permit_ttl_rejects_one_second_below_full_terminal_boundary() -> None:
+    with pytest.raises(ValidationError, match="CONNECTION_PERMIT_TTL_SECONDS"):
+        Settings(
+            _env_file=None,
+            ssh_connect_timeout_seconds=11,
+            terminal_pty_timeout_seconds=12,
+            terminal_max_duration_seconds=100,
+            connection_permit_ttl_seconds=122,
+        )

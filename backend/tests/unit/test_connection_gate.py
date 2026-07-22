@@ -4,6 +4,7 @@ import base64
 import hashlib
 import math
 import threading
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from typing import Any
@@ -18,6 +19,7 @@ from app.container import ApplicationContainer
 from app.core.config import Settings
 from app.services.connection_gate import (
     ConnectionOperation,
+    ConnectionPermit,
     ConnectionTarget,
     RedisConnectionGate,
 )
@@ -29,15 +31,17 @@ class FakeRedisPipeline:
         self._store = store
         self._queued: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
         self._buffering = False
+        self._watched_versions: dict[str, int] = {}
 
     def __enter__(self) -> FakeRedisPipeline:
         return self
 
     def __exit__(self, *_args: object) -> None:
         self._queued.clear()
+        self._watched_versions.clear()
 
     def watch(self, *keys: str) -> None:
-        self._store.keys_seen.update(keys)
+        self._watched_versions.update(self._store._watch(keys))
 
     def time(self) -> tuple[int, int]:
         return self._store.time()
@@ -84,7 +88,9 @@ class FakeRedisPipeline:
         if self._store.watch_errors_remaining:
             self._store.watch_errors_remaining -= 1
             raise WatchError
-        results = [self._store._write(name, args, kwargs) for name, args, kwargs in self._queued]
+        if self._store.before_execute is not None:
+            self._store.before_execute()
+        results = self._store._execute(self._watched_versions, self._queued)
         self._queued.clear()
         return results
 
@@ -104,53 +110,89 @@ class FakeRedisStore:
         self.now = 1_000.0
         self.available = True
         self.watch_errors_remaining = 0
+        self.before_execute: Callable[[], None] | None = None
         self.keys_seen: set[str] = set()
         self._strings: dict[str, bytes] = {}
         self._sorted_sets: dict[str, dict[str, float]] = {}
         self._expires_at: dict[str, float] = {}
+        self._versions: dict[str, int] = {}
         self._lock = threading.RLock()
 
     def advance(self, seconds: float) -> None:
-        self.now += seconds
-        for key in list(self._expires_at):
-            self._purge(key)
+        with self._lock:
+            self.now += seconds
+            for key in list(self._expires_at):
+                self._purge_unlocked(key)
 
     def time(self) -> tuple[int, int]:
-        self._ensure_available()
-        seconds = math.floor(self.now)
-        return seconds, round((self.now - seconds) * 1_000_000)
+        with self._lock:
+            self._ensure_available()
+            seconds = math.floor(self.now)
+            return seconds, round((self.now - seconds) * 1_000_000)
 
     def pipeline(self) -> FakeRedisPipeline:
         self._ensure_available()
-        return LockedFakeRedisPipeline(self, self._lock)
+        return FakeRedisPipeline(self)
 
     def delete(self, *keys: str) -> int:
         self._ensure_available()
         with self._lock:
-            return int(self._write("delete", keys, {}))
+            return int(self._write_unlocked("delete", keys, {}))
+
+    def _watch(self, keys: tuple[str, ...]) -> dict[str, int]:
+        with self._lock:
+            self._ensure_available()
+            versions: dict[str, int] = {}
+            for key in keys:
+                self.keys_seen.add(key)
+                self._purge_unlocked(key)
+                versions[key] = self._versions.get(key, 0)
+            return versions
+
+    def _execute(
+        self,
+        watched_versions: dict[str, int],
+        queued: list[tuple[str, tuple[Any, ...], dict[str, Any]]],
+    ) -> list[object]:
+        with self._lock:
+            self._ensure_available()
+            for key, version in watched_versions.items():
+                self._purge_unlocked(key)
+                if self._versions.get(key, 0) != version:
+                    raise WatchError
+            return [self._write_unlocked(name, args, kwargs) for name, args, kwargs in queued]
 
     def _get(self, key: str) -> bytes | None:
-        self.keys_seen.add(key)
-        self._purge(key)
-        return self._strings.get(key)
+        with self._lock:
+            self._ensure_available()
+            self.keys_seen.add(key)
+            self._purge_unlocked(key)
+            return self._strings.get(key)
 
     def _zcount(self, key: str, minimum: float | str, maximum: float | str) -> int:
-        self.keys_seen.add(key)
-        self._purge(key)
-        minimum_value, minimum_inclusive = self._bound(minimum, negative=True)
-        maximum_value, maximum_inclusive = self._bound(maximum, negative=False)
-        return sum(
-            1
-            for score in self._sorted_sets.get(key, {}).values()
-            if (score > minimum_value or (minimum_inclusive and score == minimum_value))
-            and (score < maximum_value or (maximum_inclusive and score == maximum_value))
-        )
+        with self._lock:
+            self._ensure_available()
+            self.keys_seen.add(key)
+            self._purge_unlocked(key)
+            minimum_value, minimum_inclusive = self._bound(minimum, negative=True)
+            maximum_value, maximum_inclusive = self._bound(maximum, negative=False)
+            return sum(
+                1
+                for score in self._sorted_sets.get(key, {}).values()
+                if (score > minimum_value or (minimum_inclusive and score == minimum_value))
+                and (score < maximum_value or (maximum_inclusive and score == maximum_value))
+            )
 
-    def _write(self, name: str, args: tuple[Any, ...], kwargs: dict[str, Any]) -> object:
+    def _write_unlocked(
+        self,
+        name: str,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+    ) -> object:
         key = args[0]
         assert isinstance(key, str)
         self.keys_seen.add(key)
-        self._purge(key)
+        self._purge_unlocked(key)
         if name == "delete":
             removed = 0
             for item in args:
@@ -160,11 +202,13 @@ class FakeRedisStore:
                 self._strings.pop(item, None)
                 self._sorted_sets.pop(item, None)
                 self._expires_at.pop(item, None)
+                self._touch(item)
             return removed
         if name == "expire":
             seconds = args[1]
             assert isinstance(seconds, int)
             self._expires_at[key] = self.now + seconds
+            self._touch(key)
             return True
         if name == "set":
             value = args[1]
@@ -173,15 +217,19 @@ class FakeRedisStore:
             seconds = kwargs["ex"]
             if seconds is not None:
                 self._expires_at[key] = self.now + seconds
+            self._touch(key)
             return True
         if name == "zadd":
             mapping = args[1]
             assert isinstance(mapping, dict)
             self._sorted_sets.setdefault(key, {}).update(mapping)
+            self._touch(key)
             return len(mapping)
         if name == "zrem":
             sorted_set = self._sorted_sets.get(key, {})
-            return sum(int(sorted_set.pop(member, None) is not None) for member in args[1:])
+            removed = sum(int(sorted_set.pop(member, None) is not None) for member in args[1:])
+            self._touch(key)
+            return removed
         if name == "zremrangebyscore":
             sorted_set = self._sorted_sets.get(key, {})
             minimum_value, minimum_inclusive = self._bound(args[1], negative=True)
@@ -194,15 +242,20 @@ class FakeRedisStore:
             ]
             for member in members:
                 del sorted_set[member]
+            self._touch(key)
             return len(members)
         raise AssertionError(f"unsupported fake Redis operation: {name}")
 
-    def _purge(self, key: str) -> None:
+    def _purge_unlocked(self, key: str) -> None:
         expires_at = self._expires_at.get(key)
         if expires_at is not None and expires_at <= self.now:
             self._strings.pop(key, None)
             self._sorted_sets.pop(key, None)
             self._expires_at.pop(key, None)
+            self._touch(key)
+
+    def _touch(self, key: str) -> None:
+        self._versions[key] = self._versions.get(key, 0) + 1
 
     @staticmethod
     def _bound(value: float | str, *, negative: bool) -> tuple[float, bool]:
@@ -219,18 +272,24 @@ class FakeRedisStore:
             raise RedisConnectionError("fixture Redis unavailable")
 
 
-class LockedFakeRedisPipeline(FakeRedisPipeline):
-    def __init__(self, store: FakeRedisStore, lock: threading.RLock) -> None:
-        super().__init__(store)
-        self._lock = lock
+def test_fake_redis_watch_rejects_an_interleaved_write() -> None:
+    store = FakeRedisStore()
+    with store.pipeline() as first:
+        first.watch("watched")
+        assert first.get("watched") is None
+        first.multi()
+        first.set("watched", "first")
 
-    def __enter__(self) -> LockedFakeRedisPipeline:
-        self._lock.acquire()
-        return self
+        with store.pipeline() as second:
+            second.watch("watched")
+            second.multi()
+            second.set("watched", "second")
+            second.execute()
 
-    def __exit__(self, *_args: object) -> None:
-        super().__exit__(*_args)
-        self._lock.release()
+        with pytest.raises(WatchError):
+            first.execute()
+
+    assert store._get("watched") == b"second"
 
 
 @pytest.fixture
@@ -266,6 +325,56 @@ def assert_code(code: str, action: Any) -> None:
     with pytest.raises(Exception) as raised:
         action()
     assert getattr(raised.value, "code", None) == code
+
+
+def interleave_next_executes(store: FakeRedisStore, parties: int) -> None:
+    barrier = threading.Barrier(parties)
+    counter_lock = threading.Lock()
+    remaining = parties
+
+    def wait_for_contenders() -> None:
+        nonlocal remaining
+        with counter_lock:
+            if remaining == 0:
+                return
+            remaining -= 1
+        barrier.wait(timeout=5)
+
+    store.before_execute = wait_for_contenders
+
+
+def concurrent_calls(parties: int, action: Callable[[], object]) -> list[object]:
+    with ThreadPoolExecutor(max_workers=parties) as executor:
+        return list(executor.map(lambda _index: action(), range(parties)))
+
+
+def permits_and_errors(results: list[object]) -> tuple[list[object], list[Exception]]:
+    return (
+        [result for result in results if not isinstance(result, Exception)],
+        [result for result in results if isinstance(result, Exception)],
+    )
+
+
+def acquire_or_error(
+    gate: RedisConnectionGate,
+    operation: ConnectionOperation,
+    connection_target: ConnectionTarget,
+) -> object:
+    try:
+        return gate.acquire(operation, connection_target)
+    except Exception as exc:
+        return exc
+
+
+def record_authentication_failure(
+    gate: RedisConnectionGate,
+    connection_target: ConnectionTarget,
+) -> object:
+    try:
+        gate.authentication_failed(connection_target)
+    except Exception as exc:
+        return exc
+    return None
 
 
 def test_connection_test_uses_a_rolling_five_attempt_window(
@@ -376,6 +485,134 @@ def test_global_connection_admission_is_atomic_under_concurrency(
     }
 
 
+def test_global_connection_threshold_holds_after_interleaved_reads(
+    store: FakeRedisStore,
+    settings: Settings,
+) -> None:
+    limited = settings.model_copy(
+        update={"max_device_connections": 3, "max_connections_per_device": 10}
+    )
+    gate = RedisConnectionGate(redis_client=store, settings=limited)  # type: ignore[arg-type]
+    interleave_next_executes(store, 6)
+
+    permits, errors = permits_and_errors(
+        concurrent_calls(
+            6,
+            lambda: acquire_or_error(
+                gate,
+                ConnectionOperation.STRUCTURED_READ,
+                target(device_id=uuid4()),
+            ),
+        )
+    )
+
+    assert len(permits) == 3
+    assert {getattr(error, "code", None) for error in errors} == {"device_connection_limit_reached"}
+
+
+def test_per_device_connection_threshold_holds_after_interleaved_reads(
+    store: FakeRedisStore,
+    settings: Settings,
+) -> None:
+    device_id = uuid4()
+    limited = settings.model_copy(
+        update={"max_device_connections": 10, "max_connections_per_device": 3}
+    )
+    gate = RedisConnectionGate(redis_client=store, settings=limited)  # type: ignore[arg-type]
+    interleave_next_executes(store, 6)
+
+    permits, errors = permits_and_errors(
+        concurrent_calls(
+            6,
+            lambda: acquire_or_error(
+                gate,
+                ConnectionOperation.STRUCTURED_READ,
+                target(device_id=device_id),
+            ),
+        )
+    )
+
+    assert len(permits) == 3
+    assert {getattr(error, "code", None) for error in errors} == {"device_connection_limit_reached"}
+
+
+@pytest.mark.parametrize("dimension", ["global", "device"])
+def test_terminal_thresholds_hold_after_interleaved_reads(
+    store: FakeRedisStore,
+    settings: Settings,
+    dimension: str,
+) -> None:
+    shared_device_id = uuid4()
+    limited = settings.model_copy(
+        update={
+            "max_device_connections": 10,
+            "max_connections_per_device": 10,
+            "max_terminal_sessions": 3 if dimension == "global" else 10,
+            "max_terminal_sessions_per_device": 3 if dimension == "device" else 10,
+            "terminal_open_rate_limit": 100,
+        }
+    )
+    gate = RedisConnectionGate(redis_client=store, settings=limited)  # type: ignore[arg-type]
+    interleave_next_executes(store, 6)
+
+    permits, errors = permits_and_errors(
+        concurrent_calls(
+            6,
+            lambda: acquire_or_error(
+                gate,
+                ConnectionOperation.TERMINAL,
+                target(device_id=shared_device_id if dimension == "device" else uuid4()),
+            ),
+        )
+    )
+
+    assert len(permits) == 3
+    assert {getattr(error, "code", None) for error in errors} == {"terminal_session_limit_reached"}
+
+
+def test_connection_test_rate_threshold_holds_after_interleaved_reads(
+    store: FakeRedisStore,
+    settings: Settings,
+) -> None:
+    limited = settings.model_copy(
+        update={"max_device_connections": 10, "connection_test_rate_limit": 5}
+    )
+    gate = RedisConnectionGate(redis_client=store, settings=limited)  # type: ignore[arg-type]
+    connection_target = target()
+    interleave_next_executes(store, 6)
+
+    permits, errors = permits_and_errors(
+        concurrent_calls(
+            6,
+            lambda: acquire_or_error(
+                gate,
+                ConnectionOperation.CONNECTION_TEST,
+                connection_target,
+            ),
+        )
+    )
+
+    assert len(permits) == 5
+    assert {getattr(error, "code", None) for error in errors} == {"device_connection_rate_limited"}
+
+
+def test_authentication_cooldown_threshold_holds_after_interleaved_reads(
+    store: FakeRedisStore,
+    settings: Settings,
+) -> None:
+    gate = RedisConnectionGate(redis_client=store, settings=settings)  # type: ignore[arg-type]
+    connection_target = target(device_id=uuid4())
+    interleave_next_executes(store, 3)
+
+    results = concurrent_calls(3, lambda: record_authentication_failure(gate, connection_target))
+
+    assert results == [None, None, None]
+    assert_code(
+        "device_authentication_rate_limited",
+        lambda: gate.acquire(ConnectionOperation.STRUCTURED_READ, connection_target),
+    )
+
+
 def test_per_device_connection_limit_is_three(gate: RedisConnectionGate) -> None:
     device_id = uuid4()
     connection_targets = [target(device_id=device_id) for _ in range(4)]
@@ -478,6 +715,34 @@ def test_release_removes_only_the_named_permit(
     gate.release(replacement)
 
 
+@pytest.mark.parametrize("mismatch", ["target", "operation"])
+def test_release_with_mismatched_permit_is_a_noop(
+    store: FakeRedisStore,
+    settings: Settings,
+    mismatch: str,
+) -> None:
+    limited = settings.model_copy(update={"max_device_connections": 1})
+    gate = RedisConnectionGate(redis_client=store, settings=limited)  # type: ignore[arg-type]
+    original = gate.acquire(ConnectionOperation.STRUCTURED_READ, target(device_id=uuid4()))
+    forged = ConnectionPermit(
+        original.identifier,
+        ConnectionOperation.TERMINAL
+        if mismatch == "operation"
+        else ConnectionOperation.STRUCTURED_READ,
+        target(device_id=uuid4()) if mismatch == "target" else original.target,
+    )
+
+    gate.release(forged)
+
+    assert_code(
+        "device_connection_limit_reached",
+        lambda: gate.acquire(ConnectionOperation.STRUCTURED_READ, target(device_id=uuid4())),
+    )
+    gate.release(original)
+    replacement = gate.acquire(ConnectionOperation.STRUCTURED_READ, target(device_id=uuid4()))
+    gate.release(replacement)
+
+
 def test_transaction_retries_are_bounded_and_fail_closed(
     gate: RedisConnectionGate,
     store: FakeRedisStore,
@@ -560,15 +825,44 @@ def test_target_is_digested_before_redis_and_keys_contain_no_plaintext(
 
     permit = gate.acquire(ConnectionOperation.CONNECTION_TEST, connection_target)
     gate.authentication_failed(connection_target)
-    gate.release(permit)
+    raw_address = "192.0.2.44"
+    address_profile_id = uuid4()
+    address_target = ConnectionTarget.from_endpoint(
+        host=raw_address,
+        port=22,
+        credential_profile_id=address_profile_id,
+        device_id=uuid4(),
+    )
+    address_permit = gate.acquire(ConnectionOperation.STRUCTURED_READ, address_target)
 
-    flattened = " ".join(store.keys_seen).lower()
+    permit_key = next(key for key in store._strings if ":permit:" in key)
+    permit_fingerprint = store._strings[permit_key].decode()
+    assert len(permit_fingerprint) == 64
+    assert set(permit_fingerprint) <= set("0123456789abcdef")
+
+    redis_payload = [
+        *store.keys_seen,
+        *store._strings,
+        *(value.decode() for value in store._strings.values()),
+        *store._sorted_sets,
+        *(member for members in store._sorted_sets.values() for member in members),
+    ]
+    flattened = " ".join(redis_payload).lower()
     assert expected in flattened
     assert str(profile_id) in flattened
     assert str(device_id) in flattened
     assert "router.example.invalid" not in flattened
     assert "router.example.invalid:2222" not in flattened
+    assert raw_address not in flattened
     assert "fixture-password" not in flattened
+
+    for key, members in store._sorted_sets.items():
+        assert "router.example.invalid" not in key.lower()
+        assert all(
+            len(member) == 32 and set(member) <= set("0123456789abcdef") for member in members
+        )
+    gate.release(permit)
+    gate.release(address_permit)
 
 
 def test_application_container_uses_an_injected_connection_gate() -> None:

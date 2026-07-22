@@ -35,3 +35,15 @@
 - Security-sensitive diff scan found only request-scoped password use, fake test credentials/raw-error markers, the session-cookie lookup, and documentation-range address `192.0.2.10`; it found no logging or persistence sink.
 
 The immutable final plan was not changed. No device write capability was added.
+
+## Review follow-up
+
+- AsyncSSH 2.23.1 connection options now explicitly set `gss_kex=False` and `disable_trivial_auth=True`. A real `SSHClientConnectionOptions` construction verifies password is the only enabled user-authentication method while strict host-key behavior and additive compatibility algorithms remain unchanged.
+- Central logging setup now disables the `asyncssh` logger exactly like `scrapli`: handlers are cleared, a `NullHandler` is installed, and propagation is disabled. A real child-logger probe confirms arbitrary target, username, peer-algorithm, and raw-marker text emits nothing.
+- PTY creation cancellation and unexpected exceptions close and await the AsyncSSH connection before propagating. Integration coverage proves the Redis permit remains held until connection close completes.
+- Gate acquisition is shielded from caller cancellation. When cancellation wins a blocked thread acquisition, the code awaits its result, releases a late permit exactly once under shielded cleanup, and then re-raises cancellation before credential decryption or SSH open.
+- Terminal failures now reference shared `SanitizedSSHFailure` objects instead of copying their phase, retryability, and recommended action. Pinned exception-shape coverage maps an untrusted/changed AsyncSSH host key, name-resolution failure, refused connection, and generic connection failure without exposing raw details.
+- Review RED: the focused terminal/logging suite reported 12 failed and 35 passed across the five blockers. A follow-up pinned AsyncSSH host-key-message regression independently failed 1 of 4 cases before its mapping fix.
+- Review GREEN: the focused terminal/logging suite reports 46 passed; the mapping probe reports 4 passed; the standalone raw AsyncSSH logging probe reports 1 passed.
+- Fresh full verification reports 236 passed and 1 opt-in lab test skipped, full Ruff lint passed, the 4 changed Python files are formatted, Pyright reports 0 errors and 0 warnings, both Compose configurations validate, and `git diff --check` passes.
+- GitNexus comparison from `0b289c9` reports HIGH for 4 changed files, 17 indexed symbols, and 9 affected terminal parameter/relay processes. No unrelated production process is included.

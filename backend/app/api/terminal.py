@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, replace
+from socket import gaierror
 from time import monotonic
 from typing import Protocol, cast
 from uuid import UUID
@@ -18,12 +19,14 @@ from app.drivers.ssh_compatibility import (
     enforce_compatibility_policy,
 )
 from app.drivers.ssh_errors import FAILURES as SSH_FAILURES
+from app.drivers.ssh_errors import SanitizedSSHFailure
 from app.models import SSHCompatibility
 from app.repositories.events import EventRepository
 from app.services.connection_gate import (
     ConnectionOperation,
     ConnectionPermit,
     ConnectionTarget,
+    RedisConnectionGate,
 )
 from app.services.devices import DeviceService
 
@@ -45,7 +48,7 @@ class _FailureSpec:
     recommended_action: str | None = None
 
 
-_FAILURES: dict[str, _FailureSpec] = {
+_FAILURES: dict[str, _FailureSpec | SanitizedSSHFailure] = {
     "direct_mode_required": _FailureSpec(
         "Confirm Direct Mode before opening the terminal.", "authorization", False
     ),
@@ -94,23 +97,21 @@ _FAILURES: dict[str, _FailureSpec] = {
     "invalid_terminal_size": _FailureSpec("Invalid terminal size.", "terminal_io", False),
 }
 
-for _code, _message in {
+_SHARED_FAILURE_MESSAGES = {
     "device_connection_timeout": "The device connection timed out.",
     "device_connection_failed": "Unable to connect to the device.",
+    "device_connection_refused": "The device refused the SSH connection.",
     "device_connection_lost": "The device connection was lost.",
+    "device_name_resolution_failed": "The device address could not be resolved.",
     "device_host_key_unknown": "The device SSH host key could not be verified.",
+    "device_host_key_changed": "The device SSH host key has changed.",
     "legacy_ssh_negotiation_failed": "Unable to negotiate a compatible SSH session.",
     "device_authentication_failed": "The device rejected the credential profile.",
     "terminal_pty_rejected": "The device rejected terminal setup.",
     "terminal_transport_failed": "The device terminal transport failed.",
-}.items():
-    _shared = SSH_FAILURES[_code]
-    _FAILURES[_code] = _FailureSpec(
-        _message,
-        _shared.phase.value,
-        _shared.retryable,
-        _shared.recommended_action,
-    )
+}
+for _code in _SHARED_FAILURE_MESSAGES:
+    _FAILURES[_code] = SSH_FAILURES[_code]
 
 
 class _TerminalFailure(Exception):
@@ -119,7 +120,7 @@ class _TerminalFailure(Exception):
         super().__init__(code)
 
     @property
-    def spec(self) -> _FailureSpec:
+    def spec(self) -> _FailureSpec | SanitizedSSHFailure:
         return _FAILURES[self.code]
 
 
@@ -178,6 +179,64 @@ class AsyncSSHTerminalSession:
             await _close_connection(self._connection, self._close_timeout_seconds)
 
 
+def _connection_failure_code(exc: asyncssh.Error | OSError) -> str:
+    if isinstance(exc, TimeoutError):
+        return "device_connection_timeout"
+    if isinstance(exc, asyncssh.PermissionDenied):
+        return "device_authentication_failed"
+    if isinstance(exc, asyncssh.HostKeyNotVerifiable):
+        reason = str(exc).casefold()
+        if "host key is not trusted" in reason or ("host key" in reason and "changed" in reason):
+            return "device_host_key_changed"
+        return "device_host_key_unknown"
+    if isinstance(exc, asyncssh.KeyExchangeFailed | asyncssh.ProtocolError):
+        return "legacy_ssh_negotiation_failed"
+    if isinstance(exc, asyncssh.ConnectionLost):
+        return "device_connection_lost"
+    if isinstance(exc, gaierror):
+        return "device_name_resolution_failed"
+    if isinstance(exc, ConnectionRefusedError):
+        return "device_connection_refused"
+    return "device_connection_failed"
+
+
+async def _release_after_cancelled_acquire(
+    gate: RedisConnectionGate,
+    acquire_task: asyncio.Task[ConnectionPermit],
+) -> None:
+    try:
+        acquired_permit = await acquire_task
+    except BaseException:
+        return  # Cancellation won before a permit existed.
+    try:
+        await asyncio.to_thread(gate.release, acquired_permit)
+    except BaseException:  # noqa: S110
+        pass  # The permit TTL is the final fail-safe if Redis becomes unavailable.
+
+
+async def _await_cleanup(task: asyncio.Task[None]) -> None:
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            continue
+
+
+async def _acquire_terminal_permit(
+    gate: RedisConnectionGate,
+    target: ConnectionTarget,
+) -> ConnectionPermit:
+    acquire_task = asyncio.create_task(
+        asyncio.to_thread(gate.acquire, ConnectionOperation.TERMINAL, target)
+    )
+    try:
+        return await asyncio.shield(acquire_task)
+    except asyncio.CancelledError:
+        rollback_task = asyncio.create_task(_release_after_cancelled_acquire(gate, acquire_task))
+        await _await_cleanup(rollback_task)
+        raise
+
+
 async def _open_terminal(
     parameters: ConnectionParameters,
     *,
@@ -199,6 +258,8 @@ async def _open_terminal(
         "kbdint_auth": False,
         "host_based_auth": False,
         "gss_auth": False,
+        "gss_kex": False,
+        "disable_trivial_auth": True,
         "encoding": "utf-8",
         "errors": "replace",
     }
@@ -217,18 +278,8 @@ async def _open_terminal(
         connection = await asyncio.wait_for(
             asyncssh.connect(**options), timeout=parameters.connect_timeout_seconds
         )
-    except TimeoutError:
-        raise _TerminalFailure("device_connection_timeout") from None
-    except asyncssh.PermissionDenied:
-        raise _TerminalFailure("device_authentication_failed") from None
-    except asyncssh.HostKeyNotVerifiable:
-        raise _TerminalFailure("device_host_key_unknown") from None
-    except (asyncssh.KeyExchangeFailed, asyncssh.ProtocolError):
-        raise _TerminalFailure("legacy_ssh_negotiation_failed") from None
-    except asyncssh.ConnectionLost:
-        raise _TerminalFailure("device_connection_lost") from None
-    except (asyncssh.Error, OSError):
-        raise _TerminalFailure("device_connection_failed") from None
+    except (asyncssh.Error, OSError) as exc:
+        raise _TerminalFailure(_connection_failure_code(exc)) from None
     try:
         process = await asyncio.wait_for(
             connection.create_process(
@@ -237,15 +288,15 @@ async def _open_terminal(
             ),
             timeout=pty_timeout_seconds,
         )
-    except TimeoutError:
+    except BaseException as exc:
         await _close_connection(connection, pty_timeout_seconds)
-        raise _TerminalFailure("terminal_pty_rejected") from None
-    except (asyncssh.ChannelOpenError, asyncssh.ProcessError):
-        await _close_connection(connection, pty_timeout_seconds)
-        raise _TerminalFailure("terminal_shell_rejected") from None
-    except (asyncssh.Error, OSError):
-        await _close_connection(connection, pty_timeout_seconds)
-        raise _TerminalFailure("terminal_pty_rejected") from None
+        if isinstance(exc, TimeoutError):
+            raise _TerminalFailure("terminal_pty_rejected") from None
+        if isinstance(exc, asyncssh.ChannelOpenError | asyncssh.ProcessError):
+            raise _TerminalFailure("terminal_shell_rejected") from None
+        if isinstance(exc, asyncssh.Error | OSError):
+            raise _TerminalFailure("terminal_pty_rejected") from None
+        raise
     return AsyncSSHTerminalSession(
         connection,
         process,
@@ -370,7 +421,7 @@ async def terminal(websocket: WebSocket, device_id: UUID) -> None:
             credential_profile_id=target.profile_id,
             device_id=target.device_id,
         )
-        permit = await asyncio.to_thread(gate.acquire, ConnectionOperation.TERMINAL, gate_target)
+        permit = await _acquire_terminal_permit(gate, gate_target)
         audit_decision = "allowed"
         await websocket.send_json({"type": "status", "status": "connecting"})
         parameters = await asyncio.to_thread(_connection_parameters, container, target)
@@ -586,11 +637,17 @@ async def _send(websocket: WebSocket, session: TerminalSession) -> None:
 
 async def _send_error(websocket: WebSocket, code: str) -> None:
     spec = _FAILURES[code]
+    if isinstance(spec, SanitizedSSHFailure):
+        message = _SHARED_FAILURE_MESSAGES[code]
+        phase = spec.phase.value
+    else:
+        message = spec.message
+        phase = spec.phase
     payload: dict[str, object] = {
         "type": "error",
         "code": code,
-        "message": spec.message,
-        "phase": spec.phase,
+        "message": message,
+        "phase": phase,
         "retryable": spec.retryable,
     }
     if spec.recommended_action is not None:
@@ -605,11 +662,14 @@ async def _close_connection(
     connection: asyncssh.SSHClientConnection,
     timeout_seconds: float,
 ) -> None:
-    try:
-        connection.close()
-        await asyncio.wait_for(connection.wait_closed(), timeout=timeout_seconds)
-    except (Exception, asyncio.CancelledError):  # noqa: S110
-        pass  # Cleanup errors must not expose raw terminal or transport details.
+    async def close() -> None:
+        try:
+            connection.close()
+            await asyncio.wait_for(connection.wait_closed(), timeout=timeout_seconds)
+        except (Exception, asyncio.CancelledError):  # noqa: S110
+            pass  # Cleanup errors must not expose raw terminal or transport details.
+
+    await _await_cleanup(asyncio.create_task(close()))
 
 
 async def _close_websocket(websocket: WebSocket) -> None:

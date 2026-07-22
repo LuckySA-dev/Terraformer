@@ -75,6 +75,30 @@ def test_scrapli_raw_messages_do_not_reach_application_logs(capsys) -> None:
     assert "raw-scrapli-marker" not in captured.err
 
 
+def test_asyncssh_raw_messages_do_not_reach_application_logs(capsys) -> None:
+    asyncssh_logger = logging.getLogger("asyncssh")
+    asyncssh_logger.handlers.clear()
+    asyncssh_logger.addHandler(logging.StreamHandler())
+    asyncssh_logger.propagate = True
+    configure_logging("INFO")
+
+    logging.getLogger("asyncssh.connection").critical(
+        "raw-asyncssh-marker host=arbitrary-router.example "
+        "user=arbitrary-operator peer=[ssh-rsa,diffie-hellman-group1-sha1]"
+    )
+
+    captured = capsys.readouterr()
+    for prohibited in (
+        "raw-asyncssh-marker",
+        "arbitrary-router.example",
+        "arbitrary-operator",
+        "ssh-rsa",
+        "diffie-hellman-group1-sha1",
+    ):
+        assert prohibited not in captured.out
+        assert prohibited not in captured.err
+
+
 def test_structured_exception_values_are_replaced_before_rendering(capsys) -> None:
     configure_logging("INFO")
     structlog.get_logger("ssh-error-test").error(

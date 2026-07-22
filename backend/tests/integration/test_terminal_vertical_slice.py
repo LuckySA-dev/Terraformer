@@ -3,6 +3,7 @@ from __future__ import annotations
 # pyright: reportPrivateUsage=false
 import asyncio
 from collections.abc import Callable
+from socket import gaierror
 from threading import Event as ThreadEvent
 from types import SimpleNamespace
 from typing import Any
@@ -17,6 +18,7 @@ from starlette.websockets import WebSocketDisconnect
 from app.api import terminal as terminal_api
 from app.container import ApplicationContainer
 from app.drivers import ConnectionParameters
+from app.drivers.ssh_errors import FAILURES as SSH_FAILURES
 from app.models import Event, SSHCompatibility
 from app.services.connection_gate import (
     ConnectionGateUnavailableError,
@@ -107,6 +109,7 @@ class FakeAsyncSSHConnection:
         self.create_error = create_error
         self.block_create = block_create
         self.create_kwargs: dict[str, object] | None = None
+        self.wait_closed_calls = 0
 
     async def create_process(self, **kwargs: object) -> FakeProcess:
         self.create_kwargs = kwargs
@@ -120,7 +123,38 @@ class FakeAsyncSSHConnection:
         self.closed = True
 
     async def wait_closed(self) -> None:
+        self.wait_closed_calls += 1
         return None
+
+
+class FakeDirectWebSocket:
+    def __init__(self, container: ApplicationContainer) -> None:
+        self.app = SimpleNamespace(state=SimpleNamespace(container=container))
+        self.cookies = {container.settings.session_cookie_name: container.session_tokens.issue()}
+        self.headers = {"origin": "http://testserver"}
+        self.messages: list[dict[str, object]] = []
+        self.closed = False
+        self._receive_calls = 0
+        self._wait_forever = asyncio.Event()
+
+    async def accept(self) -> None:
+        return None
+
+    async def receive_json(self) -> dict[str, object]:
+        self._receive_calls += 1
+        if self._receive_calls == 1:
+            return {
+                "type": "accept_direct_mode",
+                "group1_risk_acknowledged": False,
+            }
+        await self._wait_forever.wait()
+        raise AssertionError("unreachable")
+
+    async def send_json(self, message: dict[str, object]) -> None:
+        self.messages.append(message)
+
+    async def close(self, **_kwargs: object) -> None:
+        self.closed = True
 
 
 def _register_device(
@@ -231,10 +265,21 @@ def test_open_terminal_uses_exact_password_only_request_scoped_policy(
         "kbdint_auth": False,
         "host_based_auth": False,
         "gss_auth": False,
+        "gss_kex": False,
+        "disable_trivial_auth": True,
         "encoding": "utf-8",
         "errors": "replace",
         **algorithms,
     }
+    real_options = asyncssh.SSHClientConnectionOptions(**captured)
+    assert real_options.preferred_auth == ["password"]
+    assert real_options.password_auth is True
+    assert real_options.public_key_auth is False
+    assert real_options.kbdint_auth is False
+    assert real_options.host_based_auth is False
+    assert real_options.gss_auth is False
+    assert real_options.gss_kex is False
+    assert real_options.disable_trivial_auth is True
     assert "known_hosts" not in captured
     assert connection.create_kwargs == {
         "term_type": "xterm-256color",
@@ -318,6 +363,57 @@ def test_open_terminal_maps_connection_failures_without_raw_details(
 
 
 @pytest.mark.parametrize(
+    ("error", "expected_code"),
+    [
+        (
+            asyncssh.HostKeyNotVerifiable(
+                "Host key is not trusted for host arbitrary-router.example "
+                "peer list [ssh-ed25519] raw-host-key-marker"
+            ),
+            "device_host_key_changed",
+        ),
+        (
+            gaierror(-2, "arbitrary-router.example raw-dns-marker was not resolved"),
+            "device_name_resolution_failed",
+        ),
+        (
+            ConnectionRefusedError(10061, "arbitrary-router.example raw-refused-marker"),
+            "device_connection_refused",
+        ),
+        (OSError("arbitrary-router.example raw-generic-marker"), "device_connection_failed"),
+    ],
+)
+def test_open_terminal_reuses_shared_sanitized_connection_failures(
+    error: Exception,
+    expected_code: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_connect(**_kwargs: object) -> FakeAsyncSSHConnection:
+        raise error
+
+    monkeypatch.setattr(terminal_api.asyncssh, "connect", fake_connect)
+
+    with pytest.raises(terminal_api._TerminalFailure) as captured:
+        asyncio.run(
+            terminal_api._open_terminal(
+                _parameters(SSHCompatibility.MODERN),
+                strict_host_key=True,
+                pty_timeout_seconds=1,
+            )
+        )
+
+    failure = SSH_FAILURES[expected_code]
+    assert captured.value.code == failure.code
+    assert captured.value.spec is failure
+    assert captured.value.spec.phase is failure.phase
+    assert captured.value.spec.retryable is failure.retryable
+    assert captured.value.spec.recommended_action == failure.recommended_action
+    rendered = str(captured.value)
+    assert "arbitrary-router.example" not in rendered
+    assert "raw-" not in rendered
+
+
+@pytest.mark.parametrize(
     ("connection", "expected_code"),
     [
         (FakeAsyncSSHConnection(block_create=True), "terminal_pty_rejected"),
@@ -352,6 +448,153 @@ def test_open_terminal_bounds_pty_and_sanitizes_shell_rejection(
     assert captured.value.code == expected_code
     assert connection.closed is True
     assert "fixture-secret" not in str(captured.value)
+
+
+def test_open_terminal_closes_connection_before_unexpected_create_process_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = FakeAsyncSSHConnection(
+        create_error=RuntimeError("arbitrary-router.example raw-create-marker")
+    )
+
+    async def fake_connect(**_kwargs: object) -> FakeAsyncSSHConnection:
+        return connection
+
+    monkeypatch.setattr(terminal_api.asyncssh, "connect", fake_connect)
+
+    with pytest.raises(RuntimeError, match="raw-create-marker"):
+        asyncio.run(
+            terminal_api._open_terminal(
+                _parameters(SSHCompatibility.MODERN),
+                strict_host_key=True,
+                pty_timeout_seconds=1,
+            )
+        )
+
+    assert connection.closed is True
+    assert connection.wait_closed_calls == 1
+
+
+def test_terminal_holds_permit_until_cancelled_pty_connection_closes(
+    authenticated_client: TestClient,
+    credential_profile: dict[str, object],
+    container: ApplicationContainer,
+    fake_connection_gate: FakeConnectionGate,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device_id = _register_device(authenticated_client, str(credential_profile["id"]))
+    fake_connection_gate.acquired.clear()
+    fake_connection_gate.released.clear()
+
+    async def exercise() -> tuple[FakeAsyncSSHConnection, BaseException]:
+        create_started = asyncio.Event()
+        close_started = asyncio.Event()
+        allow_close = asyncio.Event()
+        never_finish = asyncio.Event()
+
+        class BlockingConnection(FakeAsyncSSHConnection):
+            async def create_process(self, **kwargs: object) -> FakeProcess:
+                self.create_kwargs = kwargs
+                create_started.set()
+                await never_finish.wait()
+                return self.process
+
+            def close(self) -> None:
+                super().close()
+                close_started.set()
+
+            async def wait_closed(self) -> None:
+                self.wait_closed_calls += 1
+                await allow_close.wait()
+
+        connection = BlockingConnection()
+
+        async def fake_connect(**_kwargs: object) -> FakeAsyncSSHConnection:
+            return connection
+
+        monkeypatch.setattr(terminal_api.asyncssh, "connect", fake_connect)
+        websocket = FakeDirectWebSocket(container)
+        task = asyncio.create_task(
+            terminal_api.terminal(websocket, UUID(device_id))  # type: ignore[arg-type]
+        )
+        await create_started.wait()
+        task.cancel()
+        close_waiter = asyncio.create_task(close_started.wait())
+        done, _pending = await asyncio.wait(
+            {task, close_waiter}, return_when=asyncio.FIRST_COMPLETED
+        )
+        assert close_waiter in done, "terminal exited before closing its SSH connection"
+        assert fake_connection_gate.released == []
+        allow_close.set()
+        result = (await asyncio.gather(task, return_exceptions=True))[0]
+        assert isinstance(result, BaseException)
+        return connection, result
+
+    connection, result = asyncio.run(exercise())
+
+    assert isinstance(result, asyncio.CancelledError)
+    assert connection.closed is True
+    assert connection.wait_closed_calls == 1
+    assert fake_connection_gate.released == fake_connection_gate.acquired
+    assert len(fake_connection_gate.released) == 1
+
+
+def test_terminal_cancellation_rolls_back_a_blocked_gate_acquire(
+    authenticated_client: TestClient,
+    credential_profile: dict[str, object],
+    container: ApplicationContainer,
+    fake_connection_gate: FakeConnectionGate,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device_id = _register_device(authenticated_client, str(credential_profile["id"]))
+    fake_connection_gate.acquired.clear()
+    fake_connection_gate.released.clear()
+    acquire_started = ThreadEvent()
+    allow_acquire = ThreadEvent()
+    original_acquire = fake_connection_gate.acquire
+    decrypted = False
+    opened = False
+
+    def blocked_acquire(*args: object, **kwargs: object) -> object:
+        acquire_started.set()
+        if not allow_acquire.wait(1):
+            raise AssertionError("test did not unblock gate acquisition")
+        return original_acquire(*args, **kwargs)  # type: ignore[arg-type]
+
+    def fake_parameters(*_args: object, **_kwargs: object) -> ConnectionParameters:
+        nonlocal decrypted
+        decrypted = True
+        return _parameters(SSHCompatibility.MODERN)
+
+    async def fake_open(*_args: object, **_kwargs: object) -> FakeTerminalSession:
+        nonlocal opened
+        opened = True
+        return FakeTerminalSession()
+
+    monkeypatch.setattr(fake_connection_gate, "acquire", blocked_acquire)
+    monkeypatch.setattr(terminal_api, "_connection_parameters", fake_parameters)
+    monkeypatch.setattr(terminal_api, "_open_terminal", fake_open)
+
+    async def exercise() -> BaseException:
+        websocket = FakeDirectWebSocket(container)
+        task = asyncio.create_task(
+            terminal_api.terminal(websocket, UUID(device_id))  # type: ignore[arg-type]
+        )
+        assert await asyncio.to_thread(acquire_started.wait, 1)
+        task.cancel()
+        allow_acquire.set()
+        result = (await asyncio.gather(task, return_exceptions=True))[0]
+        assert isinstance(result, BaseException)
+        assert websocket.closed is True
+        return result
+
+    result = asyncio.run(exercise())
+
+    assert isinstance(result, asyncio.CancelledError)
+    assert decrypted is False
+    assert opened is False
+    assert fake_connection_gate.released == fake_connection_gate.acquired
+    assert len(fake_connection_gate.released) == 1
 
 
 def test_terminal_requires_direct_mode_before_policy_or_admission(

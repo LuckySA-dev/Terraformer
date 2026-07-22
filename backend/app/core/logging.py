@@ -75,10 +75,11 @@ def _sanitize_exception_info(
 def configure_logging(level: str = "INFO") -> None:
     numeric_level = getattr(logging, level.upper(), logging.INFO)
     logging.basicConfig(format="%(message)s", stream=sys.stdout, level=numeric_level, force=True)
-    scrapli_logger = logging.getLogger("scrapli")
-    scrapli_logger.handlers.clear()
-    scrapli_logger.addHandler(logging.NullHandler())
-    scrapli_logger.propagate = False
+    for library_logger_name in ("scrapli", "asyncssh"):
+        library_logger = logging.getLogger(library_logger_name)
+        library_logger.handlers.clear()
+        library_logger.addHandler(logging.NullHandler())
+        library_logger.propagate = False
     shared_processors: list[Any] = [
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_log_level,

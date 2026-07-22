@@ -5,7 +5,7 @@ from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
-from scrapli.exceptions import ScrapliAuthenticationFailed, ScrapliTimeout
+from scrapli.exceptions import ScrapliAuthenticationFailed, ScrapliTimeout, ScrapliValueError
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.container import ApplicationContainer
@@ -148,6 +148,78 @@ def test_connection_failure_is_typed_and_does_not_create_device(
 
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "device_authentication_failed"
+    assert authenticated_client.get("/api/devices").json() == []
+
+
+@pytest.mark.parametrize("vendor", ["cisco_iosxe", "generic"])
+@pytest.mark.parametrize(
+    ("factory_error", "expected_status", "expected_error"),
+    [
+        (
+            ScrapliValueError(
+                "raw-constructor-marker edge-rtr-01.example.test fixture-password "
+                "peer-offered-ssh-rsa"
+            ),
+            500,
+            {
+                "code": "configuration_error",
+                "message": "The service is not configured correctly",
+                "details": {"phase": "tcp_connection", "retryable": False},
+            },
+        ),
+        (
+            RuntimeError(
+                "raw-constructor-marker edge-rtr-01.example.test fixture-password "
+                "peer-offered-ssh-rsa"
+            ),
+            502,
+            {
+                "code": "device_connection_failed",
+                "message": "Unable to connect to the device",
+                "details": {
+                    "phase": "tcp_connection",
+                    "retryable": True,
+                    "recommended_action": (
+                        "Verify device reachability and that SSH is listening "
+                        "on the configured port."
+                    ),
+                },
+            },
+        ),
+    ],
+)
+def test_transport_constructor_failure_is_sanitized_in_api_and_logs(
+    authenticated_client: TestClient,
+    credential_profile: dict[str, object],
+    transport_factory,
+    capsys,
+    vendor: str,
+    factory_error: Exception,
+    expected_status: int,
+    expected_error: dict[str, object],
+) -> None:
+    prohibited = (
+        type(factory_error).__name__,
+        "raw-constructor-marker",
+        "edge-rtr-01.example.test",
+        "fixture-password",
+        "peer-offered-ssh-rsa",
+    )
+    transport_factory.factory_error = factory_error
+    payload = _device_payload(str(credential_profile["id"]))
+    payload["vendor"] = vendor
+    capsys.readouterr()
+
+    response = authenticated_client.post("/api/devices", json=payload)
+    captured_logs = capsys.readouterr()
+
+    assert response.status_code == expected_status
+    assert response.json()["error"] == {
+        **expected_error,
+        "request_id": response.headers["x-request-id"],
+    }
+    rendered = response.text + captured_logs.out + captured_logs.err
+    assert all(raw not in rendered for raw in prohibited)
     assert authenticated_client.get("/api/devices").json() == []
 
 

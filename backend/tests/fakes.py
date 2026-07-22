@@ -21,6 +21,7 @@ class FakeTransport(NetworkTransport):
         self.command_errors = dict(command_errors or {})
         self.opened = False
         self.closed = False
+        self.close_calls = 0
         self.sent_commands: list[str] = []
 
     def open(self) -> None:
@@ -29,6 +30,7 @@ class FakeTransport(NetworkTransport):
         self.opened = True
 
     def close(self) -> None:
+        self.close_calls += 1
         self.closed = True
 
     def send_command(self, command: str) -> str:
@@ -45,11 +47,13 @@ class FakeTransportFactory:
         self,
         commands: Mapping[str, str],
         *,
+        factory_error: Exception | None = None,
         open_error: Exception | None = None,
         command_error: Exception | None = None,
         command_errors: Mapping[str, Exception] | None = None,
     ) -> None:
         self.commands = dict(commands)
+        self.factory_error = factory_error
         self.open_error = open_error
         self.command_error = command_error
         self.command_errors = dict(command_errors or {})
@@ -58,6 +62,8 @@ class FakeTransportFactory:
 
     def __call__(self, parameters: ConnectionParameters) -> FakeTransport:
         self.parameters.append(parameters)
+        if self.factory_error is not None:
+            raise self.factory_error
         transport = FakeTransport(
             self.commands,
             open_error=self.open_error,

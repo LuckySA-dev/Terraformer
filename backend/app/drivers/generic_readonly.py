@@ -9,6 +9,7 @@ from app.drivers.base import (
     DeviceDriver,
     DriverCapability,
     DriverCapabilitySet,
+    NetworkTransport,
     TransportFactory,
 )
 from app.drivers.ssh_errors import ConnectionPhase, translate_ssh_error
@@ -36,16 +37,18 @@ class GenericReadOnlyDriver(DeviceDriver):
 
     def test_connection(self, parameters: ConnectionParameters) -> ConnectionTestResult:
         started = monotonic()
-        transport = self._transport_factory(parameters)
+        transport: NetworkTransport | None = None
         try:
+            transport = self._transport_factory(parameters)
             transport.open()
         except Exception as exc:
             raise translate_transport_error(exc, phase=ConnectionPhase.TCP) from None
         finally:
-            try:
-                transport.close()
-            except Exception:  # noqa: S110 - close is best-effort and must not mask the operation
-                pass
+            if transport is not None:
+                try:
+                    transport.close()
+                except Exception:  # noqa: S110 - close must not mask the operation
+                    pass
         return ConnectionTestResult(
             reachable=True,
             driver=self.name,

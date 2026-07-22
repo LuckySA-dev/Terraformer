@@ -154,9 +154,10 @@ class CiscoIOSXEDriver(DeviceDriver):
 
     @contextmanager
     def _session(self, parameters: ConnectionParameters) -> Iterator[NetworkTransport]:
-        transport = self._transport_factory(parameters)
+        transport: NetworkTransport | None = None
         try:
             try:
+                transport = self._transport_factory(parameters)
                 transport.open()
             except Exception as exc:
                 raise translate_transport_error(
@@ -169,10 +170,11 @@ class CiscoIOSXEDriver(DeviceDriver):
                 translated = translate_transport_error(exc, phase=ConnectionPhase.TERMINAL_IO)
                 raise translated from None
         finally:
-            try:
-                transport.close()
-            except Exception:  # noqa: S110 - close is best-effort and must not mask the operation
-                pass
+            if transport is not None:
+                try:
+                    transport.close()
+                except Exception:  # noqa: S110 - close must not mask the operation
+                    pass
 
 
 def parse_show_version(output: str) -> DeviceFacts:

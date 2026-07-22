@@ -108,6 +108,71 @@ def test_cisco_driver_closes_transport_when_open_fails() -> None:
     assert factory.transports[0].closed is True
 
 
+@pytest.mark.parametrize("driver_type", [CiscoIOSXEDriver, GenericReadOnlyDriver])
+@pytest.mark.parametrize(
+    ("factory_error", "expected_type", "expected_details"),
+    [
+        (
+            ScrapliValueError(
+                "raw-constructor-marker edge-rtr-01.example.test fixture-password "
+                "peer-offered-ssh-rsa"
+            ),
+            ConfigurationError,
+            {"phase": "tcp_connection", "retryable": False},
+        ),
+        (
+            RuntimeError(
+                "raw-constructor-marker edge-rtr-01.example.test fixture-password "
+                "peer-offered-ssh-rsa"
+            ),
+            DriverConnectionError,
+            {
+                "phase": "tcp_connection",
+                "retryable": True,
+                "recommended_action": (
+                    "Verify device reachability and that SSH is listening on the configured port."
+                ),
+            },
+        ),
+    ],
+)
+def test_transport_factory_failures_are_tcp_sanitized(
+    driver_type,
+    factory_error: Exception,
+    expected_type: type[Exception],
+    expected_details: dict[str, object],
+) -> None:
+    raw_values = (
+        type(factory_error).__name__,
+        "raw-constructor-marker",
+        "edge-rtr-01.example.test",
+        "fixture-password",
+        "peer-offered-ssh-rsa",
+    )
+    factory = FakeTransportFactory({}, factory_error=factory_error)
+    driver = driver_type(factory)
+
+    with pytest.raises(expected_type) as captured:
+        driver.test_connection(parameters())
+
+    assert captured.value.details == expected_details
+    assert captured.value.__suppress_context__ is True
+    rendered = "".join(traceback.format_exception(captured.type, captured.value, captured.tb))
+    assert all(raw not in rendered for raw in raw_values)
+    assert factory.transports == []
+
+
+@pytest.mark.parametrize("driver_type", [CiscoIOSXEDriver, GenericReadOnlyDriver])
+def test_constructed_transport_is_closed_exactly_once_when_open_fails(driver_type) -> None:
+    factory = FakeTransportFactory({}, open_error=RuntimeError("raw-open-marker"))
+    driver = driver_type(factory)
+
+    with pytest.raises(DriverConnectionError):
+        driver.test_connection(parameters())
+
+    assert factory.transports[0].close_calls == 1
+
+
 @pytest.mark.parametrize(
     ("error", "expected"),
     [

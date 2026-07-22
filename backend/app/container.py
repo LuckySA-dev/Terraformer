@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from functools import cached_property, lru_cache
 
+from redis import Redis
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import Settings, get_settings
@@ -16,6 +17,7 @@ from app.core.storage import EncryptedSnapshotStore
 from app.drivers import CiscoIOSXEDriver, DriverRegistry, GenericReadOnlyDriver
 from app.drivers.transport import ScrapliGenericTransportFactory, ScrapliTransportFactory
 from app.jobs.queue import JobQueue, RQJobQueue
+from app.services.connection_gate import RedisConnectionGate
 from app.services.credentials import CredentialVault
 
 
@@ -29,6 +31,7 @@ class ApplicationContainer:
         queue: JobQueue | None = None,
         key_provider: MasterKeyProvider | None = None,
         snapshot_store: EncryptedSnapshotStore | None = None,
+        connection_gate: RedisConnectionGate | None = None,
     ) -> None:
         self.settings = settings or get_settings()
         self._session_factory = session_factory
@@ -40,6 +43,7 @@ class ApplicationContainer:
         )
         self.passwords = PasswordService()
         self._snapshot_store = snapshot_store
+        self._connection_gate = connection_gate
         self._active_terminal_sessions = 0
 
     @cached_property
@@ -73,6 +77,15 @@ class ApplicationContainer:
         return RQJobQueue(
             redis_url=self.settings.resolved_redis_url(),
             queue_name=self.settings.rq_queue_name,
+        )
+
+    @cached_property
+    def connection_gate(self) -> RedisConnectionGate:
+        if self._connection_gate is not None:
+            return self._connection_gate
+        return RedisConnectionGate(
+            redis_client=Redis.from_url(self.settings.resolved_redis_url()),
+            settings=self.settings,
         )
 
     @cached_property

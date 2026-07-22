@@ -17,7 +17,7 @@ from app.core.security import MasterKeyProvider
 from app.drivers import CiscoIOSXEDriver, DriverRegistry, GenericReadOnlyDriver
 from app.main import create_app
 from app.models import Base
-from tests.fakes import FakeQueue, FakeTransportFactory
+from tests.fakes import FakeConnectionGate, FakeQueue, FakeTransportFactory
 
 
 @pytest.fixture
@@ -80,6 +80,11 @@ def fake_queue() -> FakeQueue:
 
 
 @pytest.fixture
+def fake_connection_gate() -> FakeConnectionGate:
+    return FakeConnectionGate()
+
+
+@pytest.fixture
 def settings(tmp_path: Path) -> Settings:
     root_key = base64.urlsafe_b64encode(b"k" * 32).decode("ascii")
     return Settings(
@@ -101,6 +106,7 @@ def container(
     session_factory: sessionmaker[Session],
     transport_factory: FakeTransportFactory,
     fake_queue: FakeQueue,
+    fake_connection_gate: FakeConnectionGate,
 ) -> ApplicationContainer:
     key_provider = MasterKeyProvider(
         key_file=settings.master_key_file,
@@ -114,6 +120,7 @@ def container(
         drivers=DriverRegistry([cisco, generic]),
         queue=fake_queue,
         key_provider=key_provider,
+        connection_gate=fake_connection_gate,  # type: ignore[arg-type]
     )
 
 

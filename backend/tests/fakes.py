@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from uuid import uuid4
 
 from app.drivers.base import ConnectionParameters, NetworkTransport
 from app.models import Job
+from app.services.connection_gate import (
+    ConnectionOperation,
+    ConnectionPermit,
+    ConnectionTarget,
+)
 
 
 class FakeTransport(NetworkTransport):
@@ -93,3 +99,32 @@ class FakeQueue:
 
     def has_workers(self) -> bool:
         return self.available and self.workers
+
+
+class FakeConnectionGate:
+    def __init__(self) -> None:
+        self.acquired: list[ConnectionPermit] = []
+        self.released: list[ConnectionPermit] = []
+        self.authentication_successes: list[ConnectionTarget] = []
+        self.authentication_failures: list[ConnectionTarget] = []
+        self.acquire_error: Exception | None = None
+
+    def acquire(
+        self,
+        operation: ConnectionOperation,
+        target: ConnectionTarget,
+    ) -> ConnectionPermit:
+        if self.acquire_error is not None:
+            raise self.acquire_error
+        permit = ConnectionPermit(uuid4().hex, operation, target)
+        self.acquired.append(permit)
+        return permit
+
+    def authentication_succeeded(self, target: ConnectionTarget) -> None:
+        self.authentication_successes.append(target)
+
+    def authentication_failed(self, target: ConnectionTarget) -> None:
+        self.authentication_failures.append(target)
+
+    def release(self, permit: ConnectionPermit) -> None:
+        self.released.append(permit)

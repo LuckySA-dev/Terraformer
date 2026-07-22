@@ -61,6 +61,16 @@ class Settings(BaseSettings):
         le=100,
         validation_alias=AliasChoices("DEVICE_CONNECTION_LIMIT", "MAX_DEVICE_CONNECTIONS"),
     )
+    connection_test_rate_limit: int = Field(default=5, ge=1, le=100)
+    terminal_open_rate_limit: int = Field(default=5, ge=1, le=100)
+    connection_rate_window_seconds: int = Field(default=60, ge=1, le=3600)
+    authentication_failure_limit: int = Field(default=3, ge=1, le=20)
+    authentication_failure_window_seconds: int = Field(default=60, ge=1, le=3600)
+    authentication_cooldown_seconds: int = Field(default=60, ge=1, le=3600)
+    max_connections_per_device: int = Field(default=3, ge=1, le=100)
+    max_terminal_sessions: int = Field(default=3, ge=1, le=20)
+    max_terminal_sessions_per_device: int = Field(default=3, ge=1, le=20)
+    connection_permit_ttl_seconds: int = Field(default=3900, ge=60, le=86_700)
 
     def trusted_origins(self) -> frozenset[str]:
         return frozenset(
@@ -76,6 +86,10 @@ class Settings(BaseSettings):
         if self.app_env.lower() == "production" and not self.session_cookie_secure:
             # Local HTTP is supported; SameSite and loopback binding remain in force.
             pass
+        if self.connection_permit_ttl_seconds < self.terminal_max_duration_seconds:
+            raise ValueError(
+                "CONNECTION_PERMIT_TTL_SECONDS must cover TERMINAL_MAX_DURATION_SECONDS"
+            )
         return self
 
     def resolved_database_url(self) -> str:

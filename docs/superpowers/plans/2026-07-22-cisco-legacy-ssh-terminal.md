@@ -82,8 +82,6 @@
 - Modify: `backend/tests/unit/test_config.py`
 - Modify: `backend/tests/integration/test_migrations.py`
 - Modify: `backend/tests/integration/test_model_invariants.py`
-- Modify: `.env.example`
-- Modify: `deploy/compose.yml`
 
 **Interfaces:**
 
@@ -305,6 +303,8 @@ git commit -m "fix(backend): scope legacy SSH transport"
 - Create: `backend/tests/unit/test_connection_gate.py`
 - Modify: `backend/app/container.py`
 - Modify: `backend/app/core/config.py`
+- Modify: `.env.example`
+- Modify: `deploy/compose.yml`
 - Modify: `backend/tests/conftest.py`
 - Modify: `backend/tests/fakes.py`
 - Modify: `backend/tests/unit/test_config.py`
@@ -329,7 +329,7 @@ class ConnectionPermit:
     operation: ConnectionOperation
     target: ConnectionTarget
 
-class ConnectionGate(Protocol):
+class RedisConnectionGate:
     def acquire(self, operation: ConnectionOperation, target: ConnectionTarget) -> ConnectionPermit: ...
     def authentication_succeeded(self, target: ConnectionTarget) -> None: ...
     def authentication_failed(self, target: ConnectionTarget) -> None: ...
@@ -338,7 +338,7 @@ class ConnectionGate(Protocol):
 
 - [ ] **Step 1: Run impact analysis**
 
-Run upstream impact for `ApplicationContainer`, `reserve_terminal_session`, and `release_terminal_session`. The last two will be removed only after all callers move to the gate.
+Run upstream impact for `ApplicationContainer`. Keep `reserve_terminal_session` and `release_terminal_session` until the terminal caller moves to the Redis gate in Task 5.
 
 - [ ] **Step 2: Write failing gate tests with a fake Redis clock/store**
 
@@ -383,7 +383,7 @@ Run Step 3 again. Expected: all limit, TTL, idempotency, fail-closed, and privac
 
 - [ ] **Step 6: Check scope and commit**
 
-Run `detect_changes`, verify the old in-process terminal counter is no longer referenced, then commit:
+Run `detect_changes`, verify the Redis gate is injectable and the existing terminal counter is unchanged until Task 5, then commit:
 
 ```text
 git commit -m "feat(backend): gate SSH connections in Redis"
@@ -479,6 +479,7 @@ git commit -m "fix(backend): enforce SSH policy on reads"
 
 **Files:**
 - Modify: `backend/app/api/terminal.py`
+- Modify: `backend/app/container.py`
 - Modify: `backend/tests/integration/test_terminal_vertical_slice.py`
 - Modify: `deploy/compose.yml`
 
@@ -505,7 +506,7 @@ Sanitized server error:
 
 - [ ] **Step 1: Run impact analysis**
 
-Run upstream impact for `terminal`, `_open_terminal`, and `_connection_parameters`. Confirm the WebSocket execution flow and all cleanup callers before edits.
+Run upstream impact for `terminal`, `_open_terminal`, `_connection_parameters`, `reserve_terminal_session`, and `release_terminal_session`. Confirm the WebSocket execution flow and all cleanup callers before edits.
 
 - [ ] **Step 2: Add failing terminal boundary tests**
 
@@ -539,6 +540,8 @@ process = await asyncio.wait_for(
 ```
 
 Use one idempotent `cleanup()` which first blocks input/cancels relays, then closes process/channel, connection, WebSocket, releases the Redis permit, and drops policy/credential references. Keep sequential `read(4096)` followed by awaited `send_json()`; do not add an output queue. Run synchronous gate calls with `asyncio.to_thread`.
+
+After the WebSocket caller uses the Redis gate, remove the superseded process-local terminal counter from `ApplicationContainer`.
 
 - [ ] **Step 5: Run terminal tests and verify GREEN**
 

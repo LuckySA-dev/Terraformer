@@ -1,5 +1,5 @@
 import { Plus, X } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { SshCompatibility } from '../../types/api';
 import { SshWebSocketTransport } from '../terminal/SshWebSocketTransport';
 import { TerminalSession } from '../terminal/TerminalSession';
@@ -16,6 +16,8 @@ export function TerminalPanel({
   const [sessions, setSessions] = useState([1]);
   const [active, setActive] = useState(1);
   const nextId = useRef(2);
+  const tabRefs = useRef(new Map<number, HTMLButtonElement>());
+  const pendingFocus = useRef<number | undefined>(undefined);
   const requiresGroup1Acknowledgement = sshCompatibility === 'cisco_legacy_group1';
 
   const add = () => {
@@ -26,16 +28,41 @@ export function TerminalPanel({
   };
   const remove = (id: number) => {
     const remaining = sessions.filter((item) => item !== id);
-    setSessions(remaining.length === 0 ? [nextId.current++] : remaining);
-    if (active === id) setActive(remaining.at(-1) ?? nextId.current - 1);
+    const nextSessions = remaining.length === 0 ? [nextId.current++] : remaining;
+    const nextActive = active === id
+      ? nextSessions[Math.min(sessions.indexOf(id), nextSessions.length - 1)]
+      : active;
+    setSessions(nextSessions);
+    if (nextActive !== undefined && active === id) {
+      pendingFocus.current = nextActive;
+      setActive(nextActive);
+    }
   };
+
+  useEffect(() => {
+    if (pendingFocus.current === undefined) return;
+    tabRefs.current.get(pendingFocus.current)?.focus();
+    pendingFocus.current = undefined;
+  }, [sessions]);
 
   return (
     <div className="terminal-panel">
       <div className="terminal-tabs" role="tablist" aria-label="Terminal sessions">
         {sessions.map((id, index) => (
           <div key={id} className={active === id ? 'is-active' : ''}>
-            <button type="button" role="tab" aria-selected={active === id} onClick={() => setActive(id)}>
+            <button
+              ref={(element) => {
+                if (element === null) tabRefs.current.delete(id);
+                else tabRefs.current.set(id, element);
+              }}
+              id={`terminal-tab-${String(id)}`}
+              type="button"
+              role="tab"
+              aria-selected={active === id}
+              aria-controls={`terminal-panel-${String(id)}`}
+              tabIndex={active === id ? 0 : -1}
+              onClick={() => setActive(id)}
+            >
               Terminal {index + 1}
             </button>
             <button type="button" aria-label={`Close terminal ${String(index + 1)}`} onClick={() => remove(id)}>
@@ -48,7 +75,13 @@ export function TerminalPanel({
         </button>
       </div>
       {sessions.map((id) => (
-        <div key={id} hidden={id !== active}>
+        <div
+          key={id}
+          id={`terminal-panel-${String(id)}`}
+          role="tabpanel"
+          aria-labelledby={`terminal-tab-${String(id)}`}
+          hidden={id !== active}
+        >
           <TerminalSession
             createTransport={(authorizationAcknowledged) => new SshWebSocketTransport(
               deviceId,

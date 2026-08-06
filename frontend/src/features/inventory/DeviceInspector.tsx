@@ -5,6 +5,7 @@ import {
   Check,
   ChevronRight,
   CircleGauge,
+  CircleX,
   Clock3,
   Download,
   FileLock2,
@@ -570,6 +571,7 @@ export function DeviceInspector({ device, onClose, onEdit, onDelete }: DeviceIns
 
   const jobRunning =
     activeJob !== undefined && (job.data === undefined || !finalJobStates.has(job.data.state));
+  const jobFailed = job.data?.state === 'failed';
 
   return (
     <aside className={tab === 'terminal' ? 'inspector inspector--terminal' : 'inspector'} aria-label={`${device.name} inspector`}>
@@ -608,10 +610,16 @@ export function DeviceInspector({ device, onClose, onEdit, onDelete }: DeviceIns
       </div>
       {activeJob === undefined ? null : (
         <div
-          className={`job-banner ${job.data?.state === 'failed' ? 'job-banner--error' : ''}`}
-          role="status"
+          className={`job-banner ${jobFailed ? 'job-banner--error' : ''}`}
+          role={jobFailed ? 'alert' : 'status'}
         >
-          {jobRunning ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}
+          {jobRunning ? (
+            <LoaderCircle className="spin" size={15} />
+          ) : jobFailed ? (
+            <CircleX size={15} />
+          ) : (
+            <Check size={15} />
+          )}
           <span>
             {activeJob.label}
             {job.data === undefined ? '…' : ` · ${job.data.state}`}

@@ -97,6 +97,7 @@ describe('typed API client', () => {
       credential_profile_id: 'c6d6a5be-bf2e-4d6a-bda8-3a559f985631',
       ssh_compatibility: 'modern',
       group1_risk_acknowledged: false,
+      host_key_candidate_id: 'b6871493-41ea-4f96-b126-c09e033fd6e2',
     });
 
     const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
@@ -109,6 +110,7 @@ describe('typed API client', () => {
       credential_profile_id: 'c6d6a5be-bf2e-4d6a-bda8-3a559f985631',
       ssh_compatibility: 'modern',
       group1_risk_acknowledged: false,
+      host_key_candidate_id: 'b6871493-41ea-4f96-b126-c09e033fd6e2',
     });
   });
 });

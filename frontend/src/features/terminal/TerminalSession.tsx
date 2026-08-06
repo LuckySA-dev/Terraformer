@@ -72,6 +72,7 @@ export function TerminalSession({
   active = true,
 }: TerminalSessionProps) {
   const container = useRef<HTMLDivElement>(null);
+  const errorContainer = useRef<HTMLDivElement>(null);
   const transportRef = useRef<TerminalTransport | null>(null);
   const terminal = useRef<Terminal | null>(null);
   const fitAddon = useRef<FitAddon | null>(null);
@@ -96,6 +97,11 @@ export function TerminalSession({
     lineCount: number;
     characterCount: number;
   }>();
+
+  useEffect(() => {
+    if (error?.retryable !== true || (requireAuthorization && !authorized)) return;
+    errorContainer.current?.querySelector('button')?.focus();
+  }, [authorized, error, requireAuthorization]);
 
   const clearAllSessionRefs = () => {
     transportRef.current = null;
@@ -381,7 +387,7 @@ export function TerminalSession({
         </div>
       </div>
       {error === undefined ? null : (
-        <div className="form-error" role="alert">
+        <div ref={errorContainer} className="form-error" role="alert">
           <span>{error.message}</span>
           {error.recommendedAction === undefined ? null : <span>{error.recommendedAction}</span>}
           {error.retryable ? (

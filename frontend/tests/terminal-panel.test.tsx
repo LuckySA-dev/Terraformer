@@ -139,6 +139,20 @@ describe('Direct Mode terminal', () => {
     vi.unstubAllGlobals();
   });
 
+  it('links terminal tabs to panels and restores focus after closing the active tab', async () => {
+    const user = userEvent.setup();
+    render(<TerminalPanel deviceId="2ad0db14-5a87-4147-a4e7-c98f88322464" />);
+
+    const firstTab = screen.getByRole('tab', { name: 'Terminal 1' });
+    expect(firstTab).toHaveAttribute('aria-controls', 'terminal-panel-1');
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'terminal-tab-1');
+
+    await user.click(screen.getByRole('button', { name: 'New terminal' }));
+    await user.click(screen.getByRole('button', { name: 'Close terminal 2' }));
+
+    expect(firstTab).toHaveFocus();
+  });
+
   it('keeps SSH raw, confirms multiline input, and acknowledges Group1 only on open', async () => {
     const user = userEvent.setup();
     render(<TerminalPanel deviceId="2ad0db14-5a87-4147-a4e7-c98f88322464" />);
@@ -535,7 +549,9 @@ describe('Direct Mode terminal', () => {
       recommended_action: 'Try the connection again.',
     }) }));
 
-    await user.click(await screen.findByRole('button', { name: 'Retry' }));
+    const retry = await screen.findByRole('button', { name: 'Retry' });
+    expect(retry).toHaveFocus();
+    await user.click(retry);
 
     expect(FakeWebSocket.instances).toHaveLength(2);
     expect(terminalMocks.instances).toHaveLength(2);

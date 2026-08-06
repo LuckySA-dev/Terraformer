@@ -14,6 +14,7 @@ import type {
   EventRecord,
   HealthResponse,
   Job,
+  HostKeyCandidate,
   SessionStatus,
   SetupStatus,
 } from '../types/api';
@@ -69,8 +70,29 @@ export const api = {
     credential_profile_id,
     ssh_compatibility,
     group1_risk_acknowledged,
+    host_key_candidate_id,
   }: DeviceInput) =>
     apiRequest<ConnectionTestResult>('/devices/connection-test', {
+      method: 'POST',
+      body: json({
+        management_address,
+        port,
+        vendor,
+        credential_profile_id,
+        ssh_compatibility,
+        group1_risk_acknowledged,
+        host_key_candidate_id,
+      }),
+    }),
+  collectHostKeyCandidate: ({
+    management_address,
+    port,
+    vendor,
+    credential_profile_id,
+    ssh_compatibility,
+    group1_risk_acknowledged,
+  }: DeviceInput) =>
+    apiRequest<HostKeyCandidate>('/ssh-host-key-candidates', {
       method: 'POST',
       body: json({
         management_address,

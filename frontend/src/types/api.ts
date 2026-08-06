@@ -92,6 +92,14 @@ export interface DeviceInput {
   credential_profile_id: string;
   ssh_compatibility: SshCompatibility;
   group1_risk_acknowledged: boolean;
+  host_key_candidate_id?: string;
+}
+
+export interface HostKeyCandidate {
+  id: string;
+  algorithm: string;
+  fingerprint: string;
+  expires_at: string;
 }
 
 export interface DiscoveryInput {

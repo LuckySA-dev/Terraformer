@@ -7,6 +7,7 @@ import type { CredentialProfile, Device } from '../src/types/api';
 
 vi.mock('../src/api/network', () => ({
   api: {
+    collectHostKeyCandidate: vi.fn(),
     testCandidateConnection: vi.fn(),
   },
 }));
@@ -38,13 +39,29 @@ const legacyDevice: Device = {
   updated_at: '2026-07-11T00:00:00Z',
 };
 
+const hostKeyCandidate = {
+  id: 'b6871493-41ea-4f96-b126-c09e033fd6e2',
+  algorithm: 'ssh-rsa',
+  fingerprint: 'SHA256:fixture',
+  expires_at: '2026-08-06T12:15:00Z',
+};
+
 async function completeForm(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByLabelText('Device name'), 'Core switch');
   await user.type(screen.getByLabelText('Management address'), '192.0.2.10');
   await user.selectOptions(screen.getByLabelText('Credential profile'), credential.id);
 }
 
+async function inspectAndConfirm(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('button', { name: 'Inspect SSH host key' }));
+  await user.click(await screen.findByRole('checkbox', { name: /verified this fingerprint/i }));
+}
+
 describe('DeviceForm explicit connection safety gate', () => {
+  beforeEach(() => {
+    vi.mocked(api.collectHostKeyCandidate).mockResolvedValue(hostKeyCandidate);
+  });
+
   it('defaults new and discovery approval forms to modern SSH', () => {
     const props = {
       credentials: [credential],
@@ -126,6 +143,28 @@ describe('DeviceForm explicit connection safety gate', () => {
     expect(api.testCandidateConnection).not.toHaveBeenCalled();
   });
 
+  it('requires explicit fingerprint confirmation before testing credentials', async () => {
+    const user = userEvent.setup();
+    render(
+      <DeviceForm
+        credentials={[credential]}
+        onSubmit={vi.fn(() => Promise.resolve())}
+        onCancel={vi.fn()}
+        onCreateCredential={vi.fn()}
+      />,
+    );
+
+    await completeForm(user);
+    await user.click(screen.getByRole('button', { name: 'Inspect SSH host key' }));
+
+    expect(await screen.findByText('SHA256:fixture')).toBeVisible();
+    expect(screen.getByText('ssh-rsa')).toBeVisible();
+    const test = screen.getByRole('button', { name: 'Test connection' });
+    expect(test).toBeDisabled();
+    await user.click(screen.getByRole('checkbox', { name: /verified this fingerprint/i }));
+    expect(test).toBeEnabled();
+  });
+
   it('keeps save disabled until the exact candidate connection succeeds', async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn(() => Promise.resolve());
@@ -148,6 +187,7 @@ describe('DeviceForm explicit connection safety gate', () => {
     const save = screen.getByRole('button', { name: 'Save device' });
     expect(save).toBeDisabled();
 
+    await inspectAndConfirm(user);
     await user.click(screen.getByRole('button', { name: 'Test connection' }));
     expect(await screen.findByText('Read-only connection successful')).toBeVisible();
     expect(api.testCandidateConnection).toHaveBeenCalledWith({
@@ -158,6 +198,7 @@ describe('DeviceForm explicit connection safety gate', () => {
       credential_profile_id: credential.id,
       ssh_compatibility: 'modern',
       group1_risk_acknowledged: false,
+      host_key_candidate_id: hostKeyCandidate.id,
     });
     await waitFor(() => expect(save).toBeEnabled());
 
@@ -171,6 +212,7 @@ describe('DeviceForm explicit connection safety gate', () => {
         credential_profile_id: credential.id,
         ssh_compatibility: 'modern',
         group1_risk_acknowledged: false,
+        host_key_candidate_id: hostKeyCandidate.id,
       }),
     );
   });
@@ -192,6 +234,7 @@ describe('DeviceForm explicit connection safety gate', () => {
       />,
     );
     await completeForm(user);
+    await inspectAndConfirm(user);
     await user.click(screen.getByRole('button', { name: 'Test connection' }));
     const save = screen.getByRole('button', { name: 'Save device' });
     await waitFor(() => expect(save).toBeEnabled());
@@ -220,6 +263,7 @@ describe('DeviceForm explicit connection safety gate', () => {
       />,
     );
     await completeForm(user);
+    await inspectAndConfirm(user);
     await user.click(screen.getByRole('button', { name: 'Test connection' }));
     const save = screen.getByRole('button', { name: 'Save device' });
     await waitFor(() => expect(save).toBeEnabled());
@@ -255,6 +299,7 @@ describe('DeviceForm explicit connection safety gate', () => {
     );
     const acknowledgment = screen.getByRole('checkbox', { name: /accept the Group1 risk/i });
     await user.click(acknowledgment);
+    await inspectAndConfirm(user);
     await user.click(screen.getByRole('button', { name: 'Test connection' }));
     const save = screen.getByRole('button', { name: 'Save device' });
     await waitFor(() => expect(save).toBeEnabled());
@@ -287,6 +332,7 @@ describe('DeviceForm explicit connection safety gate', () => {
       />,
     );
     await completeForm(user);
+    await inspectAndConfirm(user);
     await user.click(screen.getByRole('button', { name: 'Test connection' }));
 
     const alert = await screen.findByRole('alert');
@@ -294,6 +340,33 @@ describe('DeviceForm explicit connection safety gate', () => {
     expect(alert).toHaveTextContent('Ask the local operator to enable this mode.');
     expect(alert).not.toHaveTextContent('raw-secret-marker');
     expect(alert).not.toHaveTextContent('ssh_negotiation');
+  });
+
+  it('guides the operator to re-inspect a changed host key', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.testCandidateConnection).mockRejectedValue(
+      new ApiError('The SSH host key changed.', {
+        status: 409,
+        code: 'device_host_key_changed',
+      }),
+    );
+    render(
+      <DeviceForm
+        credentials={[credential]}
+        onSubmit={vi.fn(() => Promise.resolve())}
+        onCancel={vi.fn()}
+        onCreateCredential={vi.fn()}
+      />,
+    );
+    await completeForm(user);
+    await inspectAndConfirm(user);
+    await user.click(screen.getByRole('button', { name: 'Test connection' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'The SSH host key changed. Inspect and verify again.',
+    );
+    expect(screen.queryByText('SHA256:fixture')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Inspect SSH host key' })).toBeEnabled();
   });
 
   it('shows an unreachable result and never unlocks save', async () => {
@@ -313,6 +386,7 @@ describe('DeviceForm explicit connection safety gate', () => {
       />,
     );
     await completeForm(user);
+    await inspectAndConfirm(user);
     await user.click(screen.getByRole('button', { name: 'Test connection' }));
 
     expect(await screen.findByText('Device is unreachable')).toBeVisible();

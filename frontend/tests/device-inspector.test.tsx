@@ -257,6 +257,31 @@ describe('DeviceInspector API contract and safety states', () => {
     expect(screen.getByRole('button', { name: 'Download sanitized output' })).toBeVisible();
   });
 
+  it('announces a failed diagnostic with an error icon', async () => {
+    const user = userEvent.setup();
+    const ciscoDevice: Device = {
+      ...device,
+      vendor: 'cisco_iosxe',
+      capabilities: [{ name: 'routing', supported: true, safety_level: 'D' }],
+    };
+    vi.mocked(api.runDiagnostic).mockResolvedValue(queuedDiagnostic);
+    vi.mocked(api.job).mockResolvedValue({
+      ...queuedDiagnostic,
+      state: 'failed',
+      error_code: 'device_command_rejected',
+      error_message: 'The device rejected a read-only command.',
+    });
+    renderInspector(ciscoDevice);
+
+    await user.click(screen.getByRole('button', { name: 'Diagnostics' }));
+    await user.click(screen.getByRole('button', { name: 'Run read-only diagnostic' }));
+
+    const bannerText = await screen.findByText(/Running allowlisted diagnostic.*failed/i);
+    const banner = bannerText.closest('[role="alert"]');
+    expect(banner).not.toBeNull();
+    expect(banner?.querySelector('.lucide-circle-x')).not.toBeNull();
+  });
+
   it('fails closed when the driver has no diagnostic capability', async () => {
     const user = userEvent.setup();
     renderInspector();

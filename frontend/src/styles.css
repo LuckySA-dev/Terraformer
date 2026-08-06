@@ -698,6 +698,30 @@ p {
   gap: 1px;
 }
 
+.host-key-candidate {
+  display: grid;
+  gap: 8px;
+  padding: 11px 12px;
+  color: var(--ink);
+  background: var(--teal-soft);
+  border: 1px solid color-mix(in srgb, var(--teal) 28%, var(--border));
+  border-radius: 8px;
+  font-size: 10px;
+}
+
+.host-key-candidate > span {
+  overflow-wrap: anywhere;
+  font-family: "DM Mono", monospace;
+}
+
+.host-key-candidate label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
 .connection-test__result--success,
 .mini-result--success {
   color: var(--green);
@@ -2129,6 +2153,18 @@ p {
   border-radius: 11px;
   background: #fff;
   box-shadow: 0 8px 24px rgb(29 51 45 / 5%);
+}
+
+.topology-stale-alert {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  color: var(--amber);
+  background: var(--amber-soft);
+  border-bottom: 1px solid var(--border);
+  font-size: 10px;
 }
 
 .topology-toolbar {

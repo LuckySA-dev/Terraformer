@@ -153,11 +153,14 @@ export function TopologyPage() {
       refetchInterval: refreshInterval,
     })),
   });
-  const neighborError = neighborQueries.find((query) => query.isError);
+  const neighborError = neighborQueries.find((query) => query.isError && query.data === undefined);
+  const staleError =
+    (devices.isError && devices.data !== undefined) ||
+    neighborQueries.some((query) => query.isError && query.data !== undefined);
   const pending = devices.isPending || neighborQueries.some((query) => query.isPending);
   const refreshing = devices.isFetching || neighborQueries.some((query) => query.isFetching);
 
-  if (devices.isError) {
+  if (devices.isError && devices.data === undefined) {
     return <QueryErrorState error={devices.error} onRetry={() => void devices.refetch()} />;
   }
   if (neighborError !== undefined) {
@@ -212,6 +215,20 @@ export function TopologyPage() {
         <Badge tone="success">NO DEVICE WRITES</Badge>
       </header>
       <section className="topology-panel" aria-labelledby="topology-heading">
+        {staleError ? (
+          <div className="topology-stale-alert" role="alert">
+            <span>Refresh failed. Showing last observed topology.</span>
+            <Button
+              size="small"
+              onClick={() => {
+                void devices.refetch();
+                void Promise.all(neighborQueries.map((query) => query.refetch()));
+              }}
+            >
+              Retry
+            </Button>
+          </div>
+        ) : null}
         <div className="topology-toolbar">
           <div>
             <h2 id="topology-heading">Observed graph</h2>

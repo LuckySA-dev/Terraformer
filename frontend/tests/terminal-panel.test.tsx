@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { readFileSync } from 'node:fs';
 import userEvent from '@testing-library/user-event';
 import { TerminalPanel } from '../src/features/inventory/TerminalPanel';
+import { SshWebSocketTransport } from '../src/features/terminal/SshWebSocketTransport';
 import { TerminalSession } from '../src/features/terminal/TerminalSession';
 import type {
   TerminalTransport,
@@ -151,6 +152,9 @@ describe('Direct Mode terminal', () => {
     if (socket === undefined) throw new Error('Terminal WebSocket was not created.');
     socket.readyState = FakeWebSocket.OPEN;
     socket.onopen?.();
+    act(() => socket.onmessage?.({
+      data: JSON.stringify({ type: 'status', status: 'connected' }),
+    }));
     const commandMarker = 'PRIVATE_COMMAND_7F3A';
     act(() => terminalMocks.instances[0]?.emitInput(`${commandMarker}\r\nreload`));
 
@@ -185,6 +189,9 @@ describe('Direct Mode terminal', () => {
     if (socket === undefined) throw new Error('Expected an SSH WebSocket.');
     socket.readyState = FakeWebSocket.OPEN;
     socket.onopen?.();
+    act(() => socket.onmessage?.({
+      data: JSON.stringify({ type: 'status', status: 'connected' }),
+    }));
     terminalMocks.instances[0]?.emitInput('show version');
 
     expect(socket.sent).toEqual([
@@ -357,6 +364,10 @@ describe('Direct Mode terminal', () => {
     expect(styles).toContain(`.terminal-session__canvas {
   height: clamp(360px, 55vh, 620px);`);
     expect(styles).toContain(`@media (max-width: 1020px) {
+  .workspace-layout:has(> .inspector--terminal) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .inspector--terminal {
     width: min(680px, calc(100vw - 74px));
   }
@@ -372,6 +383,9 @@ describe('Direct Mode terminal', () => {
     const firstSocket = FakeWebSocket.instances[0];
     if (firstSocket === undefined) throw new Error('Expected an SSH WebSocket.');
     firstSocket.readyState = FakeWebSocket.OPEN;
+    act(() => firstSocket.onmessage?.({
+      data: JSON.stringify({ type: 'status', status: 'connected' }),
+    }));
     act(() => terminalMocks.instances[0]?.emitInput('show version\nreload'));
     expect(screen.getByRole('button', { name: 'Send 2 lines' })).toBeVisible();
 
@@ -389,6 +403,9 @@ describe('Direct Mode terminal', () => {
     await user.click(screen.getByRole('button', { name: /open Direct Mode/ }));
     const socket = FakeWebSocket.instances[0];
     if (socket === undefined) throw new Error('Expected an SSH WebSocket.');
+    act(() => socket.onmessage?.({
+      data: JSON.stringify({ type: 'status', status: 'connected' }),
+    }));
     act(() => terminalMocks.instances[0]?.emitInput('show version\nreload'));
     expect(screen.getByRole('button', { name: 'Send 2 lines' })).toBeVisible();
 
@@ -504,6 +521,9 @@ describe('Direct Mode terminal', () => {
     await user.click(screen.getByRole('button', { name: /open Direct Mode/ }));
     const firstSocket = FakeWebSocket.instances[0];
     if (firstSocket === undefined) throw new Error('Expected an SSH WebSocket.');
+    act(() => firstSocket.onmessage?.({
+      data: JSON.stringify({ type: 'status', status: 'connected' }),
+    }));
     act(() => terminalMocks.instances[0]?.emitInput('show version\nreload'));
     expect(screen.getByRole('button', { name: 'Send 2 lines' })).toBeVisible();
     act(() => firstSocket.onmessage?.({ data: JSON.stringify({
@@ -543,6 +563,36 @@ describe('Direct Mode terminal', () => {
     expect(screen.getByText('Verify the selected credential profile and device login policy.'))
       .toBeVisible();
     expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /open Direct Mode/ })).not.toBeInTheDocument();
+  });
+
+  it('does not accept SSH input until the server reports connected', async () => {
+    render(<TerminalPanel deviceId="2ad0db14-5a87-4147-a4e7-c98f88322464" />);
+    await userEvent.click(screen.getByRole('button', { name: /open Direct Mode/ }));
+    const socket = FakeWebSocket.instances[0];
+    if (socket === undefined) throw new Error('Expected an SSH WebSocket.');
+    socket.readyState = FakeWebSocket.OPEN;
+    socket.onopen?.();
+
+    act(() => terminalMocks.instances[0]?.emitInput('show version'));
+    expect(socket.sent).toEqual([
+      JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: false }),
+    ]);
+
+    act(() => socket.onmessage?.({
+      data: JSON.stringify({ type: 'status', status: 'connected' }),
+    }));
+    act(() => terminalMocks.instances[0]?.emitInput('show version'));
+    expect(socket.sent.at(-1)).toBe(JSON.stringify({ type: 'input', data: 'show version' }));
+  });
+
+  it('rejects direct SSH transport writes while the socket is not open', async () => {
+    const transport = new SshWebSocketTransport('2ad0db14-5a87-4147-a4e7-c98f88322464');
+
+    await expect(transport.write('show version')).rejects.toMatchObject({
+      code: 'terminal_transport_not_connected',
+      message: 'Terminal is not connected.',
+    });
   });
 
   it('requires fresh Group1 acknowledgment before Retry opens a new session', async () => {

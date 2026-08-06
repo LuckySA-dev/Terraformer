@@ -88,6 +88,7 @@ export function TerminalSession({
   const activeRef = useRef(active);
   const [accepted, setAccepted] = useState(false);
   const [authorized, setAuthorized] = useState(false);
+  const [reopenBlocked, setReopenBlocked] = useState(false);
   const [status, setStatus] = useState<'idle' | 'connecting' | 'connected'>('idle');
   const [error, setError] = useState<TerminalFailure>();
   const [pendingPaste, setPendingPaste] = useState<{
@@ -112,6 +113,9 @@ export function TerminalSession({
     shutdownPromise.current = (async () => {
       acceptingInput.current = false;
       setPendingPaste(undefined);
+      const blockReopen = transportRef.current?.kind === 'ssh'
+        && shutdownError !== undefined
+        && !shutdownError.retryable;
       const deadlineAt = Date.now() + TERMINAL_CLEANUP_TIMEOUT_MS;
       try {
         await withCleanupTimeout(
@@ -139,6 +143,7 @@ export function TerminalSession({
         if (!disposed) {
           setStatus('idle');
           setError(shutdownError);
+          setReopenBlocked(blockReopen);
           setAccepted(false);
           setAuthorized(false);
           onReset?.();
@@ -200,6 +205,7 @@ export function TerminalSession({
       event.type === 'status'
       && (event.status === 'connecting' || event.status === 'connected')
     ) {
+      acceptingInput.current = event.status === 'connected';
       setStatus(event.status);
     } else if (event.type === 'error') {
       token.disposed = true;
@@ -222,6 +228,7 @@ export function TerminalSession({
     setAuthorized(false);
     shutdownPromise.current = null;
     setError(undefined);
+    setReopenBlocked(false);
     setPendingPaste(undefined);
     setAccepted(true);
     setStatus('connecting');
@@ -248,7 +255,7 @@ export function TerminalSession({
       nextTerminal.loadAddon(nextFitAddon);
       nextTerminal.open(container.current);
       nextFitAddon.fit();
-      acceptingInput.current = true;
+      acceptingInput.current = false;
 
       inputSubscription.current = nextTerminal.onData((input) => {
         if (!activeRef.current || !acceptingInput.current || token.disposed) return;
@@ -324,7 +331,7 @@ export function TerminalSession({
 
   return (
     <div className="terminal-session">
-      {!accepted ? (
+      {!accepted && !reopenBlocked ? (
         <div className="terminal-consent">
           <InlineNotice tone="warning" title={warningTitle}>{warningBody}</InlineNotice>
           {configuration}

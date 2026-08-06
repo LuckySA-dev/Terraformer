@@ -2467,6 +2467,10 @@ p {
 }
 
 @media (max-width: 1020px) {
+  .workspace-layout:has(> .inspector--terminal) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .inspector--terminal {
     width: min(680px, calc(100vw - 74px));
   }

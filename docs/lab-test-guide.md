@@ -44,6 +44,30 @@ attach or link prohibited content as evidence. Until an explicitly authorized
 session is completed and this metadata-only record is added, retain the status
 **Automated verification passed; hardware validation pending.**
 
+## SSH terminal hardware-validation gate
+
+Device SSH terminal validation requires separate operator approval for one exact
+authorized target and test window. The operator must acknowledge that Direct Mode
+commands can change, restart, or erase the device, and must confirm working
+console/OOB access plus a documented recovery owner and procedure before connecting.
+
+Mandatory host-key verification is required for this validation. Pre-enroll and
+verify the authorized target's host key through the established lab process; never
+automatically trust, replace, or ignore an unknown or changed key. Stop immediately
+on a host-key mismatch, unexpected prompt or privilege, target mismatch, repeated
+authentication failure, timeout, connection instability, or unexpected device
+behavior. Do not retry in another compatibility mode unless that mode and attempt
+were separately approved for the same window.
+
+The authorized record uses only the existing metadata-only evidence schema above:
+date, approver, browser/version, adapter or transport type, device category,
+application commit, requested compatibility mode, non-command validation-step
+descriptions, and pass/fail outcome. The same prohibitions apply: no addresses,
+hostnames, serial numbers, credentials, commands, terminal output, configuration,
+screenshots, raw errors, recordings, identifiers, or session content. No SSH terminal
+hardware result is recorded; status remains **Automated verification passed; hardware
+validation pending.**
+
 ## Required harness contract
 
 The `lab` test suite requires all of the following before it opens a socket:

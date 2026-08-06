@@ -389,6 +389,69 @@ def test_device_test_create_and_registered_paths_default_to_modern_and_retest(
     assert fake_connection_gate.released == fake_connection_gate.acquired
 
 
+@pytest.mark.parametrize("endpoint", ["/api/devices", "/api/devices/connection-test"])
+def test_non_cisco_connection_requests_reject_cisco_legacy_modes(
+    authenticated_client: TestClient,
+    credential_profile: dict[str, object],
+    transport_factory,
+    endpoint: str,
+) -> None:
+    payload = _device_payload(str(credential_profile["id"]))
+    payload.update({"vendor": "generic", "ssh_compatibility": "cisco_legacy"})
+    if endpoint.endswith("connection-test"):
+        payload.pop("name")
+    call_count = len(transport_factory.parameters)
+
+    response = authenticated_client.post(endpoint, json=payload)
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "unsupported_capability"
+    assert "Cisco legacy SSH compatibility is only available" in response.text
+    assert len(transport_factory.parameters) == call_count
+
+
+def test_generic_modern_connection_test_remains_allowed(
+    authenticated_client: TestClient,
+    credential_profile: dict[str, object],
+) -> None:
+    payload = _device_payload(str(credential_profile["id"]))
+    payload.update({"vendor": "generic", "ssh_compatibility": "modern"})
+    payload.pop("name")
+
+    response = authenticated_client.post("/api/devices/connection-test", json=payload)
+
+    assert response.status_code == 200, response.text
+
+
+def test_update_rejects_legacy_mode_combined_with_existing_non_cisco_vendor(
+    authenticated_client: TestClient,
+    credential_profile: dict[str, object],
+    container: ApplicationContainer,
+    transport_factory,
+) -> None:
+    payload = _device_payload(str(credential_profile["id"]))
+    payload["vendor"] = "generic"
+    created = authenticated_client.post("/api/devices", json=payload).json()
+    container.settings.ssh_legacy_enabled = True
+    call_count = len(transport_factory.parameters)
+
+    response = authenticated_client.patch(
+        f"/api/devices/{created['id']}",
+        json={"ssh_compatibility": "cisco_legacy"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "unsupported_capability"
+    assert "Cisco legacy SSH compatibility is only available" in response.text
+    assert len(transport_factory.parameters) == call_count
+    stored = authenticated_client.get(f"/api/devices/{created['id']}").json()
+    assert (stored["vendor"], stored["ssh_compatibility"], stored["status"]) == (
+        "generic",
+        "modern",
+        "reachable",
+    )
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
@@ -491,7 +554,7 @@ def test_connection_edit_commits_only_the_exact_tuple_that_was_tested(
     requested_tuple = (
         "192.0.2.77",
         2222,
-        "generic",
+        "cisco_iosxe",
         replacement["id"],
         "cisco_legacy",
     )

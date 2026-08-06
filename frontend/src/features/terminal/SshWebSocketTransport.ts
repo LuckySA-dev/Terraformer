@@ -1,4 +1,8 @@
-import type { TerminalTransport, TerminalTransportListener } from './transport';
+import {
+  TerminalTransportError,
+  type TerminalTransport,
+  type TerminalTransportListener,
+} from './transport';
 
 export class SshWebSocketTransport implements TerminalTransport {
   readonly kind = 'ssh' as const;
@@ -83,9 +87,13 @@ export class SshWebSocketTransport implements TerminalTransport {
   }
 
   write(data: string): Promise<void> {
-    if (this.socket?.readyState === WebSocket.OPEN) {
-      this.socket.send(JSON.stringify({ type: 'input', data }));
+    if (this.socket?.readyState !== WebSocket.OPEN) {
+      return Promise.reject(new TerminalTransportError(
+        'terminal_transport_not_connected',
+        'Terminal is not connected.',
+      ));
     }
+    this.socket.send(JSON.stringify({ type: 'input', data }));
     return Promise.resolve();
   }
 

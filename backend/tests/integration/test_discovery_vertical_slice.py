@@ -163,3 +163,50 @@ def test_discovery_candidate_cannot_select_or_escalate_compatibility(
     assert approved.status_code == 201, approved.text
     assert approved.json()["ssh_compatibility"] == "modern"
     assert transport_factory.parameters[-1].ssh_compatibility.value == "modern"
+
+
+def test_discovery_approval_rejects_non_cisco_legacy_mode_before_connection(
+    authenticated_client: TestClient,
+    credential_profile: dict[str, object],
+    container: ApplicationContainer,
+    transport_factory,
+    monkeypatch,
+) -> None:
+    queued = authenticated_client.post(
+        "/api/discovery-jobs",
+        json={"cidr": "192.0.2.0/30"},
+    )
+    job_id = queued.json()["id"]
+    monkeypatch.setattr(tasks, "get_default_container", lambda: container)
+    monkeypatch.setattr(
+        tasks,
+        "run_discovery",
+        lambda _request, *, connection_limit: {
+            "cidr": "192.0.2.0/30",
+            "ports": [22],
+            "scanned_count": 2,
+            "concurrency": min(2, connection_limit),
+            "candidates": [{"management_address": "192.0.2.1", "port": 22}],
+            "open_endpoints": [],
+        },
+    )
+    tasks.execute_job(job_id)
+    call_count = len(transport_factory.parameters)
+
+    response = authenticated_client.post(
+        f"/api/discovery-jobs/{job_id}/approve",
+        json={
+            "name": "invalid-legacy-candidate",
+            "management_address": "192.0.2.1",
+            "port": 22,
+            "vendor": "generic",
+            "credential_profile_id": credential_profile["id"],
+            "ssh_compatibility": "cisco_legacy_group1",
+            "group1_risk_acknowledged": True,
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "unsupported_capability"
+    assert "Cisco legacy SSH compatibility is only available" in response.text
+    assert len(transport_factory.parameters) == call_count

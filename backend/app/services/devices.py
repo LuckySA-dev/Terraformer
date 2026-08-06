@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
-from app.core.errors import AppError, ConfigurationError, ConflictError
+from app.core.errors import AppError, ConfigurationError, ConflictError, UnsupportedCapabilityError
 from app.core.logging import sanitize_text
 from app.core.time import utc_now
 from app.drivers import (
@@ -29,6 +29,7 @@ from app.models import (
     Interface,
     Neighbor,
     SSHCompatibility,
+    Vendor,
 )
 from app.repositories.credentials import CredentialProfileRepository
 from app.repositories.devices import DeviceRepository
@@ -195,6 +196,13 @@ class DeviceService:
         device_id: UUID | None = None,
         _commit: bool = True,
     ) -> ConnectionTestResult:
+        if (
+            request.ssh_compatibility is not SSHCompatibility.MODERN
+            and request.vendor is not Vendor.CISCO_IOSXE
+        ):
+            raise UnsupportedCapabilityError(
+                "Cisco legacy SSH compatibility is only available for Cisco IOS/IOS-XE devices"
+            )
         with self.admitted_connection(
             device_id=device_id,
             host=request.management_address,

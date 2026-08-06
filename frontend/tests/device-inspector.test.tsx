@@ -119,6 +119,22 @@ describe('DeviceInspector API contract and safety states', () => {
     expect(screen.getByRole('button', { name: /open Direct Mode/ })).toBeDisabled();
   });
 
+  it('expands only the active terminal inspector', async () => {
+    const user = userEvent.setup();
+    renderInspector();
+
+    const inspector = screen.getByRole('complementary', { name: /Generic edge inspector/ });
+    expect(inspector).toHaveClass('inspector');
+    expect(inspector).not.toHaveClass('inspector--terminal');
+
+    await user.click(screen.getByRole('button', { name: 'Terminal' }));
+    expect(inspector).toHaveClass('inspector', 'inspector--terminal');
+
+    await user.click(screen.getByRole('button', { name: 'Overview' }));
+    expect(inspector).toHaveClass('inspector');
+    expect(inspector).not.toHaveClass('inspector--terminal');
+  });
+
   it('uses admin_up and oper_up interface fields', async () => {
     const user = userEvent.setup();
     vi.mocked(api.interfaces).mockResolvedValue([

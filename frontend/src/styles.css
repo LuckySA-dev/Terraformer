@@ -1165,6 +1165,10 @@ p {
   grid-template-columns: minmax(620px, 1fr) 374px;
 }
 
+.workspace-layout:has(> .inspector--terminal) {
+  grid-template-columns: minmax(0, 1fr) min(680px, 48vw);
+}
+
 .workspace-main,
 .activity-page {
   min-width: 0;
@@ -1546,7 +1550,7 @@ p {
 
 .inspector-tabs {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   padding: 0 6px;
   border-bottom: 1px solid var(--border);
 }
@@ -1919,7 +1923,7 @@ p {
 }
 
 .terminal-session__canvas {
-  height: 310px;
+  height: clamp(360px, 55vh, 620px);
   padding: 8px;
 }
 
@@ -2459,6 +2463,12 @@ p {
 
   .inspector--empty {
     display: none;
+  }
+}
+
+@media (max-width: 1020px) {
+  .inspector--terminal {
+    width: min(680px, calc(100vw - 74px));
   }
 }
 

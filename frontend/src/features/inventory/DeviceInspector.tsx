@@ -572,7 +572,7 @@ export function DeviceInspector({ device, onClose, onEdit, onDelete }: DeviceIns
     activeJob !== undefined && (job.data === undefined || !finalJobStates.has(job.data.state));
 
   return (
-    <aside className="inspector" aria-label={`${device.name} inspector`}>
+    <aside className={tab === 'terminal' ? 'inspector inspector--terminal' : 'inspector'} aria-label={`${device.name} inspector`}>
       <header className="inspector__header">
         <div className="device-avatar" aria-hidden="true">
           <Router size={21} />

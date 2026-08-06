@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
+import { readFileSync } from 'node:fs';
 import userEvent from '@testing-library/user-event';
 import { TerminalPanel } from '../src/features/inventory/TerminalPanel';
 import { TerminalSession } from '../src/features/terminal/TerminalSession';
@@ -329,6 +330,37 @@ describe('Direct Mode terminal', () => {
 
     expect(screen.getAllByRole('tab')).toHaveLength(3);
     expect(add).toBeDisabled();
+  });
+
+  it('exposes selected terminal tabs and close labels', async () => {
+    const user = userEvent.setup();
+    render(<TerminalPanel deviceId="2ad0db14-5a87-4147-a4e7-c98f88322464" />);
+
+    const first = screen.getByRole('tab', { name: 'Terminal 1' });
+    expect(first).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('button', { name: 'Close terminal 1' })).toBeVisible();
+
+    await user.click(screen.getByRole('button', { name: 'New terminal' }));
+    expect(first).toHaveAttribute('aria-selected', 'false');
+    expect(screen.getByRole('tab', { name: 'Terminal 2' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('button', { name: 'Close terminal 2' })).toBeVisible();
+  });
+
+  it('uses the terminal workspace layout without horizontal page overflow', () => {
+    const styles = readFileSync('src/styles.css', 'utf8');
+
+    expect(styles).toContain(`.workspace-layout:has(> .inspector--terminal) {
+  grid-template-columns: minmax(0, 1fr) min(680px, 48vw);
+}`);
+    expect(styles).toContain(`.terminal-session__canvas {
+  height: clamp(360px, 55vh, 620px);`);
+    expect(styles).toContain(`@media (max-width: 1020px) {
+  .inspector--terminal {
+    width: min(680px, calc(100vw - 74px));
+  }
+}`);
+    expect(styles).toContain('grid-template-columns: repeat(7, minmax(0, 1fr));');
+    expect(styles).toContain('.terminal-tabs {\n  display: flex;\n  align-items: center;\n  gap: 5px;\n  overflow-x: auto;');
   });
 
   it('clears pending input when switching tabs without closing either transport', async () => {

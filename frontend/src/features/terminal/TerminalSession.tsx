@@ -218,6 +218,8 @@ export function TerminalSession({
 
   const open = () => {
     if (openDisabled || (requireAuthorization && !authorized) || container.current === null) return;
+    const authorizationAcknowledged = authorized;
+    setAuthorized(false);
     shutdownPromise.current = null;
     setError(undefined);
     setPendingPaste(undefined);
@@ -227,7 +229,7 @@ export function TerminalSession({
     sessionToken.current = token;
 
     try {
-      const transport = createTransport(authorized);
+      const transport = createTransport(authorizationAcknowledged);
       transportRef.current = transport;
       const nextTerminal = new Terminal({
         allowProposedApi: false,
@@ -313,16 +315,6 @@ export function TerminalSession({
     void shutdown();
   };
 
-  const retry = () => {
-    if (requireAuthorization) {
-      setError(undefined);
-      setAccepted(false);
-      setAuthorized(false);
-      return;
-    }
-    open();
-  };
-
   const confirmPaste = () => {
     const pending = pendingPaste;
     const token = sessionToken.current;
@@ -385,7 +377,15 @@ export function TerminalSession({
         <div className="form-error" role="alert">
           <span>{error.message}</span>
           {error.recommendedAction === undefined ? null : <span>{error.recommendedAction}</span>}
-          {error.retryable ? <Button size="small" onClick={retry}>Retry</Button> : null}
+          {error.retryable ? (
+            <Button
+              size="small"
+              disabled={openDisabled || (requireAuthorization && !authorized)}
+              onClick={open}
+            >
+              Retry
+            </Button>
+          ) : null}
         </div>
       )}
       <p className="terminal-note">{note}</p>

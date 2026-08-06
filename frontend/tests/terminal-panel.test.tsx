@@ -511,7 +511,7 @@ describe('Direct Mode terminal', () => {
     expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
   });
 
-  it('clears Group1 acknowledgment before a retry can open a fresh session', async () => {
+  it('requires fresh Group1 acknowledgment before Retry opens a new session', async () => {
     const user = userEvent.setup();
     render(
       <TerminalPanel
@@ -521,9 +521,11 @@ describe('Direct Mode terminal', () => {
     );
     await user.click(screen.getByRole('checkbox', { name: /Group1.*last-resort/ }));
     await user.click(screen.getByRole('button', { name: /open Direct Mode/ }));
-    const socket = FakeWebSocket.instances[0];
-    if (socket === undefined) throw new Error('Expected an SSH WebSocket.');
-    act(() => socket.onmessage?.({ data: JSON.stringify({
+    const firstSocket = FakeWebSocket.instances[0];
+    if (firstSocket === undefined) throw new Error('Expected an SSH WebSocket.');
+    firstSocket.readyState = FakeWebSocket.OPEN;
+    firstSocket.onopen?.();
+    act(() => firstSocket.onmessage?.({ data: JSON.stringify({
       type: 'error',
       code: 'device_connection_timeout',
       message: 'The device connection timed out.',
@@ -531,12 +533,29 @@ describe('Direct Mode terminal', () => {
       retryable: true,
     }) }));
 
-    await user.click(await screen.findByRole('button', { name: 'Retry' }));
-
+    const retry = await screen.findByRole('button', { name: 'Retry' });
     const acknowledgement = screen.getByRole('checkbox', { name: /Group1.*last-resort/ });
     expect(acknowledgement).not.toBeChecked();
-    expect(screen.getByRole('button', { name: /open Direct Mode/ })).toBeDisabled();
+    expect(retry).toBeDisabled();
     expect(FakeWebSocket.instances).toHaveLength(1);
+    expect(terminalMocks.instances).toHaveLength(1);
+
+    await user.click(acknowledgement);
+    await user.click(retry);
+
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    expect(terminalMocks.instances).toHaveLength(2);
+    const secondSocket = FakeWebSocket.instances[1];
+    if (secondSocket === undefined) throw new Error('Expected a fresh SSH WebSocket.');
+    expect(secondSocket).not.toBe(firstSocket);
+    secondSocket.readyState = FakeWebSocket.OPEN;
+    secondSocket.onopen?.();
+    expect(firstSocket.sent).toEqual([
+      JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: true }),
+    ]);
+    expect(secondSocket.sent).toEqual([
+      JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: true }),
+    ]);
   });
 
   it('resets after pagehide and reopens with fresh session objects', async () => {

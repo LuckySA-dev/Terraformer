@@ -11,13 +11,9 @@ Task 3: complete (commits 55d8771, 8226e8f; two review passes; final review appr
 Task 4: complete (commits 1015142, 07a6fed; two review passes; final review approved with no Critical or Important findings).
 Task 5: complete (commits 0b289c9, 98c602b; two review passes; final review approved with no Critical or Important findings).
 Task 6: complete (commits e355f89, c19ec63; two review passes; final review approved with no Critical or Important findings).
-
-Task 7 implementation: complete (commits ea43a5a, 3c30009; review round 2 pending).
-- Review round 2 reproduced the Group1 retry defect: Retry remained enabled without a fresh acknowledgment and returned only to consent instead of opening a fresh session.
-- RED: `tests/terminal-panel.test.tsx` failed 1/27 on the unchecked Retry authorization gate.
-- GREEN: Retry now uses the normal `open()` path, consumes a fresh per-attempt acknowledgment, and creates distinct WebSocket/xterm objects; the acknowledgment appears only in each socket's initial Direct Mode frame.
-- Shared/USB regression gate: 81/81 passed; USB serving/style gate: 3/3 passed.
-- Full frontend verification: typecheck, lint, 12 test files / 121 tests, and production build passed.
+Task 7: complete (commits ea43a5a, 3c30009, d2c2350; three review passes; final review approved with no Critical or Important findings).
+Task 8: complete (commits 51cd413, 59d76ef; two review passes; final review approved with no Critical or Important findings).
+Task 9: complete (commits bade19b, 933245d; two review passes; final review approved with no Critical or Important findings). GitNexus MCP was unavailable; the repository-supported existing-index CLI compare-main check exited 0 and the limitation is recorded in the report.
 
 Pending minor findings:
 - Task 2: `generic_readonly.py` retains a one-line translation middle-man; defer unless a later task naturally removes it.

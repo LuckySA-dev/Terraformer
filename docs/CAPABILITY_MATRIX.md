@@ -20,6 +20,7 @@ can promote a capability to **Lab verified**.
 | Capability | Cisco IOS/IOS-XE | Juniper Junos | Generic/unknown |
 |---|---|---|---|
 | Explicit SSH connection test | Implemented, lab unverified | Not Implemented | Implemented, lab unverified |
+| Exact-device SSH host-key pinning | Implemented, lab unverified | Not Implemented | Implemented, lab unverified |
 | Platform identity/facts | Implemented, lab unverified | Not Implemented | Not Implemented |
 | Interface inventory/state | Implemented, lab unverified | Not Implemented | Not Implemented |
 | Running-config snapshot | Implemented, lab unverified | Not Implemented | Not Implemented |
@@ -44,6 +45,11 @@ the resulting device and audit linkage are committed together.
 The shared backend runtime includes the OpenSSH client required by the explicit
 Scrapli system transport; this packaging evidence does not replace authorized
 real-device validation, so SSH capabilities remain lab-unverified.
+Every registered SSH path requires one exact device pin. First contact collects
+only the public host key, returns algorithm and fingerprint to the UI, and does
+not authenticate or run a command. Unknown, expired, mismatched, or changed
+trust fails closed and requires explicit re-inspection; global SSH trust and
+automatic legacy fallback are not used.
 Both Scrapli adapters apply the same request-scoped password-only OpenSSH policy.
 Synthetic catalog and unit tests cover connection timeout/refusal/loss, name
 resolution, host-key unknown/changed, negotiation, authentication, PTY, and

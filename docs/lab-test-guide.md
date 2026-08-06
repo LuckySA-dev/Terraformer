@@ -92,6 +92,34 @@ batch. Connection testing and the running-config read use separate sessions.
 Rejected optional CDP/LLDP commands produce no neighbor observations; a rejected
 required facts/interface/config command fails the test with a typed error.
 
+## Phase 1-2 virtual acceptance gate
+
+Status: **Pending**. Do not run this sequence without separate authorization for
+at least two exact virtual Cisco nodes and the test window. Record the application
+commit and metadata-only pass/fail result; never record node addresses, names,
+credentials, commands, output, configuration, screenshots, or raw errors.
+
+1. Manually add each authorized node and inspect its SSH host key.
+2. Verify each displayed fingerprint out of band, confirm it, and complete the
+   read-only connection test.
+3. Refresh saved facts, interfaces, and CDP/LLDP observations.
+4. Confirm the topology projects the saved link without creating inventory and
+   keeps the last-good graph with stale guidance after an induced API test failure.
+5. Validate the warning-gated terminal open, disconnect, retry, and tab lifecycle
+   without retaining session content.
+6. Run only the allowlisted read-only diagnostic selected in the authorization.
+7. Record date, approver, browser/version, virtual transport type, device
+   categories, application commit, requested compatibility modes, non-command
+   validation-step descriptions, and pass/fail only.
+
+## Phase 1-2 physical acceptance gate
+
+Status: **Pending**. One exact authorized Cisco device may validate manual add,
+host-key pinning, structured reads, immutable snapshot capture, terminal
+lifecycle, and an allowlisted diagnostic. One device cannot prove a physical
+CDP/LLDP link. Use the same stop conditions and metadata-only restrictions in
+this guide; do not infer topology support from a single-device pass.
+
 Run only after completing the checklist below:
 
 ```powershell

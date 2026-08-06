@@ -70,6 +70,7 @@ export const api = {
     credential_profile_id,
     ssh_compatibility,
     group1_risk_acknowledged,
+    very_old_risk_acknowledged,
     host_key_candidate_id,
   }: DeviceInput) =>
     apiRequest<ConnectionTestResult>('/devices/connection-test', {
@@ -81,6 +82,7 @@ export const api = {
         credential_profile_id,
         ssh_compatibility,
         group1_risk_acknowledged,
+        very_old_risk_acknowledged,
         host_key_candidate_id,
       }),
     }),
@@ -91,6 +93,7 @@ export const api = {
     credential_profile_id,
     ssh_compatibility,
     group1_risk_acknowledged,
+    very_old_risk_acknowledged,
   }: DeviceInput) =>
     apiRequest<HostKeyCandidate>('/ssh-host-key-candidates', {
       method: 'POST',
@@ -101,6 +104,7 @@ export const api = {
         credential_profile_id,
         ssh_compatibility,
         group1_risk_acknowledged,
+        very_old_risk_acknowledged,
       }),
     }),
   testDeviceConnection: (id: string) =>

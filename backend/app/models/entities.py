@@ -30,6 +30,7 @@ from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 class Vendor(StrEnum):
     CISCO_IOSXE = "cisco_iosxe"
+    FORTINET_FORTIOS = "fortinet_fortios"
     GENERIC = "generic"
 
 
@@ -43,6 +44,7 @@ class SSHCompatibility(StrEnum):
     MODERN = "modern"
     CISCO_LEGACY = "cisco_legacy"
     CISCO_LEGACY_GROUP1 = "cisco_legacy_group1"
+    VERY_OLD_SSH = "very_old_ssh"
 
 
 class SafetyLevel(StrEnum):
@@ -126,7 +128,7 @@ class Device(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             SSHCompatibility,
             name="ssh_compatibility",
             native_enum=False,
-            create_constraint=True,
+            create_constraint=False,
             values_callable=_enum_values,
             validate_strings=True,
         ),

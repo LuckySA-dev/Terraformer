@@ -27,16 +27,24 @@ const deviceSchema = z.object({
     .regex(addressPattern, 'Enter a valid IPv4 address or DNS hostname.')
     .refine((value) => !value.includes('..'), 'Enter a valid IPv4 address or DNS hostname.'),
   port: z.number().int().min(1, 'Port must be between 1 and 65535.').max(65_535),
-  vendor: z.enum(['cisco_iosxe', 'generic']),
+  vendor: z.enum(['cisco_iosxe', 'fortinet_fortios', 'generic']),
   credential_profile_id: z.uuid('Select a credential profile.'),
-  ssh_compatibility: z.enum(['modern', 'cisco_legacy', 'cisco_legacy_group1']),
+  ssh_compatibility: z.enum(['modern', 'cisco_legacy', 'cisco_legacy_group1', 'very_old_ssh']),
   group1_risk_acknowledged: z.boolean(),
+  very_old_risk_acknowledged: z.boolean(),
 }).superRefine((value, context) => {
   if (value.ssh_compatibility === 'cisco_legacy_group1' && !value.group1_risk_acknowledged) {
     context.addIssue({
       code: 'custom',
       path: ['group1_risk_acknowledged'],
       message: 'Acknowledge the Group1 risk before testing this connection.',
+    });
+  }
+  if (value.ssh_compatibility === 'very_old_ssh' && !value.very_old_risk_acknowledged) {
+    context.addIssue({
+      code: 'custom',
+      path: ['very_old_risk_acknowledged'],
+      message: 'Acknowledge the Very Old SSH risk before testing this connection.',
     });
   }
 });
@@ -62,6 +70,7 @@ const fingerprint = (input: DeviceInput): string =>
     credential_profile_id: input.credential_profile_id,
     ssh_compatibility: input.ssh_compatibility,
     group1_risk_acknowledged: input.group1_risk_acknowledged,
+    very_old_risk_acknowledged: input.very_old_risk_acknowledged,
   });
 
 function connectionErrorText(error: unknown): string {
@@ -105,10 +114,11 @@ export function DeviceForm({
       name: device?.name ?? '',
       management_address: device?.management_address ?? initial?.management_address ?? '',
       port: device?.port ?? initial?.port ?? 22,
-      vendor: device?.vendor === 'generic' ? 'generic' : 'cisco_iosxe',
+      vendor: device?.vendor ?? 'cisco_iosxe',
       credential_profile_id: device?.credential_profile_id ?? '',
       ssh_compatibility: device?.ssh_compatibility ?? 'modern',
       group1_risk_acknowledged: false,
+      very_old_risk_acknowledged: false,
     },
   });
   const watchedConnection = useWatch({ control: form.control });
@@ -121,6 +131,7 @@ export function DeviceForm({
     credential_profile_id: values.credential_profile_id,
     ssh_compatibility: values.ssh_compatibility,
     group1_risk_acknowledged: values.group1_risk_acknowledged,
+    very_old_risk_acknowledged: values.very_old_risk_acknowledged,
   });
 
   const currentFingerprint = JSON.stringify({
@@ -130,6 +141,7 @@ export function DeviceForm({
     credential_profile_id: watchedConnection.credential_profile_id ?? '',
     ssh_compatibility: watchedConnection.ssh_compatibility ?? 'modern',
     group1_risk_acknowledged: watchedConnection.group1_risk_acknowledged ?? false,
+    very_old_risk_acknowledged: watchedConnection.very_old_risk_acknowledged ?? false,
   });
 
   const clearConnectionState = () => {
@@ -220,9 +232,21 @@ export function DeviceForm({
         <SelectField
           label="Platform driver"
           error={form.formState.errors.vendor?.message}
-          {...form.register('vendor', { onChange: clearConnectionState })}
+          {...form.register('vendor', {
+            onChange: (e: React.ChangeEvent<HTMLSelectElement>) => {
+              clearConnectionState();
+              if (e.target.value !== 'cisco_iosxe') {
+                const currentMode = form.getValues('ssh_compatibility');
+                if (currentMode === 'cisco_legacy' || currentMode === 'cisco_legacy_group1') {
+                  form.setValue('ssh_compatibility', 'modern', { shouldValidate: true });
+                  form.setValue('group1_risk_acknowledged', false, { shouldValidate: true });
+                }
+              }
+            },
+          })}
         >
           <option value="cisco_iosxe">Cisco IOS / IOS-XE</option>
+          <option value="fortinet_fortios">Fortinet FortiOS (connection test & terminal only)</option>
           <option value="generic">Generic (connection test only)</option>
         </SelectField>
       </div>
@@ -271,12 +295,18 @@ export function DeviceForm({
           onChange: () => {
             clearConnectionState();
             form.setValue('group1_risk_acknowledged', false, { shouldValidate: true });
+            form.setValue('very_old_risk_acknowledged', false, { shouldValidate: true });
           },
         })}
       >
         <option value="modern">Modern</option>
-        <option value="cisco_legacy">Cisco legacy</option>
-        <option value="cisco_legacy_group1">Cisco legacy + Group1</option>
+        {watchedConnection.vendor === 'cisco_iosxe' ? (
+          <>
+            <option value="cisco_legacy">Cisco legacy</option>
+            <option value="cisco_legacy_group1">Cisco legacy + Group1</option>
+          </>
+        ) : null}
+        <option value="very_old_ssh">Very Old SSH (obsolete cryptography)</option>
       </SelectField>
       {watchedConnection.ssh_compatibility === 'cisco_legacy' ? (
         <InlineNotice tone="warning" title="Per-device SSH exception">
@@ -298,6 +328,25 @@ export function DeviceForm({
           {form.formState.errors.group1_risk_acknowledged === undefined ? null : (
             <span className="field__error" role="alert">
               {form.formState.errors.group1_risk_acknowledged.message}
+            </span>
+          )}
+        </>
+      ) : null}
+      {watchedConnection.ssh_compatibility === 'very_old_ssh' ? (
+        <>
+          <InlineNotice tone="warning" title="Last-resort obsolete cryptography exception">
+            Very Old SSH re-enables obsolete algorithms (such as 3DES, DSS, and Group1) as a last-resort per-device exception. It is never an automatic fallback.
+          </InlineNotice>
+          <label className="usb-console-echo">
+            <input
+              type="checkbox"
+              {...form.register('very_old_risk_acknowledged', { onChange: clearConnectionState })}
+            />
+            I accept the Very Old SSH cryptography risk for this device.
+          </label>
+          {form.formState.errors.very_old_risk_acknowledged === undefined ? null : (
+            <span className="field__error" role="alert">
+              {form.formState.errors.very_old_risk_acknowledged.message}
             </span>
           )}
         </>

@@ -29,16 +29,15 @@ and output are never logged or stored. Direct Mode can change a device and has
 no command parser or rollback guarantee; the warning is an operator boundary,
 not a claim that the terminal is read-only.
 
-Cisco legacy SSH compatibility is device-scoped under
-`compatibility_policy_version = 1`. `modern` remains the default and has no
+Legacy and Very Old SSH compatibility is device-scoped under
+`compatibility_policy_version = 2`. `modern` remains the default and has no
 legacy override or automatic fallback. `cisco_legacy` may append only
 `diffie-hellman-group14-sha1`, `diffie-hellman-group-exchange-sha1`, `ssh-rsa`,
 `aes256-cbc`, `aes192-cbc`, `aes128-cbc`, `hmac-sha1`, and `hmac-sha1-96` after
 modern defaults; `cisco_legacy_group1` additionally appends
-`diffie-hellman-group1-sha1` as a last resort. `ssh-dss`, MD5-based algorithms,
-3DES, and RC4 remain disabled. `SSH_LEGACY_ENABLED=false`,
-`SSH_GROUP1_ENABLED=false`, and `SSH_TERMINAL_ENABLED=true` are server-side
-kill switches evaluated before every connection. Compatibility does not change
+`diffie-hellman-group1-sha1` as a last resort. For older lab hardware (such as Cisco 1941 routers, Catalyst 2950 switches, or legacy Fortinet FortiOS devices), `very_old_ssh` additionally appends obsolete cryptographic algorithms including `ssh-dss`, `diffie-hellman-group1-sha1`, `hmac-md5`, `hmac-md5-96`, and `3des-cbc`. SSHv1 and RC4 remain completely forbidden and unsupported.
+`SSH_LEGACY_ENABLED=false`, `SSH_GROUP1_ENABLED=false`, `SSH_VERY_OLD_ENABLED=false`, and `SSH_TERMINAL_ENABLED=true` are server-side
+kill switches evaluated before every connection. Selecting `very_old_ssh` requires all three compatibility kill switches (`SSH_LEGACY_ENABLED`, `SSH_GROUP1_ENABLED`, `SSH_VERY_OLD_ENABLED`) to be enabled simultaneously. Compatibility does not change
 the configured host-key verification policy.
 
 Limits remain server-enforced: five connection tests per normalized

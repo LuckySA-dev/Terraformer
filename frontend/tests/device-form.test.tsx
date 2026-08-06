@@ -143,6 +143,53 @@ describe('DeviceForm explicit connection safety gate', () => {
     expect(api.testCandidateConnection).not.toHaveBeenCalled();
   });
 
+  it('requires a separate unchecked acknowledgment for Very Old SSH', async () => {
+    const user = userEvent.setup();
+    render(
+      <DeviceForm
+        credentials={[credential]}
+        onSubmit={vi.fn(() => Promise.resolve())}
+        onCancel={vi.fn()}
+        onCreateCredential={vi.fn()}
+      />,
+    );
+
+    await completeForm(user);
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'SSH compatibility' }),
+      'very_old_ssh',
+    );
+
+    expect(screen.getByText('Last-resort obsolete cryptography exception')).toBeVisible();
+    expect(screen.getByRole('checkbox', { name: /accept the Very Old SSH/i })).not.toBeChecked();
+    await user.click(screen.getByRole('button', { name: 'Test connection' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/acknowledge the Very Old SSH/i);
+    expect(api.testCandidateConnection).not.toHaveBeenCalled();
+  });
+
+  it('restricts SSH compatibility options when Fortinet driver is selected', async () => {
+    const user = userEvent.setup();
+    render(
+      <DeviceForm
+        credentials={[credential]}
+        onSubmit={vi.fn(() => Promise.resolve())}
+        onCancel={vi.fn()}
+        onCreateCredential={vi.fn()}
+      />,
+    );
+
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Platform driver' }),
+      'fortinet_fortios',
+    );
+
+    const select = screen.getByRole('combobox', { name: 'SSH compatibility' });
+    expect(select.querySelector('option[value="modern"]')).not.toBeNull();
+    expect(select.querySelector('option[value="very_old_ssh"]')).not.toBeNull();
+    expect(select.querySelector('option[value="cisco_legacy"]')).toBeNull();
+    expect(select.querySelector('option[value="cisco_legacy_group1"]')).toBeNull();
+  });
+
   it('requires explicit fingerprint confirmation before testing credentials', async () => {
     const user = userEvent.setup();
     render(
@@ -198,6 +245,7 @@ describe('DeviceForm explicit connection safety gate', () => {
       credential_profile_id: credential.id,
       ssh_compatibility: 'modern',
       group1_risk_acknowledged: false,
+      very_old_risk_acknowledged: false,
       host_key_candidate_id: hostKeyCandidate.id,
     });
     await waitFor(() => expect(save).toBeEnabled());
@@ -212,6 +260,7 @@ describe('DeviceForm explicit connection safety gate', () => {
         credential_profile_id: credential.id,
         ssh_compatibility: 'modern',
         group1_risk_acknowledged: false,
+        very_old_risk_acknowledged: false,
         host_key_candidate_id: hostKeyCandidate.id,
       }),
     );

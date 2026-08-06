@@ -12,6 +12,7 @@ export class SshWebSocketTransport implements TerminalTransport {
   constructor(
     private readonly deviceId: string,
     private readonly group1RiskAcknowledged = false,
+    private readonly veryOldRiskAcknowledged = false,
   ) {}
 
   open(listener: TerminalTransportListener): Promise<void> {
@@ -24,6 +25,7 @@ export class SshWebSocketTransport implements TerminalTransport {
       this.socket?.send(JSON.stringify({
         type: 'accept_direct_mode',
         group1_risk_acknowledged: this.group1RiskAcknowledged,
+        very_old_risk_acknowledged: this.veryOldRiskAcknowledged,
       }));
     };
     this.socket.onmessage = (event) => {

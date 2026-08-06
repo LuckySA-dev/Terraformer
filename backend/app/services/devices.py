@@ -82,6 +82,12 @@ class LegacyGroup1DisabledByPolicyError(AppError):
     default_message = "Group1 SSH compatibility is not authorized"
 
 
+class LegacyVeryOldDisabledByPolicyError(AppError):
+    code = "very_old_mode_disabled_by_policy"
+    status_code = 403
+    default_message = "Very old SSHv2 compatibility is not authorized"
+
+
 class DeviceService:
     def __init__(
         self,
@@ -219,12 +225,24 @@ class DeviceService:
         device_id: UUID | None = None,
         _commit: bool = True,
     ) -> ConnectionTestResult:
+        _cisco_only_modes = {
+            SSHCompatibility.CISCO_LEGACY,
+            SSHCompatibility.CISCO_LEGACY_GROUP1,
+        }
+        _very_old_vendors = {Vendor.CISCO_IOSXE, Vendor.FORTINET_FORTIOS}
+        if request.ssh_compatibility in _cisco_only_modes and request.vendor not in {
+            Vendor.CISCO_IOSXE
+        }:
+            raise UnsupportedCapabilityError(
+                "This SSH compatibility mode is only available for Cisco IOS/IOS-XE devices"
+            )
         if (
-            request.ssh_compatibility is not SSHCompatibility.MODERN
-            and request.vendor is not Vendor.CISCO_IOSXE
+            request.ssh_compatibility is SSHCompatibility.VERY_OLD_SSH
+            and request.vendor not in _very_old_vendors
         ):
             raise UnsupportedCapabilityError(
-                "Cisco legacy SSH compatibility is only available for Cisco IOS/IOS-XE devices"
+                "Very old SSHv2 compatibility is only available for Cisco IOS/IOS-XE"
+                " and Fortinet FortiOS devices"
             )
         with self.admitted_connection(
             device_id=device_id,
@@ -234,6 +252,9 @@ class DeviceService:
             vendor=request.vendor,
             compatibility=request.ssh_compatibility,
             group1_risk_acknowledged=request.group1_risk_acknowledged,
+            very_old_risk_acknowledged=(
+                request.ssh_compatibility is SSHCompatibility.VERY_OLD_SSH
+            ),
             operation=ConnectionOperation.CONNECTION_TEST,
             host_key_candidate_id=request.host_key_candidate_id,
             _commit=_commit,
@@ -286,7 +307,8 @@ class DeviceService:
             credential_profile_id=device.credential_profile_id,
             ssh_compatibility=device.ssh_compatibility,
             group1_risk_acknowledged=(
-                device.ssh_compatibility is SSHCompatibility.CISCO_LEGACY_GROUP1
+                device.ssh_compatibility
+                in (SSHCompatibility.CISCO_LEGACY_GROUP1, SSHCompatibility.VERY_OLD_SSH)
             ),
         )
         return self.test_connection(request, device_id=device.id)
@@ -301,7 +323,11 @@ class DeviceService:
             vendor=device.vendor,
             compatibility=device.ssh_compatibility,
             group1_risk_acknowledged=(
-                device.ssh_compatibility is SSHCompatibility.CISCO_LEGACY_GROUP1
+                device.ssh_compatibility
+                in (SSHCompatibility.CISCO_LEGACY_GROUP1, SSHCompatibility.VERY_OLD_SSH)
+            ),
+            very_old_risk_acknowledged=(
+                device.ssh_compatibility is SSHCompatibility.VERY_OLD_SSH
             ),
             operation=ConnectionOperation.STRUCTURED_READ,
         ) as parameters:
@@ -363,7 +389,11 @@ class DeviceService:
             vendor=device.vendor,
             compatibility=device.ssh_compatibility,
             group1_risk_acknowledged=(
-                device.ssh_compatibility is SSHCompatibility.CISCO_LEGACY_GROUP1
+                device.ssh_compatibility
+                in (SSHCompatibility.CISCO_LEGACY_GROUP1, SSHCompatibility.VERY_OLD_SSH)
+            ),
+            very_old_risk_acknowledged=(
+                device.ssh_compatibility is SSHCompatibility.VERY_OLD_SSH
             ),
             operation=ConnectionOperation.STRUCTURED_READ,
         ) as parameters:
@@ -431,6 +461,7 @@ class DeviceService:
         vendor: Vendor,
         compatibility: SSHCompatibility,
         group1_risk_acknowledged: bool,
+        very_old_risk_acknowledged: bool = False,
         operation: ConnectionOperation,
         host_key_candidate_id: UUID | None = None,
         _commit: bool = True,
@@ -443,17 +474,25 @@ class DeviceService:
                 mode,
                 self._settings,
                 group1_risk_acknowledged=group1_risk_acknowledged,
+                very_old_risk_acknowledged=very_old_risk_acknowledged,
             )
         except ConfigurationError:
             error: AppError
             if not self._settings.ssh_legacy_enabled:
                 error = LegacyModeDisabledByPolicyError(details=_POLICY_ERROR_DETAILS)
+            elif mode is SSHCompatibility.VERY_OLD_SSH and (
+                not self._settings.ssh_group1_enabled
+                or not self._settings.ssh_very_old_enabled
+                or not very_old_risk_acknowledged
+            ):
+                error = LegacyVeryOldDisabledByPolicyError(details=_POLICY_ERROR_DETAILS)
             else:
                 error = LegacyGroup1DisabledByPolicyError(details=_POLICY_ERROR_DETAILS)
             self._audit_connection(
                 device_id=device_id,
                 compatibility=mode,
                 group1_risk_acknowledged=group1_risk_acknowledged,
+                very_old_risk_acknowledged=very_old_risk_acknowledged,
                 operation=operation,
                 phase="authorization",
                 authorization_decision="denied",
@@ -555,6 +594,7 @@ class DeviceService:
                     device_id=device_id,
                     compatibility=mode,
                     group1_risk_acknowledged=group1_risk_acknowledged,
+                    very_old_risk_acknowledged=very_old_risk_acknowledged,
                     operation=operation,
                     phase=(
                         failure_phase
@@ -573,6 +613,7 @@ class DeviceService:
                     device_id=device_id,
                     compatibility=mode,
                     group1_risk_acknowledged=group1_risk_acknowledged,
+                    very_old_risk_acknowledged=very_old_risk_acknowledged,
                     operation=operation,
                     phase="complete",
                     authorization_decision="allowed",
@@ -588,6 +629,7 @@ class DeviceService:
                     device_id=device_id,
                     compatibility=mode,
                     group1_risk_acknowledged=group1_risk_acknowledged,
+                    very_old_risk_acknowledged=very_old_risk_acknowledged,
                     operation=operation,
                     phase="complete",
                     authorization_decision="allowed",
@@ -618,6 +660,7 @@ class DeviceService:
         device_id: UUID | None,
         compatibility: SSHCompatibility,
         group1_risk_acknowledged: bool,
+        very_old_risk_acknowledged: bool = False,
         operation: ConnectionOperation,
         phase: str,
         authorization_decision: str,
@@ -632,6 +675,7 @@ class DeviceService:
                 "principal": "local-admin",
                 "requested_mode": compatibility.value,
                 "group1_risk_acknowledged": group1_risk_acknowledged,
+                "very_old_risk_acknowledged": very_old_risk_acknowledged,
                 "compatibility_policy_version": SSH_COMPATIBILITY_POLICY_VERSION,
                 "operation": operation.value,
                 "phase": phase,

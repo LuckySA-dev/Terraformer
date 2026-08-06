@@ -403,6 +403,16 @@ def test_scrapli_transports_force_password_only_authentication(monkeypatch) -> N
                 "MACs=+hmac-sha1,hmac-sha1-96",
             ),
         ),
+        (
+            SSHCompatibility.VERY_OLD_SSH,
+            (
+                "KexAlgorithms=+diffie-hellman-group14-sha1,"
+                "diffie-hellman-group-exchange-sha1,diffie-hellman-group1-sha1",
+                "HostKeyAlgorithms=+ssh-rsa,ssh-dss",
+                "Ciphers=+aes256-cbc,aes192-cbc,aes128-cbc,3des-cbc",
+                "MACs=+hmac-sha1,hmac-sha1-96,hmac-md5,hmac-md5-96",
+            ),
+        ),
     ],
 )
 def test_scrapli_transports_scope_exact_compatibility_options(

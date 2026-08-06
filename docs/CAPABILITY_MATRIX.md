@@ -17,23 +17,22 @@ can promote a capability to **Lab verified**.
 
 ## Structured read capabilities
 
-| Capability | Cisco IOS/IOS-XE | Juniper Junos | Generic/unknown |
-|---|---|---|---|
-| Explicit SSH connection test | Implemented, lab unverified | Not Implemented | Implemented, lab unverified |
-| Exact-device SSH host-key pinning | Implemented, lab unverified | Not Implemented | Implemented, lab unverified |
-| Platform identity/facts | Implemented, lab unverified | Not Implemented | Not Implemented |
-| Interface inventory/state | Implemented, lab unverified | Not Implemented | Not Implemented |
-| Running-config snapshot | Implemented, lab unverified | Not Implemented | Not Implemented |
-| Manual-add persistence | Implemented, lab unverified | Not Implemented | Not Implemented |
-| Sanitized event timeline | Implemented, lab unverified | Not Implemented | Not Implemented |
-| CDP/LLDP neighbors | Implemented, lab unverified | Not Implemented | Not Implemented |
-| Routing table | Implemented, lab unverified | Not Implemented | Not Implemented |
-| ARP/MAC tables | Implemented, lab unverified | Not Implemented | Not Implemented |
-| Bounded multi-port IPv4 SSH discovery | Implemented, lab unverified | Not Implemented | Implemented, lab unverified |
-| Ping/traceroute action | Implemented, lab unverified | Not Implemented | Not Implemented |
+| Capability | Cisco IOS/IOS-XE | Juniper Junos | Fortinet FortiOS | Generic/unknown |
+|---|---|---|---|---|
+| Explicit SSH connection test | Implemented, lab unverified | Not Implemented | Implemented, lab unverified | Implemented, lab unverified |
+| Exact-device SSH host-key pinning | Implemented, lab unverified | Not Implemented | Implemented, lab unverified | Implemented, lab unverified |
+| Platform identity/facts | Implemented, lab unverified | Not Implemented | Not Implemented | Not Implemented |
+| Interface inventory/state | Implemented, lab unverified | Not Implemented | Not Implemented | Not Implemented |
+| Running-config snapshot | Implemented, lab unverified | Not Implemented | Not Implemented | Not Implemented |
+| Manual-add persistence | Implemented, lab unverified | Not Implemented | Not Implemented | Not Implemented |
+| Sanitized event timeline | Implemented, lab unverified | Not Implemented | Not Implemented | Not Implemented |
+| CDP/LLDP neighbors | Implemented, lab unverified | Not Implemented | Not Implemented | Not Implemented |
+| Routing table | Implemented, lab unverified | Not Implemented | Not Implemented | Not Implemented |
+| ARP/MAC tables | Implemented, lab unverified | Not Implemented | Not Implemented | Not Implemented |
+| Bounded multi-port IPv4 SSH discovery | Implemented, lab unverified | Not Implemented | Implemented, lab unverified | Implemented, lab unverified |
+| Ping/traceroute action | Implemented, lab unverified | Not Implemented | Not Implemented | Not Implemented |
 
-The generic driver authenticates SSH only; facts, interfaces, and configuration
-remain unsupported. Cisco read entries are deliberately lab-unverified. Before
+The generic and Fortinet FortiOS drivers authenticate SSH only (connection tests and Direct Mode terminals); facts, interfaces, configuration, and structured diagnostics remain unsupported. Cisco and Fortinet read entries are deliberately lab-unverified. Before
 release, link each to passing tests and record real-device acceptance below.
 Discovery is vendor-neutral passive SSH identification only; it does not
 authenticate, identify a platform, follow neighbors, or add inventory
@@ -82,8 +81,8 @@ from writing to or changing hardware.
 | Web SSH terminal Direct Mode | **Implemented, lab unverified** | Registered devices with an available SSH transport | **Automated verification passed; hardware validation pending.** Can write or otherwise change hardware; separate from drivers and structured Safety Levels A–D. Authenticated, same-origin, warning-gated, and resource-bounded; commands/output are never audit payloads. |
 | Manual USB Console / USB Direct Mode | **Implemented, lab unverified** | Vendor-neutral manual serial access | **Automated verification passed; hardware validation pending.** Can write, modify, restart, or erase hardware; bypasses backend and structured safety controls. Automated fake-stream, privacy, lifecycle, serving-policy, type, lint, and build checks passed on 2026-07-20; no vendor/device support claim. |
 
-Cisco legacy SSH terminal and topology claims remain **Implemented, lab
-unverified** until separately authorized hardware validation is recorded.
+Cisco and Fortinet legacy/very-old SSH terminal and topology claims remain **Implemented, lab
+unverified** until separately authorized hardware validation is recorded. Very Old SSH mode (`very_old_ssh`) requires all three compatibility kill switches (`SSH_LEGACY_ENABLED`, `SSH_GROUP1_ENABLED`, `SSH_VERY_OLD_ENABLED`) to be enabled simultaneously.
 
 ### Direct Mode hardware evidence
 
@@ -102,19 +101,19 @@ not expose an API, worker job, driver fallback, or structured UI control that ca
 execute these operations. Manual Direct Mode remains the explicit path outside
 this table and outside Safety Levels A–D.
 
-| Capability | Cisco IOS/IOS-XE | Juniper Junos | Generic/unknown |
-|---|---|---|---|
-| Render interface description/admin state | **Not Implemented** | **Not Implemented** | **Not Implemented** |
-| Render access/trunk VLAN | **Not Implemented** | **Not Implemented** | **Not Implemented** |
-| Render SVI/IP address | **Not Implemented** | **Not Implemented** | **Not Implemented** |
-| Render static route | **Not Implemented** | **Not Implemented** | **Not Implemented** |
-| Validate rendered commands | **Not Implemented** | **Not Implemented** | **Not Implemented** |
-| Candidate/compare | **Not Implemented** | **Not Implemented** | **Not Implemented** |
-| Pre-change snapshot pipeline | **Not Implemented** | **Not Implemented** | **Not Implemented** |
-| Apply configuration | **Not Implemented** | **Not Implemented** | **Not Implemented** |
-| Post-change checks | **Not Implemented** | **Not Implemented** | **Not Implemented** |
-| Confirmed commit | **Not Implemented** | **Not Implemented** | **Not Implemented** |
-| Rollback/assisted recovery | **Not Implemented** | **Not Implemented** | **Not Implemented** |
+| Capability | Cisco IOS/IOS-XE | Juniper Junos | Fortinet FortiOS | Generic/unknown |
+|---|---|---|---|---|
+| Render interface description/admin state | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
+| Render access/trunk VLAN | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
+| Render SVI/IP address | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
+| Render static route | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
+| Validate rendered commands | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
+| Candidate/compare | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
+| Pre-change snapshot pipeline | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
+| Apply configuration | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
+| Post-change checks | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
+| Confirmed commit | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
+| Rollback/assisted recovery | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
 
 Current structured-write safety classification for every platform:
 **Level D — Read-only**.

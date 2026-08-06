@@ -61,6 +61,9 @@ _FAILURES: dict[str, _FailureSpec | SanitizedSSHFailure] = {
     "legacy_group1_disabled_by_policy": _FailureSpec(
         "Group1 SSH compatibility is not authorized.", "authorization", False
     ),
+    "very_old_mode_disabled_by_policy": _FailureSpec(
+        "Very old SSHv2 compatibility is not authorized.", "authorization", False
+    ),
     "connection_gate_unavailable": _FailureSpec(
         "Connection admission is temporarily unavailable.", "authorization", True
     ),
@@ -327,6 +330,7 @@ async def terminal(websocket: WebSocket, device_id: UUID) -> None:
     opened = False
     cleaned = False
     group1_acknowledged = False
+    very_old_acknowledged = False
     started = monotonic()
     audit_phase = "authorization"
     audit_decision = "denied"
@@ -355,6 +359,7 @@ async def terminal(websocket: WebSocket, device_id: UUID) -> None:
                     container,
                     target,
                     group1_acknowledged,
+                    very_old_acknowledged,
                     audit_phase,
                     audit_decision,
                     audit_result,
@@ -400,6 +405,10 @@ async def terminal(websocket: WebSocket, device_id: UUID) -> None:
         if not isinstance(group1_value, bool):
             raise _TerminalFailure("direct_mode_required")
         group1_acknowledged = group1_value
+        very_old_value: object = acknowledgement_data.get("very_old_risk_acknowledged", False)
+        if not isinstance(very_old_value, bool):
+            raise _TerminalFailure("direct_mode_required")
+        very_old_acknowledged = very_old_value
 
         target = await asyncio.to_thread(_terminal_target, container, device_id)
         if not container.settings.ssh_terminal_enabled:
@@ -409,10 +418,20 @@ async def terminal(websocket: WebSocket, device_id: UUID) -> None:
                 target.compatibility,
                 container.settings,
                 group1_risk_acknowledged=group1_acknowledged,
+                very_old_risk_acknowledged=very_old_acknowledged,
             )
         except ConfigurationError:
             if not container.settings.ssh_legacy_enabled:
                 raise _TerminalFailure("legacy_mode_disabled_by_policy") from None
+            if (
+                target.compatibility is SSHCompatibility.VERY_OLD_SSH
+                and (
+                    not container.settings.ssh_group1_enabled
+                    or not container.settings.ssh_very_old_enabled
+                    or not very_old_acknowledged
+                )
+            ):
+                raise _TerminalFailure("very_old_mode_disabled_by_policy") from None
             raise _TerminalFailure("legacy_group1_disabled_by_policy") from None
 
         gate_target = ConnectionTarget.from_endpoint(
@@ -553,6 +572,7 @@ def _record_connection_audit(
     container: ApplicationContainer,
     target: _TerminalTarget,
     group1_risk_acknowledged: bool,
+    very_old_risk_acknowledged: bool,
     phase: str,
     decision: str,
     result_code: str,
@@ -567,6 +587,7 @@ def _record_connection_audit(
                 "principal": "local-admin",
                 "requested_mode": target.compatibility.value,
                 "group1_risk_acknowledged": group1_risk_acknowledged,
+                "very_old_risk_acknowledged": very_old_risk_acknowledged,
                 "compatibility_policy_version": SSH_COMPATIBILITY_POLICY_VERSION,
                 "operation": ConnectionOperation.TERMINAL.value,
                 "phase": phase,

@@ -173,14 +173,14 @@ describe('Direct Mode terminal', () => {
     act(() => terminalMocks.instances[0]?.emitInput(`${commandMarker}\r\nreload`));
 
     expect(socket.sent).toEqual([
-      JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: false }),
+      JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: false, very_old_risk_acknowledged: false }),
     ]);
     expect(screen.getByText('2 lines and 28 characters are waiting. Review before sending.'))
       .toBeVisible();
     expect(document.body.textContent).not.toContain(commandMarker);
     await user.click(screen.getByRole('button', { name: 'Send 2 lines' }));
     expect(socket.sent).toEqual([
-      JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: false }),
+      JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: false, very_old_risk_acknowledged: false }),
       JSON.stringify({ type: 'input', data: `${commandMarker}\r\nreload` }),
     ]);
   });
@@ -209,12 +209,45 @@ describe('Direct Mode terminal', () => {
     terminalMocks.instances[0]?.emitInput('show version');
 
     expect(socket.sent).toEqual([
-      JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: true }),
+      JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: true, very_old_risk_acknowledged: false }),
       JSON.stringify({ type: 'input', data: 'show version' }),
     ]);
 
     act(() => socket.onclose?.());
     expect(await screen.findByRole('checkbox', { name: /Group1.*last-resort/ }))
+      .not.toBeChecked();
+  });
+
+  it('requires a fresh Very Old SSH risk acknowledgment and sends it only on open', async () => {
+    const user = userEvent.setup();
+    render(
+      <TerminalPanel
+        deviceId="2ad0db14-5a87-4147-a4e7-c98f88322464"
+        sshCompatibility="very_old_ssh"
+      />,
+    );
+    const openButton = screen.getByRole('button', { name: /open Direct Mode/ });
+    const acknowledgement = screen.getByRole('checkbox', { name: /Very Old SSH/ });
+    expect(acknowledgement).not.toBeChecked();
+    expect(openButton).toBeDisabled();
+    await user.click(acknowledgement);
+    await user.click(openButton);
+    const socket = FakeWebSocket.instances[0];
+    if (socket === undefined) throw new Error('Expected an SSH WebSocket.');
+    socket.readyState = FakeWebSocket.OPEN;
+    socket.onopen?.();
+    act(() => socket.onmessage?.({
+      data: JSON.stringify({ type: 'status', status: 'connected' }),
+    }));
+    terminalMocks.instances[0]?.emitInput('show version');
+
+    expect(socket.sent).toEqual([
+      JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: false, very_old_risk_acknowledged: true }),
+      JSON.stringify({ type: 'input', data: 'show version' }),
+    ]);
+
+    act(() => socket.onclose?.());
+    expect(await screen.findByRole('checkbox', { name: /Very Old SSH/ }))
       .not.toBeChecked();
   });
 
@@ -592,7 +625,7 @@ describe('Direct Mode terminal', () => {
 
     act(() => terminalMocks.instances[0]?.emitInput('show version'));
     expect(socket.sent).toEqual([
-      JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: false }),
+      JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: false, very_old_risk_acknowledged: false }),
     ]);
 
     act(() => socket.onmessage?.({
@@ -651,10 +684,10 @@ describe('Direct Mode terminal', () => {
     secondSocket.readyState = FakeWebSocket.OPEN;
     secondSocket.onopen?.();
     expect(firstSocket.sent).toEqual([
-      JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: true }),
+      JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: true, very_old_risk_acknowledged: false }),
     ]);
     expect(secondSocket.sent).toEqual([
-      JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: true }),
+      JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: true, very_old_risk_acknowledged: false }),
     ]);
   });
 

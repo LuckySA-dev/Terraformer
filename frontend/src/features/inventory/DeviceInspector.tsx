@@ -587,7 +587,8 @@ export function DeviceInspector({ device, onClose, onEdit, onDelete }: DeviceIns
               {device.status}
             </Badge>
             {device.ssh_compatibility === 'cisco_legacy' ||
-            device.ssh_compatibility === 'cisco_legacy_group1' ? (
+            device.ssh_compatibility === 'cisco_legacy_group1' ||
+            device.ssh_compatibility === 'very_old_ssh' ? (
               <Badge tone="warning">LEGACY SSH</Badge>
             ) : null}
             <span className="mono">{device.management_address}</span>

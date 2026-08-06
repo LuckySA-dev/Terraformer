@@ -19,6 +19,8 @@ export function TerminalPanel({
   const tabRefs = useRef(new Map<number, HTMLButtonElement>());
   const pendingFocus = useRef<number | undefined>(undefined);
   const requiresGroup1Acknowledgement = sshCompatibility === 'cisco_legacy_group1';
+  const requiresVeryOldAcknowledgement = sshCompatibility === 'very_old_ssh';
+  const requireAuthorization = requiresGroup1Acknowledgement || requiresVeryOldAcknowledgement;
 
   const add = () => {
     if (sessions.length >= MAX_TERMINALS) return;
@@ -86,13 +88,16 @@ export function TerminalPanel({
             createTransport={(authorizationAcknowledged) => new SshWebSocketTransport(
               deviceId,
               requiresGroup1Acknowledgement && authorizationAcknowledged,
+              requiresVeryOldAcknowledgement && authorizationAcknowledged,
             )}
             warningTitle="Direct Mode — no rollback protection"
             warningBody="Commands run on the device exactly as typed and may change its configuration. The app does not parse, approve, record, or automatically undo terminal commands."
-            acknowledgementLabel={requiresGroup1Acknowledgement
-              ? 'I understand Group1 is a last-resort per-device SSH exception.'
-              : 'I understand — open Direct Mode'}
-            requireAuthorization={requiresGroup1Acknowledgement}
+            acknowledgementLabel={requiresVeryOldAcknowledgement
+              ? 'I understand Very Old SSH uses obsolete cryptographic algorithms and is a last-resort exception.'
+              : requiresGroup1Acknowledgement
+                ? 'I understand Group1 is a last-resort per-device SSH exception.'
+                : 'I understand — open Direct Mode'}
+            requireAuthorization={requireAuthorization}
             openLabel="I understand — open Direct Mode"
             inputPolicy={{ lineEnding: 'raw', localEcho: false, confirmMultiline: true }}
             ariaLabel="Device terminal"

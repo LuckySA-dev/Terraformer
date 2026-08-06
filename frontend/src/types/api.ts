@@ -49,7 +49,8 @@ export interface CredentialProfileInput {
 }
 
 export type DeviceStatus = 'reachable' | 'unreachable' | 'unknown';
-export type SshCompatibility = 'modern' | 'cisco_legacy' | 'cisco_legacy_group1';
+export type SshCompatibility = 'modern' | 'cisco_legacy' | 'cisco_legacy_group1' | 'very_old_ssh';
+export type Vendor = 'cisco_iosxe' | 'fortinet_fortios' | 'generic';
 
 export interface DeviceFacts {
   hostname?: string | null;
@@ -72,7 +73,7 @@ export interface Device {
   name: string;
   management_address: string;
   port: number;
-  vendor: 'cisco_iosxe' | 'generic';
+  vendor: Vendor;
   credential_profile_id: string;
   ssh_compatibility?: SshCompatibility;
   status: DeviceStatus;
@@ -88,10 +89,11 @@ export interface DeviceInput {
   name: string;
   management_address: string;
   port: number;
-  vendor: 'cisco_iosxe' | 'generic';
+  vendor: Vendor;
   credential_profile_id: string;
   ssh_compatibility: SshCompatibility;
   group1_risk_acknowledged: boolean;
+  very_old_risk_acknowledged: boolean;
   host_key_candidate_id?: string;
 }
 

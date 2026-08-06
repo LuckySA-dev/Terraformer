@@ -71,8 +71,9 @@ describe('typed API client', () => {
 
   it('omits the display name from the strict connection-test request schema', async () => {
     const compatibilityFieldsAreRequired: DeviceInput extends {
-      ssh_compatibility: 'modern' | 'cisco_legacy' | 'cisco_legacy_group1';
+      ssh_compatibility: 'modern' | 'cisco_legacy' | 'cisco_legacy_group1' | 'very_old_ssh';
       group1_risk_acknowledged: boolean;
+      very_old_risk_acknowledged: boolean;
     }
       ? true
       : false = true;
@@ -97,6 +98,7 @@ describe('typed API client', () => {
       credential_profile_id: 'c6d6a5be-bf2e-4d6a-bda8-3a559f985631',
       ssh_compatibility: 'modern',
       group1_risk_acknowledged: false,
+      very_old_risk_acknowledged: false,
       host_key_candidate_id: 'b6871493-41ea-4f96-b126-c09e033fd6e2',
     });
 
@@ -110,6 +112,7 @@ describe('typed API client', () => {
       credential_profile_id: 'c6d6a5be-bf2e-4d6a-bda8-3a559f985631',
       ssh_compatibility: 'modern',
       group1_risk_acknowledged: false,
+      very_old_risk_acknowledged: false,
       host_key_candidate_id: 'b6871493-41ea-4f96-b126-c09e033fd6e2',
     });
   });

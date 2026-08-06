@@ -338,6 +338,8 @@ describe('Direct Mode terminal', () => {
 
     const first = screen.getByRole('tab', { name: 'Terminal 1' });
     expect(first).toHaveAttribute('aria-selected', 'true');
+    first.focus();
+    expect(first).toHaveFocus();
     expect(screen.getByRole('button', { name: 'Close terminal 1' })).toBeVisible();
 
     await user.click(screen.getByRole('button', { name: 'New terminal' }));

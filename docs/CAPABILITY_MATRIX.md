@@ -1,6 +1,6 @@
 # Capability matrix
 
-Last updated: 2026-07-22
+Last updated: 2026-08-06
 Scope: phases 0–2
 
 ## Status definitions
@@ -73,18 +73,21 @@ from writing to or changing hardware.
 
 | Access path | Status | Vendor scope | Safety and evidence boundary |
 |---|---|---|---|
-| Web SSH terminal Direct Mode | **Implemented, lab unverified** | Registered devices with an available SSH transport | Can write or otherwise change hardware; separate from drivers and structured Safety Levels A–D. Authenticated, same-origin, warning-gated, and resource-bounded; commands/output are never audit payloads. |
-| Manual USB Console / USB Direct Mode | **Implemented, lab unverified** | Vendor-neutral manual serial access | Can write, modify, restart, or erase hardware; bypasses backend and structured safety controls. Automated fake-stream, privacy, lifecycle, serving-policy, type, lint, and build checks passed on 2026-07-20. Hardware validation pending; no vendor/device support claim. |
+| Web SSH terminal Direct Mode | **Implemented, lab unverified** | Registered devices with an available SSH transport | **Automated verification passed; hardware validation pending.** Can write or otherwise change hardware; separate from drivers and structured Safety Levels A–D. Authenticated, same-origin, warning-gated, and resource-bounded; commands/output are never audit payloads. |
+| Manual USB Console / USB Direct Mode | **Implemented, lab unverified** | Vendor-neutral manual serial access | **Automated verification passed; hardware validation pending.** Can write, modify, restart, or erase hardware; bypasses backend and structured safety controls. Automated fake-stream, privacy, lifecycle, serving-policy, type, lint, and build checks passed on 2026-07-20; no vendor/device support claim. |
 
-### Manual USB Console hardware evidence
+Cisco legacy SSH terminal and topology claims remain **Implemented, lab
+unverified** until separately authorized hardware validation is recorded.
+
+### Direct Mode hardware evidence
 
 No authorized hardware validation has been recorded. This table must remain
 empty until an explicitly approved real-adapter session is completed. Entries
 may contain only the metadata allowed by `lab-test-guide.md`; never serial-
 session content.
 
-| Date | Approver | Browser/version | Adapter type | Device category | Application version/commit | Non-command validation-step descriptions | Pass/fail outcome |
-|---|---|---|---|---|---|---|---|
+| Date | Approver | Browser/version | Adapter/transport type | Device category | Application commit | Requested compatibility mode | Non-command validation-step descriptions | Pass/fail outcome |
+|---|---|---|---|---|---|---|---|---|
 
 ## Structured write capabilities
 

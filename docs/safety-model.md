@@ -29,6 +29,26 @@ and output are never logged or stored. Direct Mode can change a device and has
 no command parser or rollback guarantee; the warning is an operator boundary,
 not a claim that the terminal is read-only.
 
+Cisco legacy SSH compatibility is device-scoped under
+`compatibility_policy_version = 1`. `modern` remains the default and has no
+legacy override or automatic fallback. `cisco_legacy` may append only
+`diffie-hellman-group14-sha1`, `diffie-hellman-group-exchange-sha1`, `ssh-rsa`,
+`aes256-cbc`, `aes192-cbc`, `aes128-cbc`, `hmac-sha1`, and `hmac-sha1-96` after
+modern defaults; `cisco_legacy_group1` additionally appends
+`diffie-hellman-group1-sha1` as a last resort. `ssh-dss`, MD5-based algorithms,
+3DES, and RC4 remain disabled. `SSH_LEGACY_ENABLED=false`,
+`SSH_GROUP1_ENABLED=false`, and `SSH_TERMINAL_ENABLED=true` are server-side
+kill switches evaluated before every connection. Compatibility does not change
+the configured host-key verification policy.
+
+Limits remain server-enforced: five connection tests per normalized
+endpoint/profile per minute, five terminal opens per device per minute, three
+authentication failures per endpoint/profile causing a 60-second cooldown,
+`MAX_DEVICE_CONNECTIONS` globally, three SSH connections per device, and three
+terminal sessions globally and per device. Terminal input is capped at 4 KiB,
+output at 2 MiB, idle at 15 minutes, and a session at 60 minutes. These limits
+do not make either SSH or USB Direct Mode read-only; both can change hardware.
+
 Manual USB Console is also a Direct Mode path. On same-machine Chrome or Edge,
 the browser connects directly to an operator-selected USB-to-console adapter;
 serial bytes bypass the backend, audit pipeline, credentials, device locks,

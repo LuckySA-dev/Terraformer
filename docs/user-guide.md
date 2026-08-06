@@ -132,6 +132,14 @@ recording. The UI and API allow at most three sessions, idle input closes after
 the terminal, and leave configuration mode unless a separately approved change
 authorizes it.
 
+For an end-of-support Cisco SSH implementation, select the device's explicit
+compatibility mode before the required fresh connection test. `modern` is the
+default; the two legacy modes are per-device exceptions and never automatic
+fallbacks. Legacy modes do not change host-key verification. The server can
+disable legacy SSH, Group1, or the terminal entirely; a disabled mode fails
+closed. Device SSH terminal and USB Console are both manual Direct Mode and can
+change hardware. **Automated verification passed; hardware validation pending.**
+
 Check that events contain status and timing but no credential, enable secret, or
 raw configuration. Report a possible leak privately and rotate the source
 credential.

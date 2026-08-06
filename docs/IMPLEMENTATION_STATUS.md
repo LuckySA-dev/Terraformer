@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-07-21
+Last updated: 2026-08-06
 Current delivery target: phases 0–2
 
 This is the status ledger, not a roadmap. Product intent and future scope remain
@@ -61,7 +61,7 @@ in `network-automation-final-plan.md`.
 | Bounded multi-port IPv4 SSH discovery and approve flow | Implemented; lab unverified | Maximum 64 addresses, 4 unique operator-selected ports and 256 passive endpoint checks; only SSH-identified endpoints are approvable; open non-SSH endpoints are informational; bounded concurrency/timeout/rate, one active scan at a time, atomic approval audit, fake-probe tests, no credentials or automatic inventory creation |
 | Read-only topology canvas and links | Implemented; lab unverified | Cytoscape projection of registered devices and saved CDP/LLDP records; browser-local node positions; manual/30/60-second view refresh; interface-pair labels; browser-local manual links always labeled `UNVERIFIED` |
 | Allowlisted Cisco diagnostics | Implemented; lab unverified | Typed routing/ARP/MAC plus bounded exact-IPv4 ping/traceroute actions; fixed driver mappings; RQ execution; sanitized 64 KiB cap and local download; injection/timeout/unsupported tests |
-| Web SSH terminal | Implemented; lab unverified | AsyncSSH PTY over authenticated same-origin WebSocket; explicit Direct Mode confirmation before credential decrypt/connect; three-session server/UI cap; 15-minute input idle timeout; 2 MiB output cap; no command/output recording |
+| Web SSH terminal | Implemented; lab unverified | **Automated verification passed; hardware validation pending.** AsyncSSH PTY over authenticated same-origin WebSocket; password-only, device-scoped `compatibility_policy_version = 1` (`modern` default; no fallback); explicit Direct Mode confirmation before credential decrypt/connect; no command/output recording |
 | Manual USB Console / USB Direct Mode | Implemented; lab unverified | **Automated verification passed; hardware validation pending.** Same-machine Chrome/Edge Web Serial path with secure-context and `serial=(self)` checks, per-session authorization warning, settings, multiline confirmation, bounded writes, five-second cleanup, fresh-session reopen, and fake-stream privacy/lifecycle coverage; no real adapter was contacted |
 
 ## Verification record
@@ -96,6 +96,7 @@ in `network-automation-final-plan.md`.
 | 2026-07-20 | Manual USB Console UI polish | CSS-source regression; USB component regression; `npm.cmd run verify` | Scoped light-surface and privacy-note declarations passed source and component checks; 12 files / 91 tests, type check, lint, and production build passed; browser visual validation remains pending; no hardware contacted |
 | 2026-07-21 | SSH runtime hardening and multi-port SSH-aware discovery | Backend Ruff, Pyright and `python -m pytest`; frontend `npm.cmd run verify`; normal/dev Compose `config --quiet`; focused fake transport/banner, logging, RQ-formatting and approval regressions | **Automated verification passed; hardware validation pending.** Backend 85 passed/1 opt-in lab skipped; frontend 12 files/92 tests plus typecheck, lint and production build passed; both Compose configs valid. Docker image smoke-test remains pending because the local Docker Desktop daemon was unavailable; no device connection or real network probe was performed. |
 | 2026-07-22 | Cisco legacy SSH transport and sanitized failure hardening | Targeted Ruff format; repository Ruff; Pyright; `python -m pytest`; normal/dev Compose `config --quiet`; fake Scrapli/constructor/open/command/logging/worker regressions | **Automated verification passed; hardware validation pending.** Backend 146 passed/1 opt-in lab skipped; Pyright 0 errors/0 warnings; both Compose configs valid. Password-only OpenSSH options are request-scoped; constructor/open failures are sanitized and returned transports close exactly once; stable phase-specific errors and worker records contain no raw exception content or class names. No device connection or external network operation was performed. |
+| 2026-08-06 | Cisco legacy SSH terminal final routine verification | Backend Ruff, Pyright, complete pytest; frontend typecheck, lint, complete Vitest, production build; focused secret/persistence/network/xterm regressions; normal/dev Compose `config --quiet` | **Automated verification passed; hardware validation pending.** Backend 236 passed/1 opt-in lab skipped; frontend 12 files/124 tests passed; focused backend 113 and frontend 85 tests passed. No lab opt-in, device connection, external network operation, preview, or Compose start was performed. |
 
 ## Security decisions verified
 
@@ -134,3 +135,6 @@ in `network-automation-final-plan.md`.
   remains intentionally unstarted until that evidence exists.
 - Direct Mode is an explicit operator escape hatch and can change a device. It
   has no parser, approval plan, rollback guarantee, or recording by design.
+- Cisco legacy SSH terminal and topology claims remain lab-unverified. The
+  approved compatibility-policy version, kill switches, and resource limits
+  have automated coverage only; no real hardware result is recorded.

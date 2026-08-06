@@ -13,8 +13,10 @@ No real-lab result is recorded in this repository, so every capability remains
 lab-unverified until an operator runs the harness against an approved device and
 records only sanitized evidence.
 
-Manual USB Console is also **hardware validation pending**. Automated tests use
-fake streams only; they do not enumerate or open a serial adapter.
+Manual USB Console and device SSH terminal Direct Mode have
+**Automated verification passed; hardware validation pending.** Automated tests
+use fakes only; routine verification is network-free and does not enumerate or
+open a serial adapter or connect to a device.
 
 ## Manual USB Console hardware-validation gate
 
@@ -27,21 +29,20 @@ stop on any unexpected prompt or device behavior.
 
 An authorized validation record may contain only these metadata fields:
 
-| Date | Approver | Browser/version | Adapter type | Device category | Application version/commit | Non-command validation-step descriptions | Pass/fail outcome |
-|---|---|---|---|---|---|---|---|
+| Date | Approver | Browser/version | Adapter/transport type | Device category | Application commit | Requested compatibility mode | Non-command validation-step descriptions | Pass/fail outcome |
+|---|---|---|---|---|---|---|---|---|
 
 No authorized hardware result has been recorded. Do not add a placeholder that
 could be mistaken for a completed test.
 
 The record must never contain terminal output, commands, credentials,
 configuration, addresses, hostnames, serial numbers, adapter or device
-identifiers, raw errors or exceptions, screenshots, recordings, or any
-serial-session content. Non-command validation-step descriptions may describe
-only the UI or lifecycle behavior checked; they must not reproduce serial
-interaction. Do not attach or link prohibited content as evidence. Until an
-explicitly authorized session is completed and this metadata-only record is
-added, retain the status **Implemented, lab unverified** / **hardware validation
-pending**.
+identifiers, raw errors or exceptions, screenshots, recordings, or session
+content. Non-command validation-step descriptions may describe only the UI or
+lifecycle behavior checked; they must not reproduce device interaction. Do not
+attach or link prohibited content as evidence. Until an explicitly authorized
+session is completed and this metadata-only record is added, retain the status
+**Automated verification passed; hardware validation pending.**
 
 ## Required harness contract
 

@@ -62,13 +62,30 @@ status wording **Automated verification passed; hardware validation pending**.
 Cisco legacy SSH terminal and topology claims remain lab-unverified. The
 hardware record schema is metadata-only.
 
-GitNexus `detect_changes({scope: "compare", base_ref: "main"})` was not
-available as an MCP tool in this session, so that required MCP call remains a
-verification limitation. The existing local index was used only for the
-equivalent `detect-changes --scope compare --base-ref main` command. It reported
-the expected Task 1–8 aggregate: 68 files, 591 symbols, 87 flows, and Critical
-risk. The staged Task 9 scope reported 6 documentation/report files, 15
-documentation symbols, 0 flows, and Low risk. No index refresh or analysis was
+### GitNexus change detection
+
+The controller's `ALL_TOOLS` confirms that the GitNexus MCP
+`detect_changes({scope: "compare", base_ref: "main"})` tool is unavailable in
+this environment. The repository-supported existing-index CLI invokes the same
+local change-detection backend without analysis or refresh, so this exact
+equivalent was run from the run2 worktree:
+
+```text
+node .gitnexus\run.cjs detect-changes --scope compare --base-ref main --repo 'C:\Users\User\Desktop\Coding\Terraformer\.worktrees\cisco-legacy-ssh-terminal-run2'
+```
+
+It exited 0 and reported 68 changed files, 591 changed symbols, 87 affected
+processes, and Critical aggregate risk. Manual inspection found the affected
+scope limited to the approved accumulated Task 1–8 device/discovery/terminal
+backend paths, terminal UI and transport paths, migrations, configuration,
+tests, and documentation. The listed flows were the expected connection-test,
+device create/update, discovery approval, terminal lifecycle/input, and cleanup
+flows; no unexpected execution flow or Task 9 feature-code change was found.
+The Critical rating therefore describes the already reviewed whole feature
+branch against `main`, not this documentation-only task. The earlier staged
+Task 9 scope reported 6 documentation/report files, 15 documentation symbols,
+0 flows, and Low risk. The unavailable MCP call remains an environment
+limitation and is not claimed as run. No GitNexus analysis or index refresh was
 run.
 
 ## Commit and concerns
@@ -78,3 +95,17 @@ Commit: `docs: record legacy SSH verification status`.
 No feature code, preview, network/device/lab activity, or Compose start was
 performed. Existing untracked SDD review artifacts and the pre-existing
 `progress.md` change remain excluded from the commit.
+
+## Fix round 1
+
+- Added the implemented SSH-open, PTY/shell, permit-TTL, and WebSocket-frame
+  limits to `safety-model.md` with exact configuration names and defaults.
+- Re-ran the existing-index GitNexus CLI compare command recorded above; it
+  exited 0 with the same expected accumulated scope and no unexpected flow.
+- `.venv\Scripts\python.exe -m pytest tests/unit/test_config.py` passed all 6
+  tests; `docker compose -f deploy/compose.yml config --quiet` exited 0 without
+  starting services and emitted only the known host Docker-config permission
+  warning; `git diff --check` passed.
+- The final plan and approved design remain unchanged. No feature code, network,
+  device, lab, Compose-start, GitNexus-analysis, or index-refresh action ran.
+- Commit: `docs: record terminal verification limits`.

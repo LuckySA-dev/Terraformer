@@ -46,8 +46,16 @@ endpoint/profile per minute, five terminal opens per device per minute, three
 authentication failures per endpoint/profile causing a 60-second cooldown,
 `MAX_DEVICE_CONNECTIONS` globally, three SSH connections per device, and three
 terminal sessions globally and per device. Terminal input is capped at 4 KiB,
-output at 2 MiB, idle at 15 minutes, and a session at 60 minutes. These limits
-do not make either SSH or USB Direct Mode read-only; both can change hardware.
+output at 2 MiB, idle at 15 minutes, and a session at 60 minutes.
+`SSH_CONNECT_TIMEOUT_SECONDS` bounds the complete SSH open and defaults to 10
+seconds; `TERMINAL_PTY_TIMEOUT_SECONDS` separately bounds PTY and shell creation
+and defaults to 10 seconds. Redis permits have a bounded
+`CONNECTION_PERMIT_TTL_SECONDS`, default 3900 seconds, which configuration
+validation requires to cover the SSH-open, PTY/shell, and maximum-session
+timeouts. Uvicorn rejects WebSocket frames larger than the configured 8192-byte
+(8 KiB) `--ws-max-size` before application JSON decoding. These current,
+configurable limits fail closed where documented, but do not make either SSH or
+USB Direct Mode read-only; both can change hardware.
 
 Manual USB Console is also a Direct Mode path. On same-machine Chrome or Edge,
 the browser connects directly to an operator-selected USB-to-console adapter;

@@ -26,16 +26,17 @@ export function prepareTerminalInput(
   if (lines.length > 1 && lines.at(-1) === '') lines.pop();
   const lineCount = Math.max(1, lines.length);
   const characterCount = Array.from(input).length;
-  const byteCount = new TextEncoder().encode(input).byteLength;
+  const data = policy.lineEnding === 'raw'
+    ? input
+    : normalized.replaceAll('\n', outputNewline[policy.lineEnding]);
+  const byteCount = new TextEncoder().encode(data).byteLength;
   const containsUnsafeControl = Array.from(input).some((character) => {
     const codePoint = character.codePointAt(0) ?? 0;
     return (codePoint < 0x20 && codePoint !== 0x09 && codePoint !== 0x0a && codePoint !== 0x0d)
       || (codePoint >= 0x7f && codePoint <= 0x9f);
   });
   return {
-    data: policy.lineEnding === 'raw'
-      ? input
-      : normalized.replaceAll('\n', outputNewline[policy.lineEnding]),
+    data,
     lineCount,
     characterCount,
     byteCount,

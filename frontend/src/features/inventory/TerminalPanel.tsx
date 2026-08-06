@@ -1,5 +1,6 @@
 import { Plus, X } from 'lucide-react';
 import { useRef, useState } from 'react';
+import type { SshCompatibility } from '../../types/api';
 import { SshWebSocketTransport } from '../terminal/SshWebSocketTransport';
 import { TerminalSession } from '../terminal/TerminalSession';
 
@@ -7,14 +8,15 @@ const MAX_TERMINALS = 3;
 
 export function TerminalPanel({
   deviceId,
-  group1RiskAcknowledged = false,
+  sshCompatibility = 'modern',
 }: {
   deviceId: string;
-  group1RiskAcknowledged?: boolean;
+  sshCompatibility?: SshCompatibility;
 }) {
   const [sessions, setSessions] = useState([1]);
   const [active, setActive] = useState(1);
   const nextId = useRef(2);
+  const requiresGroup1Acknowledgement = sshCompatibility === 'cisco_legacy_group1';
 
   const add = () => {
     if (sessions.length >= MAX_TERMINALS) return;
@@ -48,10 +50,17 @@ export function TerminalPanel({
       {sessions.map((id) => (
         <div key={id} hidden={id !== active}>
           <TerminalSession
-            createTransport={() => new SshWebSocketTransport(deviceId, group1RiskAcknowledged)}
+            createTransport={(authorizationAcknowledged) => new SshWebSocketTransport(
+              deviceId,
+              requiresGroup1Acknowledgement && authorizationAcknowledged,
+            )}
             warningTitle="Direct Mode — no rollback protection"
             warningBody="Commands run on the device exactly as typed and may change its configuration. The app does not parse, approve, record, or automatically undo terminal commands."
-            acknowledgementLabel="I understand — open Direct Mode"
+            acknowledgementLabel={requiresGroup1Acknowledgement
+              ? 'I understand Group1 is a last-resort per-device SSH exception.'
+              : 'I understand — open Direct Mode'}
+            requireAuthorization={requiresGroup1Acknowledgement}
+            openLabel="I understand — open Direct Mode"
             inputPolicy={{ lineEnding: 'raw', localEcho: false, confirmMultiline: true }}
             ariaLabel="Device terminal"
             note="Idle sessions close after 15 minutes. Output is capped and never saved by the app."

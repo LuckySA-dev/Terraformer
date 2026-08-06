@@ -655,7 +655,10 @@ export function DeviceInspector({ device, onClose, onEdit, onDelete }: DeviceIns
         ) : null}
         {tab === 'terminal' ? (
           <Suspense fallback={<AppState kind="loading" title="Loading terminal" message="Preparing the local PTY client…" compact />}>
-            <TerminalPanel deviceId={device.id} />
+            <TerminalPanel
+              deviceId={device.id}
+              sshCompatibility={device.ssh_compatibility ?? 'modern'}
+            />
           </Suspense>
         ) : null}
         {tab === 'snapshots' ? (

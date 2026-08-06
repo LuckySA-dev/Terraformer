@@ -14,7 +14,7 @@ import {
 } from './transport';
 
 interface TerminalSessionProps {
-  createTransport: () => TerminalTransport;
+  createTransport: (authorizationAcknowledged: boolean) => TerminalTransport;
   warningTitle: string;
   warningBody: string;
   acknowledgementLabel: string;
@@ -154,7 +154,12 @@ export function TerminalSession({
 
   useEffect(() => {
     activeRef.current = active;
-    if (!active) queueMicrotask(() => setPendingPaste(undefined));
+    if (!active) {
+      queueMicrotask(() => {
+        setPendingPaste(undefined);
+        setAuthorized(false);
+      });
+    }
   }, [active]);
 
   useEffect(() => () => {
@@ -222,7 +227,7 @@ export function TerminalSession({
     sessionToken.current = token;
 
     try {
-      const transport = createTransport();
+      const transport = createTransport(authorized);
       transportRef.current = transport;
       const nextTerminal = new Terminal({
         allowProposedApi: false,
@@ -308,6 +313,16 @@ export function TerminalSession({
     void shutdown();
   };
 
+  const retry = () => {
+    if (requireAuthorization) {
+      setError(undefined);
+      setAccepted(false);
+      setAuthorized(false);
+      return;
+    }
+    open();
+  };
+
   const confirmPaste = () => {
     const pending = pendingPaste;
     const token = sessionToken.current;
@@ -370,7 +385,7 @@ export function TerminalSession({
         <div className="form-error" role="alert">
           <span>{error.message}</span>
           {error.recommendedAction === undefined ? null : <span>{error.recommendedAction}</span>}
-          {error.retryable ? <Button size="small" onClick={open}>Retry</Button> : null}
+          {error.retryable ? <Button size="small" onClick={retry}>Retry</Button> : null}
         </div>
       )}
       <p className="terminal-note">{note}</p>

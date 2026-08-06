@@ -14,6 +14,10 @@ const terminalMocks = vi.hoisted(() => ({
     emitInput: (data: string) => void;
     write: ReturnType<typeof vi.fn>;
     dispose: ReturnType<typeof vi.fn>;
+    loadAddon: ReturnType<typeof vi.fn>;
+    onTitleChange: ReturnType<typeof vi.fn>;
+    registerLinkProvider: ReturnType<typeof vi.fn>;
+    registerOscHandler: ReturnType<typeof vi.fn>;
   }[],
 }));
 
@@ -31,15 +35,22 @@ vi.mock('@xterm/xterm', () => ({
     private input: (data: string) => void = () => undefined;
     readonly write = vi.fn();
     readonly dispose = vi.fn();
+    readonly loadAddon = vi.fn();
+    readonly onTitleChange = vi.fn();
+    readonly registerLinkProvider = vi.fn();
+    readonly parser = { registerOscHandler: vi.fn() };
     constructor(options: unknown) {
       terminalMocks.options.push(options);
       terminalMocks.instances.push({
         emitInput: (data: string) => this.input(data),
         write: this.write,
         dispose: this.dispose,
+        loadAddon: this.loadAddon,
+        onTitleChange: this.onTitleChange,
+        registerLinkProvider: this.registerLinkProvider,
+        registerOscHandler: this.parser.registerOscHandler,
       });
     }
-    loadAddon() { return undefined; }
     open() { return undefined; }
     onData(input: (data: string) => void) {
       this.input = input;
@@ -97,13 +108,14 @@ class FakeTransport implements TerminalTransport {
 const renderUsbLikeSession = (
   value: FakeTransport | (() => FakeTransport),
   active = true,
+  lineEnding: 'cr' | 'lf' | 'crlf' = 'cr',
 ) => render(
   <TerminalSession
     createTransport={typeof value === 'function' ? value : () => value}
     warningTitle="Test Direct Mode"
     warningBody="Test warning"
     acknowledgementLabel="Open test session"
-    inputPolicy={{ lineEnding: 'cr', localEcho: false, confirmMultiline: true }}
+    inputPolicy={{ lineEnding, localEcho: false, confirmMultiline: true }}
     ariaLabel="Test terminal"
     note="Test session"
     active={active}
@@ -138,30 +150,36 @@ describe('Direct Mode terminal', () => {
     if (socket === undefined) throw new Error('Terminal WebSocket was not created.');
     socket.readyState = FakeWebSocket.OPEN;
     socket.onopen?.();
-    act(() => terminalMocks.instances[0]?.emitInput('show version\r\nreload'));
+    const commandMarker = 'PRIVATE_COMMAND_7F3A';
+    act(() => terminalMocks.instances[0]?.emitInput(`${commandMarker}\r\nreload`));
 
     expect(socket.sent).toEqual([
       JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: false }),
     ]);
-    expect(screen.getByText('2 lines and 20 characters are waiting. Review before sending.'))
+    expect(screen.getByText('2 lines and 28 characters are waiting. Review before sending.'))
       .toBeVisible();
-    expect(screen.queryByText('show version')).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain(commandMarker);
     await user.click(screen.getByRole('button', { name: 'Send 2 lines' }));
     expect(socket.sent).toEqual([
       JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: false }),
-      JSON.stringify({ type: 'input', data: 'show version\r\nreload' }),
+      JSON.stringify({ type: 'input', data: `${commandMarker}\r\nreload` }),
     ]);
   });
 
-  it('sends an acknowledged Group1 risk only in the initial Direct Mode message', async () => {
+  it('requires a fresh Group1 risk acknowledgment and sends it only on open', async () => {
     const user = userEvent.setup();
     render(
       <TerminalPanel
         deviceId="2ad0db14-5a87-4147-a4e7-c98f88322464"
-        group1RiskAcknowledged
+        sshCompatibility="cisco_legacy_group1"
       />,
     );
-    await user.click(screen.getByRole('button', { name: /open Direct Mode/ }));
+    const openButton = screen.getByRole('button', { name: /open Direct Mode/ });
+    const acknowledgement = screen.getByRole('checkbox', { name: /Group1.*last-resort/ });
+    expect(acknowledgement).not.toBeChecked();
+    expect(openButton).toBeDisabled();
+    await user.click(acknowledgement);
+    await user.click(openButton);
     const socket = FakeWebSocket.instances[0];
     if (socket === undefined) throw new Error('Expected an SSH WebSocket.');
     socket.readyState = FakeWebSocket.OPEN;
@@ -172,9 +190,28 @@ describe('Direct Mode terminal', () => {
       JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: true }),
       JSON.stringify({ type: 'input', data: 'show version' }),
     ]);
+
+    act(() => socket.onclose?.());
+    expect(await screen.findByRole('checkbox', { name: /Group1.*last-resort/ }))
+      .not.toBeChecked();
   });
 
-  it('creates xterm with privileged APIs, window operations, and links disabled', async () => {
+  it('clears a checked Group1 acknowledgment on tab switch', async () => {
+    const user = userEvent.setup();
+    render(
+      <TerminalPanel
+        deviceId="2ad0db14-5a87-4147-a4e7-c98f88322464"
+        sshCompatibility="cisco_legacy_group1"
+      />,
+    );
+    await user.click(screen.getByRole('checkbox', { name: /Group1.*last-resort/ }));
+    await user.click(screen.getByRole('button', { name: 'New terminal' }));
+    await user.click(screen.getByRole('tab', { name: 'Terminal 1' }));
+
+    expect(screen.getByRole('checkbox', { name: /Group1.*last-resort/ })).not.toBeChecked();
+  });
+
+  it('constructs xterm with privileged APIs disabled and registers no handlers', async () => {
     render(<TerminalPanel deviceId="2ad0db14-5a87-4147-a4e7-c98f88322464" />);
     await userEvent.click(screen.getByRole('button', { name: /open Direct Mode/ }));
 
@@ -183,6 +220,10 @@ describe('Direct Mode terminal', () => {
       windowOptions: {},
       linkHandler: null,
     });
+    expect(terminalMocks.instances[0]?.loadAddon).toHaveBeenCalledOnce();
+    expect(terminalMocks.instances[0]?.onTitleChange).not.toHaveBeenCalled();
+    expect(terminalMocks.instances[0]?.registerLinkProvider).not.toHaveBeenCalled();
+    expect(terminalMocks.instances[0]?.registerOscHandler).not.toHaveBeenCalled();
   });
 
   it('does not persist terminal data or invoke privileged browser APIs', async () => {
@@ -212,6 +253,13 @@ describe('Direct Mode terminal', () => {
     act(() => socket.onmessage?.({
       data: JSON.stringify({ type: 'output', data: '\u001b]8;;https://invalid.example\u0007link' }),
     }));
+    act(() => socket.onmessage?.({ data: JSON.stringify({
+      type: 'error',
+      code: 'device_authentication_failed',
+      message: 'Device authentication failed.',
+      phase: 'authentication',
+      retryable: false,
+    }) }));
 
     expect(terminalMocks.instances[0]?.write).toHaveBeenCalledOnce();
     expect(FakeWebSocket.instances).toHaveLength(1);
@@ -317,12 +365,19 @@ describe('Direct Mode terminal', () => {
     expect(socket.close).toHaveBeenCalledOnce();
   });
 
-  it('rejects input above 4,096 UTF-8 bytes before buffering or writing', async () => {
+  it('accepts 4,096 prepared bytes and rejects 4,097 before buffering or writing', async () => {
     const transport = new FakeTransport();
-    renderUsbLikeSession(transport);
+    renderUsbLikeSession(transport, true, 'crlf');
     await userEvent.click(screen.getByRole('button', { name: 'Open test session' }));
 
-    act(() => terminalMocks.instances[0]?.emitInput('🙂'.repeat(1_025)));
+    act(() => terminalMocks.instances[0]?.emitInput(
+      `${'x'.repeat(2_047)}\n${'y'.repeat(2_047)}`,
+    ));
+    expect(screen.getByRole('button', { name: 'Send 2 lines' })).toBeVisible();
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    act(() => terminalMocks.instances[0]?.emitInput(
+      `${'x'.repeat(2_047)}\n${'y'.repeat(2_048)}`,
+    ));
 
     expect(screen.getByRole('alert')).toHaveTextContent('Terminal input is too large.');
     expect(screen.queryByRole('button', { name: /Send/ })).not.toBeInTheDocument();
@@ -454,6 +509,34 @@ describe('Direct Mode terminal', () => {
     expect(screen.getByText('Verify the selected credential profile and device login policy.'))
       .toBeVisible();
     expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+  });
+
+  it('clears Group1 acknowledgment before a retry can open a fresh session', async () => {
+    const user = userEvent.setup();
+    render(
+      <TerminalPanel
+        deviceId="2ad0db14-5a87-4147-a4e7-c98f88322464"
+        sshCompatibility="cisco_legacy_group1"
+      />,
+    );
+    await user.click(screen.getByRole('checkbox', { name: /Group1.*last-resort/ }));
+    await user.click(screen.getByRole('button', { name: /open Direct Mode/ }));
+    const socket = FakeWebSocket.instances[0];
+    if (socket === undefined) throw new Error('Expected an SSH WebSocket.');
+    act(() => socket.onmessage?.({ data: JSON.stringify({
+      type: 'error',
+      code: 'device_connection_timeout',
+      message: 'The device connection timed out.',
+      phase: 'tcp_connection',
+      retryable: true,
+    }) }));
+
+    await user.click(await screen.findByRole('button', { name: 'Retry' }));
+
+    const acknowledgement = screen.getByRole('checkbox', { name: /Group1.*last-resort/ });
+    expect(acknowledgement).not.toBeChecked();
+    expect(screen.getByRole('button', { name: /open Direct Mode/ })).toBeDisabled();
+    expect(FakeWebSocket.instances).toHaveLength(1);
   });
 
   it('resets after pagehide and reopens with fresh session objects', async () => {

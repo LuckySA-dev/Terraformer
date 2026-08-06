@@ -22,6 +22,8 @@ vi.mock('../src/api/network', () => ({
   },
 }));
 
+vi.mock('@xterm/xterm', () => ({ Terminal: vi.fn() }));
+
 const device: Device = {
   id: '2ad0db14-5a87-4147-a4e7-c98f88322464',
   name: 'Generic edge',
@@ -105,6 +107,16 @@ describe('DeviceInspector API contract and safety states', () => {
     renderInspector({ ...device, ssh_compatibility: 'cisco_legacy' });
 
     expect(await screen.findByText('LEGACY SSH')).toBeVisible();
+  });
+
+  it('passes saved Group1 mode to the terminal acknowledgment boundary', async () => {
+    const user = userEvent.setup();
+    renderInspector({ ...device, ssh_compatibility: 'cisco_legacy_group1' });
+
+    await user.click(screen.getByRole('button', { name: 'Terminal' }));
+
+    expect(await screen.findByRole('checkbox', { name: /Group1.*last-resort/ })).not.toBeChecked();
+    expect(screen.getByRole('button', { name: /open Direct Mode/ })).toBeDisabled();
   });
 
   it('uses admin_up and oper_up interface fields', async () => {

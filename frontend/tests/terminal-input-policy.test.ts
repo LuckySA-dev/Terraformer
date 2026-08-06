@@ -14,7 +14,7 @@ describe('terminal input policy', () => {
         data: expected,
         lineCount: 2,
         characterCount: Array.from(input).length,
-        byteCount: new TextEncoder().encode(input).byteLength,
+        byteCount: new TextEncoder().encode(expected).byteLength,
         containsUnsafeControl: false,
         requiresConfirmation: true,
       });
@@ -70,6 +70,14 @@ describe('terminal input policy', () => {
     expect(prepareTerminalInput('🙂', {
       lineEnding: 'raw', localEcho: false, confirmMultiline: true,
     })).toMatchObject({ characterCount: 1, byteCount: 4 });
+  });
+
+  it('counts bytes after USB line-ending expansion', () => {
+    const input = `${'x'.repeat(2_047)}\n${'y'.repeat(2_048)}`;
+    expect(new TextEncoder().encode(input)).toHaveLength(4_096);
+    expect(prepareTerminalInput(input, {
+      lineEnding: 'crlf', localEcho: false, confirmMultiline: true,
+    })).toMatchObject({ byteCount: 4_097, requiresConfirmation: true });
   });
 
   it.each([

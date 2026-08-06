@@ -6,6 +6,10 @@ Current delivery target: phases 0–2
 This is the status ledger, not a roadmap. Product intent and future scope remain
 in `network-automation-final-plan.md`.
 
+The requirement-level Phase 1-2 closure audit is tracked in
+`PHASE_1_2_READINESS.md`. It distinguishes missing implementation, automated
+verification, virtual-lab evidence, and physical-lab evidence.
+
 ## Status meanings
 
 - **Implemented** — code exists and required automated verification passes.

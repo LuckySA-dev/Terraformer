@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import traceback
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -52,6 +53,7 @@ def parameters() -> ConnectionParameters:
         port=22,
         username="fixture-user",
         password="fixture-password",
+        known_hosts="192.0.2.10 ssh-ed25519 AAAAfixture\n",
         connect_timeout_seconds=7,
         command_timeout_seconds=41,
     )
@@ -250,8 +252,11 @@ def test_connection_and_command_timeouts_are_wired_independently(monkeypatch) ->
         def __init__(self, **kwargs) -> None:
             captured.update(kwargs)
 
+        def close(self) -> None:
+            pass
+
     monkeypatch.setitem(sys.modules, "scrapli", SimpleNamespace(Scrapli=FakeScrapli))
-    ScrapliTransport(parameters(), strict_host_key=True)
+    transport = ScrapliTransport(parameters())
 
     assert captured["timeout_socket"] == 7
     assert captured["timeout_transport"] == 7
@@ -259,6 +264,62 @@ def test_connection_and_command_timeouts_are_wired_independently(monkeypatch) ->
     assert captured["auth_strict_key"] is True
     assert captured["platform"] == "cisco_iosxe"
     assert captured["transport"] == "system"
+    transport.close()
+
+
+def test_scrapli_uses_only_device_pin_and_removes_temp_file(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeScrapli:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+        def open(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setitem(sys.modules, "scrapli", SimpleNamespace(Scrapli=FakeScrapli))
+    transport = ScrapliTransport(parameters())
+    transport.open()
+    options = captured["transport_options"]["open_cmd"]  # type: ignore[index]
+    path_option = next(str(item) for item in options if str(item).startswith("UserKnownHostsFile="))
+    known_hosts_path = Path(path_option.partition("=")[2])
+
+    assert known_hosts_path.read_text(encoding="utf-8") == (
+        "192.0.2.10 ssh-ed25519 AAAAfixture\n"
+    )
+    assert "StrictHostKeyChecking=yes" in options
+    assert "GlobalKnownHostsFile=none" in options
+    transport.close()
+    transport.close()
+    assert not known_hosts_path.exists()
+
+
+def test_scrapli_removes_device_pin_after_open_failure(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeScrapli:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+        def open(self) -> None:
+            raise RuntimeError("raw-open-error")
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setitem(sys.modules, "scrapli", SimpleNamespace(Scrapli=FakeScrapli))
+    transport = ScrapliTransport(parameters())
+    options = captured["transport_options"]["open_cmd"]  # type: ignore[index]
+    path_option = next(str(item) for item in options if str(item).startswith("UserKnownHostsFile="))
+    known_hosts_path = Path(path_option.partition("=")[2])
+
+    with pytest.raises(RuntimeError, match="raw-open-error"):
+        transport.open()
+    transport.close()
+    assert not known_hosts_path.exists()
 
 
 def test_scrapli_transports_force_password_only_authentication(monkeypatch) -> None:
@@ -267,6 +328,9 @@ def test_scrapli_transports_force_password_only_authentication(monkeypatch) -> N
     class FakeConnection:
         def __init__(self, **kwargs) -> None:
             captured.append(kwargs)
+
+        def close(self) -> None:
+            pass
 
     monkeypatch.setitem(sys.modules, "scrapli", SimpleNamespace(Scrapli=FakeConnection))
     monkeypatch.setitem(
@@ -281,9 +345,9 @@ def test_scrapli_transports_force_password_only_authentication(monkeypatch) -> N
         username="fixture-user",
         password="fixture-password",
         enable_password="fixture-enable-password",
+        known_hosts="192.0.2.10 ssh-ed25519 AAAAfixture\n",
     )
-    ScrapliTransport(secret_parameters, strict_host_key=True)
-    ScrapliGenericTransport(secret_parameters, strict_host_key=True)
+    transports = [ScrapliTransport(secret_parameters), ScrapliGenericTransport(secret_parameters)]
 
     expected = [
         "-o",
@@ -306,9 +370,14 @@ def test_scrapli_transports_force_password_only_authentication(monkeypatch) -> N
         "NumberOfPasswordPrompts=1",
     ]
     for constructor in captured:
-        assert constructor["transport_options"] == {"open_cmd": expected}
+        open_cmd = constructor["transport_options"]["open_cmd"]  # type: ignore[index]
+        assert open_cmd[: len(expected)] == expected
+        assert "StrictHostKeyChecking=yes" in open_cmd
+        assert "GlobalKnownHostsFile=none" in open_cmd
         assert secret_parameters.password not in expected
         assert secret_parameters.enable_password not in expected
+    for transport in transports:
+        transport.close()
 
 
 @pytest.mark.parametrize(
@@ -347,6 +416,9 @@ def test_scrapli_transports_scope_exact_compatibility_options(
         def __init__(self, **kwargs) -> None:
             captured.append(kwargs)
 
+        def close(self) -> None:
+            pass
+
     monkeypatch.setitem(sys.modules, "scrapli", SimpleNamespace(Scrapli=FakeConnection))
     monkeypatch.setitem(
         sys.modules,
@@ -359,11 +431,11 @@ def test_scrapli_transports_scope_exact_compatibility_options(
         username="fixture-user",
         password="fixture-password",
         enable_password="fixture-enable-password",
+        known_hosts="192.0.2.10 ssh-ed25519 AAAAfixture\n",
         ssh_compatibility=mode,
     )
 
-    ScrapliTransport(secret_parameters, strict_host_key=True)
-    ScrapliGenericTransport(secret_parameters, strict_host_key=True)
+    transports = [ScrapliTransport(secret_parameters), ScrapliGenericTransport(secret_parameters)]
 
     authentication_options = (
         "IdentityAgent=none",
@@ -381,8 +453,12 @@ def test_scrapli_transports_scope_exact_compatibility_options(
     ]
     for constructor in captured:
         open_cmd = constructor["transport_options"]["open_cmd"]  # type: ignore[index]
-        assert open_cmd == expected
+        assert open_cmd[: len(expected)] == expected
+        assert "StrictHostKeyChecking=yes" in open_cmd
+        assert "GlobalKnownHostsFile=none" in open_cmd
         assert secret_parameters.password not in open_cmd
+    for transport in transports:
+        transport.close()
         assert secret_parameters.enable_password not in open_cmd
 
 
@@ -717,7 +793,7 @@ def test_scrapli_command_rejection_is_typed(monkeypatch) -> None:
             return FailedResponse()
 
     monkeypatch.setitem(sys.modules, "scrapli", SimpleNamespace(Scrapli=FakeScrapli))
-    transport = ScrapliTransport(parameters(), strict_host_key=True)
+    transport = ScrapliTransport(parameters())
 
     with pytest.raises(DriverCommandRejectedError):
         transport.send_command("show version")
@@ -730,9 +806,12 @@ def test_generic_transport_is_authenticated_but_vendor_neutral(monkeypatch) -> N
         def __init__(self, **kwargs) -> None:
             captured.update(kwargs)
 
+        def close(self) -> None:
+            pass
+
     driver_module = SimpleNamespace(GenericDriver=FakeGenericDriver)
     monkeypatch.setitem(sys.modules, "scrapli.driver", driver_module)
-    ScrapliGenericTransport(parameters(), strict_host_key=True)
+    transport = ScrapliGenericTransport(parameters())
 
     assert "platform" not in captured
     assert captured["auth_username"] == "fixture-user"
@@ -740,6 +819,7 @@ def test_generic_transport_is_authenticated_but_vendor_neutral(monkeypatch) -> N
     assert captured["timeout_ops"] == 41
     assert captured["auth_strict_key"] is True
     assert captured["transport"] == "system"
+    transport.close()
 
 
 def test_malformed_cli_output_degrades_to_unknown_fields() -> None:

@@ -11,14 +11,26 @@ from app.models import Event, Job
 from app.services.connection_gate import ConnectionOperation
 
 
-def _device_payload(profile_id: str, *, vendor: str = "cisco_iosxe") -> dict[str, object]:
-    return {
+def _device_payload(
+    client: TestClient,
+    profile_id: str,
+    *,
+    vendor: str = "cisco_iosxe",
+) -> dict[str, object]:
+    payload: dict[str, object] = {
         "name": f"{vendor}-diagnostic-target",
         "management_address": "192.0.2.30" if vendor == "cisco_iosxe" else "192.0.2.31",
         "port": 22,
         "vendor": vendor,
         "credential_profile_id": profile_id,
     }
+    candidate = client.post(
+        "/api/ssh-host-key-candidates",
+        json={key: value for key, value in payload.items() if key != "name"},
+    )
+    assert candidate.status_code == 201, candidate.text
+    payload["host_key_candidate_id"] = candidate.json()["id"]
+    return payload
 
 
 def test_allowlisted_diagnostic_runs_as_sanitized_background_job(
@@ -31,7 +43,7 @@ def test_allowlisted_diagnostic_runs_as_sanitized_background_job(
 ) -> None:
     created = authenticated_client.post(
         "/api/devices",
-        json=_device_payload(str(credential_profile["id"])),
+        json=_device_payload(authenticated_client, str(credential_profile["id"])),
     )
     assert created.status_code == 201, created.text
     device_id = created.json()["id"]
@@ -80,7 +92,9 @@ def test_diagnostic_rejects_unknown_action_and_unsupported_driver(
 
     created = authenticated_client.post(
         "/api/devices",
-        json=_device_payload(str(credential_profile["id"]), vendor="generic"),
+        json=_device_payload(
+            authenticated_client, str(credential_profile["id"]), vendor="generic"
+        ),
     )
     assert created.status_code == 201, created.text
     unsupported = authenticated_client.post(
@@ -113,7 +127,7 @@ def test_ping_requires_one_valid_target_and_uses_bounded_command(
 ) -> None:
     created = authenticated_client.post(
         "/api/devices",
-        json=_device_payload(str(credential_profile["id"])),
+        json=_device_payload(authenticated_client, str(credential_profile["id"])),
     )
     device_id = created.json()["id"]
     injection = authenticated_client.post(
@@ -150,7 +164,7 @@ def test_diagnostic_uses_one_structured_read_permit(
 ) -> None:
     created = authenticated_client.post(
         "/api/devices",
-        json=_device_payload(str(credential_profile["id"])),
+        json=_device_payload(authenticated_client, str(credential_profile["id"])),
     ).json()
     fake_connection_gate.acquired.clear()
     fake_connection_gate.released.clear()

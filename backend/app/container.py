@@ -19,6 +19,7 @@ from app.drivers.transport import ScrapliGenericTransportFactory, ScrapliTranspo
 from app.jobs.queue import JobQueue, RQJobQueue
 from app.services.connection_gate import RedisConnectionGate
 from app.services.credentials import CredentialVault
+from app.services.ssh_trust import HostKeyCandidateStore, HostKeyProbe, HostKeyTrustService
 
 
 class ApplicationContainer:
@@ -32,6 +33,8 @@ class ApplicationContainer:
         key_provider: MasterKeyProvider | None = None,
         snapshot_store: EncryptedSnapshotStore | None = None,
         connection_gate: RedisConnectionGate | None = None,
+        host_key_candidate_store: HostKeyCandidateStore | None = None,
+        host_key_probe: HostKeyProbe | None = None,
     ) -> None:
         self.settings = settings or get_settings()
         self._session_factory = session_factory
@@ -44,6 +47,8 @@ class ApplicationContainer:
         self.passwords = PasswordService()
         self._snapshot_store = snapshot_store
         self._connection_gate = connection_gate
+        self._host_key_candidate_store = host_key_candidate_store
+        self._host_key_probe = host_key_probe
 
     @cached_property
     def session_factory(self) -> sessionmaker[Session]:
@@ -55,16 +60,12 @@ class ApplicationContainer:
     def drivers(self) -> DriverRegistry:
         if self._drivers is not None:
             return self._drivers
-        transport_factory = ScrapliTransportFactory(
-            strict_host_key=self.settings.ssh_strict_host_key
-        )
+        transport_factory = ScrapliTransportFactory()
         return DriverRegistry(
             [
                 CiscoIOSXEDriver(transport_factory),
                 GenericReadOnlyDriver(
-                    ScrapliGenericTransportFactory(
-                        strict_host_key=self.settings.ssh_strict_host_key
-                    )
+                    ScrapliGenericTransportFactory()
                 ),
             ]
         )
@@ -86,6 +87,13 @@ class ApplicationContainer:
             redis_client=Redis.from_url(self.settings.resolved_redis_url()),
             settings=self.settings,
         )
+
+    @cached_property
+    def host_key_trust(self) -> HostKeyTrustService:
+        store = self._host_key_candidate_store or HostKeyCandidateStore(
+            Redis.from_url(self.settings.resolved_redis_url())
+        )
+        return HostKeyTrustService(store, probe=self._host_key_probe)
 
     @cached_property
     def credential_vault(self) -> CredentialVault:

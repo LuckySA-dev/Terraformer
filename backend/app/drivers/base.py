@@ -86,6 +86,7 @@ class ConnectionParameters:
     port: int
     username: str
     password: str
+    known_hosts: str = ""
     enable_password: str | None = None
     connect_timeout_seconds: float = 10.0
     command_timeout_seconds: float = 30.0

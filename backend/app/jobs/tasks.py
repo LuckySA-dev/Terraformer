@@ -43,6 +43,7 @@ def execute_job(job_id: str) -> dict[str, object]:
                 settings=container.settings,
                 drivers=container.drivers,
                 vault=container.credential_vault,
+                host_key_trust=container.host_key_trust,
                 connection_gate=container.connection_gate,
             )
             if job.type == JobType.REFRESH_DEVICE and job.device_id is not None:

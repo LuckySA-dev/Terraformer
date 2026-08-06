@@ -49,7 +49,6 @@ class Settings(BaseSettings):
 
     ssh_connect_timeout_seconds: float = Field(default=10.0, gt=0, le=120)
     ssh_command_timeout_seconds: float = Field(default=30.0, gt=0, le=600)
-    ssh_strict_host_key: bool = True
     ssh_legacy_enabled: bool = False
     ssh_group1_enabled: bool = False
     ssh_terminal_enabled: bool = True

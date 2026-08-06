@@ -40,6 +40,7 @@ class SnapshotService:
             host=device.management_address,
             port=device.port,
             profile_id=device.credential_profile_id,
+            vendor=device.vendor,
             compatibility=device.ssh_compatibility,
             group1_risk_acknowledged=(
                 device.ssh_compatibility is SSHCompatibility.CISCO_LEGACY_GROUP1

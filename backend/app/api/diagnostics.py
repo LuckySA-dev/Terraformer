@@ -26,6 +26,7 @@ def run_diagnostic(
         settings=container.settings,
         drivers=container.drivers,
         vault=container.credential_vault,
+        host_key_trust=container.host_key_trust,
     )
     device = devices.get(request.device_id)
     driver = container.drivers.get(device.vendor)

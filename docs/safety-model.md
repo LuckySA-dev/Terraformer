@@ -150,9 +150,9 @@ encrypted profile. Do not paste it into an issue or support chat.
   the application, but a lab test should normally use one.
 - Stop on unexpected prompts, privilege changes, parser uncertainty, timeouts,
   or a vendor/OS mismatch. Do not “try the closest driver.”
-- The local-lab default `SSH_STRICT_HOST_KEY=false` accepts impersonation risk.
-  Persistent or LAN-accessible deployments must mount a trusted `known_hosts`
-  file and set it to `true`; never auto-accept a changed host key.
+- First contact may inspect only the selected endpoint's public SSH host key.
+  Every authenticated connection uses the explicitly confirmed per-device pin;
+  there is no relaxed global mode and changed keys always fail closed.
 - Keep connection establishment (`SSH_CONNECT_TIMEOUT_SECONDS`, default 10) and
   command execution (`SSH_COMMAND_TIMEOUT_SECONDS`, default 30) as separate,
   bounded timeouts. A command timeout must not trigger an unbounded reconnect.

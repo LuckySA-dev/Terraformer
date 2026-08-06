@@ -105,6 +105,16 @@ class DriverHostKeyChangedError(DriverHostKeyVerificationError):
     default_message = "The device SSH host key has changed"
 
 
+class HostKeyCandidateMismatchError(ConflictError):
+    code = "host_key_candidate_mismatch"
+    default_message = "The SSH host-key candidate does not match this connection"
+
+
+class HostKeyCandidateExpiredError(ConflictError):
+    code = "host_key_candidate_expired"
+    default_message = "The SSH host-key candidate expired or is unavailable"
+
+
 class DriverSSHNegotiationError(DriverConnectionError):
     code = "legacy_ssh_negotiation_failed"
     default_message = "SSH negotiation with the device failed"

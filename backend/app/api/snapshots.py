@@ -18,6 +18,7 @@ def _service(session: SessionDependency, container: ContainerDependency) -> Snap
         settings=container.settings,
         drivers=container.drivers,
         vault=container.credential_vault,
+        host_key_trust=container.host_key_trust,
     )
     return SnapshotService(
         session,
@@ -48,4 +49,3 @@ def get_snapshot(
     snapshot, content = _service(session, container).get_sanitized_content(snapshot_id)
     metadata = ConfigSnapshotView.model_validate(snapshot).model_dump()
     return ConfigSnapshotContentView(**metadata, content=content)
-

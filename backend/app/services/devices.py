@@ -9,7 +9,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
-from app.core.errors import AppError, ConfigurationError, ConflictError, UnsupportedCapabilityError
+from app.core.errors import (
+    AppError,
+    ConfigurationError,
+    ConflictError,
+    DriverHostKeyUnknownError,
+    UnsupportedCapabilityError,
+)
 from app.core.logging import sanitize_text
 from app.core.time import utc_now
 from app.drivers import (
@@ -34,6 +40,7 @@ from app.models import (
 from app.repositories.credentials import CredentialProfileRepository
 from app.repositories.devices import DeviceRepository
 from app.repositories.events import EventRepository
+from app.repositories.ssh_trust import DeviceSSHHostKeyRepository
 from app.schemas.devices import DeviceConnectionFields, DeviceCreate, DeviceUpdate
 from app.schemas.diagnostics import DiagnosticResult
 from app.services.connection_gate import (
@@ -44,6 +51,7 @@ from app.services.connection_gate import (
     RedisConnectionGate,
 )
 from app.services.credentials import CredentialVault
+from app.services.ssh_trust import HostKeyTrustService, ResolvedHostKeyCandidate, known_hosts_line
 
 _MAX_AUDIT_DURATION_MS = 86_400_000
 _POLICY_ERROR_DETAILS = {"phase": "authorization", "retryable": False}
@@ -82,16 +90,19 @@ class DeviceService:
         settings: Settings,
         drivers: DriverRegistry,
         vault: CredentialVault,
+        host_key_trust: HostKeyTrustService,
         connection_gate: RedisConnectionGate | None = None,
     ) -> None:
         self._session = session
         self._settings = settings
         self._drivers = drivers
         self._vault = vault
+        self._host_key_trust = host_key_trust
         self._connection_gate = connection_gate
         self._devices = DeviceRepository(session)
         self._credentials = CredentialProfileRepository(session)
         self._events = EventRepository(session)
+        self._host_keys = DeviceSSHHostKeyRepository(session)
 
     def list(self) -> list[Device]:
         return self._devices.list()
@@ -102,7 +113,8 @@ class DeviceService:
     def create(self, request: DeviceCreate, *, job_id: UUID | None = None) -> Device:
         if self._devices.find_by_endpoint(request.management_address, request.port) is not None:
             raise ConflictError("A device with this management endpoint already exists")
-        result = self.test_connection(request)
+        result = self.test_connection(request, _commit=False)
+        host_key = self._resolve_candidate(request)
         driver = self._drivers.get(request.vendor)
         device = Device(
             name=request.name.strip(),
@@ -117,6 +129,7 @@ class DeviceService:
         )
         try:
             self._devices.add(device)
+            self._host_keys.add(device.id, host_key)
             self._devices.replace_capabilities(device, driver.capabilities)
             self._events.record(
                 event_type="device.created",
@@ -129,12 +142,14 @@ class DeviceService:
         except IntegrityError as exc:
             self._session.rollback()
             raise ConflictError("A device with this management endpoint already exists") from exc
+        self._host_key_trust.delete_candidate(host_key.id)
         return self._devices.get(device.id)
 
     def update(self, device_id: UUID, request: DeviceUpdate) -> Device:
         device = self._devices.get(device_id, for_update=True)
         changes = request.model_dump(exclude_unset=True)
         group1_risk_acknowledged = bool(changes.pop("group1_risk_acknowledged", False))
+        host_key_candidate_id = changes.pop("host_key_candidate_id", None)
         connection_fields = {
             "management_address",
             "port",
@@ -151,12 +166,15 @@ class DeviceService:
             ),
             ssh_compatibility=changes.get("ssh_compatibility", device.ssh_compatibility),
             group1_risk_acknowledged=group1_risk_acknowledged,
+            host_key_candidate_id=host_key_candidate_id,
         )
+        replacement_host_key: ResolvedHostKeyCandidate | None = None
         if changes.keys() & connection_fields:
             other = self._devices.find_by_endpoint(candidate.management_address, candidate.port)
             if other is not None and other.id != device.id:
                 raise ConflictError("A device with this management endpoint already exists")
             self.test_connection(candidate, _commit=False)
+            replacement_host_key = self._resolve_candidate(candidate)
         for field, value in changes.items():
             setattr(device, field, value.strip() if field == "name" else value)
         if changes.keys() & connection_fields:
@@ -165,6 +183,9 @@ class DeviceService:
             device.last_seen_at = utc_now()
             device.last_error_code = None
             self._devices.replace_capabilities(device, driver.capabilities)
+            if replacement_host_key is None:
+                raise RuntimeError("Host-key replacement was not prepared")
+            self._host_keys.replace(device.id, replacement_host_key)
         self._events.record(
             event_type="device.updated",
             message="Device metadata was updated",
@@ -176,6 +197,8 @@ class DeviceService:
         except IntegrityError as exc:
             self._session.rollback()
             raise ConflictError("Device update conflicts with existing data") from exc
+        if replacement_host_key is not None:
+            self._host_key_trust.delete_candidate(replacement_host_key.id)
         return self._devices.get(device.id)
 
     def delete(self, device_id: UUID) -> None:
@@ -208,9 +231,11 @@ class DeviceService:
             host=request.management_address,
             port=request.port,
             profile_id=request.credential_profile_id,
+            vendor=request.vendor,
             compatibility=request.ssh_compatibility,
             group1_risk_acknowledged=request.group1_risk_acknowledged,
             operation=ConnectionOperation.CONNECTION_TEST,
+            host_key_candidate_id=request.host_key_candidate_id,
             _commit=_commit,
         ) as parameters:
             driver = self._drivers.get(request.vendor)
@@ -273,6 +298,7 @@ class DeviceService:
             host=device.management_address,
             port=device.port,
             profile_id=device.credential_profile_id,
+            vendor=device.vendor,
             compatibility=device.ssh_compatibility,
             group1_risk_acknowledged=(
                 device.ssh_compatibility is SSHCompatibility.CISCO_LEGACY_GROUP1
@@ -334,6 +360,7 @@ class DeviceService:
             host=device.management_address,
             port=device.port,
             profile_id=device.credential_profile_id,
+            vendor=device.vendor,
             compatibility=device.ssh_compatibility,
             group1_risk_acknowledged=(
                 device.ssh_compatibility is SSHCompatibility.CISCO_LEGACY_GROUP1
@@ -375,9 +402,11 @@ class DeviceService:
         self,
         *,
         profile_id: UUID,
+        device_id: UUID,
         host: str,
         port: int,
     ) -> ConnectionParameters:
+        host_key = self._host_keys.require(device_id)
         profile = self._credentials.get(profile_id)
         material = self._vault.decrypt(profile)
         return ConnectionParameters(
@@ -385,6 +414,7 @@ class DeviceService:
             port=port,
             username=material.username,
             password=material.password,
+            known_hosts=known_hosts_line(host, port, host_key.public_key),
             enable_password=material.enable_password,
             connect_timeout_seconds=self._settings.ssh_connect_timeout_seconds,
             command_timeout_seconds=self._settings.ssh_command_timeout_seconds,
@@ -398,9 +428,11 @@ class DeviceService:
         host: str,
         port: int,
         profile_id: UUID,
+        vendor: Vendor,
         compatibility: SSHCompatibility,
         group1_risk_acknowledged: bool,
         operation: ConnectionOperation,
+        host_key_candidate_id: UUID | None = None,
         _commit: bool = True,
     ) -> Iterator[ConnectionParameters]:
         started = monotonic()
@@ -449,6 +481,27 @@ class DeviceService:
                 self._session.commit()
             raise error
 
+        if device_id is None:
+            if host_key_candidate_id is None:
+                raise DriverHostKeyUnknownError(details={"phase": "host_key_verification"})
+            candidate_request = DeviceConnectionFields(
+                management_address=normalized_host,
+                port=port,
+                vendor=vendor,
+                credential_profile_id=profile_id,
+                ssh_compatibility=mode,
+                group1_risk_acknowledged=group1_risk_acknowledged,
+                host_key_candidate_id=host_key_candidate_id,
+            )
+            candidate = self._host_key_trust.resolve_candidate(
+                host_key_candidate_id,
+                candidate_request,
+            )
+            pinned_known_hosts = candidate.known_hosts
+        else:
+            host_key = self._host_keys.require(device_id)
+            pinned_known_hosts = known_hosts_line(normalized_host, port, host_key.public_key)
+
         target = ConnectionTarget.from_endpoint(
             host=normalized_host,
             port=port,
@@ -484,6 +537,7 @@ class DeviceService:
                 port=port,
                 username=material.username,
                 password=material.password,
+                known_hosts=pinned_known_hosts,
                 enable_password=material.enable_password,
                 connect_timeout_seconds=self._settings.ssh_connect_timeout_seconds,
                 command_timeout_seconds=self._settings.ssh_command_timeout_seconds,
@@ -546,6 +600,17 @@ class DeviceService:
             profile = None
             if permit is not None:
                 gate.release(permit)
+
+    def _resolve_candidate(
+        self,
+        request: DeviceConnectionFields,
+    ) -> ResolvedHostKeyCandidate:
+        if request.host_key_candidate_id is None:
+            raise DriverHostKeyUnknownError(details={"phase": "host_key_verification"})
+        return self._host_key_trust.resolve_candidate(
+            request.host_key_candidate_id,
+            request,
+        )
 
     def _audit_connection(
         self,

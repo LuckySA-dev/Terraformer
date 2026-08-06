@@ -163,16 +163,22 @@ def _register_device(
     *,
     compatibility: SSHCompatibility = SSHCompatibility.MODERN,
 ) -> str:
+    connection = {
+        "management_address": "192.0.2.10",
+        "port": 22,
+        "vendor": "cisco_iosxe",
+        "credential_profile_id": profile_id,
+        "ssh_compatibility": compatibility.value,
+        "group1_risk_acknowledged": (compatibility is SSHCompatibility.CISCO_LEGACY_GROUP1),
+    }
+    candidate = client.post("/api/ssh-host-key-candidates", json=connection)
+    assert candidate.status_code == 201, candidate.text
     response = client.post(
         "/api/devices",
         json={
             "name": "edge-rtr-01",
-            "management_address": "192.0.2.10",
-            "port": 22,
-            "vendor": "cisco_iosxe",
-            "credential_profile_id": profile_id,
-            "ssh_compatibility": compatibility.value,
-            "group1_risk_acknowledged": (compatibility is SSHCompatibility.CISCO_LEGACY_GROUP1),
+            **connection,
+            "host_key_candidate_id": candidate.json()["id"],
         },
     )
     assert response.status_code == 201, response.text
@@ -201,6 +207,7 @@ def _parameters(mode: SSHCompatibility) -> ConnectionParameters:
         port=22,
         username="lab-user",
         password="fixture-password",
+        known_hosts="192.0.2.10 ssh-ed25519 AAAAfixture\n",
         ssh_compatibility=mode,
     )
 
@@ -247,9 +254,10 @@ def test_open_terminal_uses_exact_password_only_request_scoped_policy(
 
     monkeypatch.setattr(terminal_api.asyncssh, "connect", fake_connect)
     session = asyncio.run(
-        terminal_api._open_terminal(_parameters(mode), strict_host_key=True, pty_timeout_seconds=1)
+        terminal_api._open_terminal(_parameters(mode), pty_timeout_seconds=1)
     )
     asyncio.run(session.close())
+    known_hosts = captured.pop("known_hosts")
 
     assert captured == {
         "host": "192.0.2.10",
@@ -280,43 +288,11 @@ def test_open_terminal_uses_exact_password_only_request_scoped_policy(
     assert real_options.gss_auth is False
     assert real_options.gss_kex is False
     assert real_options.disable_trivial_auth is True
-    assert "known_hosts" not in captured
+    assert known_hosts is not None
     assert connection.create_kwargs == {
         "term_type": "xterm-256color",
         "term_size": (80, 24),
     }
-
-
-@pytest.mark.parametrize("mode", list(SSHCompatibility))
-def test_compatibility_never_weakens_strict_host_key_verification(
-    mode: SSHCompatibility,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    strict: dict[str, object] = {}
-    relaxed: dict[str, object] = {}
-
-    async def strict_connect(**kwargs: object) -> FakeAsyncSSHConnection:
-        strict.update(kwargs)
-        return FakeAsyncSSHConnection()
-
-    monkeypatch.setattr(terminal_api.asyncssh, "connect", strict_connect)
-    session = asyncio.run(
-        terminal_api._open_terminal(_parameters(mode), strict_host_key=True, pty_timeout_seconds=1)
-    )
-    asyncio.run(session.close())
-
-    async def relaxed_connect(**kwargs: object) -> FakeAsyncSSHConnection:
-        relaxed.update(kwargs)
-        return FakeAsyncSSHConnection()
-
-    monkeypatch.setattr(terminal_api.asyncssh, "connect", relaxed_connect)
-    session = asyncio.run(
-        terminal_api._open_terminal(_parameters(mode), strict_host_key=False, pty_timeout_seconds=1)
-    )
-    asyncio.run(session.close())
-
-    assert "known_hosts" not in strict
-    assert relaxed["known_hosts"] is None
 
 
 @pytest.mark.parametrize(
@@ -354,7 +330,7 @@ def test_open_terminal_maps_connection_failures_without_raw_details(
 
     with pytest.raises(terminal_api._TerminalFailure) as captured:
         asyncio.run(
-            terminal_api._open_terminal(parameters, strict_host_key=True, pty_timeout_seconds=1)
+            terminal_api._open_terminal(parameters, pty_timeout_seconds=1)
         )
 
     assert captured.value.code == expected_code
@@ -397,7 +373,6 @@ def test_open_terminal_reuses_shared_sanitized_connection_failures(
         asyncio.run(
             terminal_api._open_terminal(
                 _parameters(SSHCompatibility.MODERN),
-                strict_host_key=True,
                 pty_timeout_seconds=1,
             )
         )
@@ -440,7 +415,6 @@ def test_open_terminal_bounds_pty_and_sanitizes_shell_rejection(
         asyncio.run(
             terminal_api._open_terminal(
                 _parameters(SSHCompatibility.MODERN),
-                strict_host_key=True,
                 pty_timeout_seconds=0.01,
             )
         )
@@ -466,7 +440,6 @@ def test_open_terminal_closes_connection_before_unexpected_create_process_error(
         asyncio.run(
             terminal_api._open_terminal(
                 _parameters(SSHCompatibility.MODERN),
-                strict_host_key=True,
                 pty_timeout_seconds=1,
             )
         )
@@ -779,11 +752,10 @@ def test_terminal_relays_pty_without_recording_commands(
     async def fake_open(
         parameters: ConnectionParameters,
         *,
-        strict_host_key: bool,
         pty_timeout_seconds: float,
     ) -> FakeTerminalSession:
         captured.append(parameters)
-        assert strict_host_key is True
+        assert parameters.known_hosts
         assert pty_timeout_seconds == 10
         return fake
 

@@ -12,6 +12,22 @@ from app.services.connection_gate import (
 )
 
 
+class FakeRedis:
+    def __init__(self) -> None:
+        self.values: dict[str, bytes] = {}
+
+    def setex(self, name: str, time: int, value: bytes) -> bool:
+        del time
+        self.values[name] = value
+        return True
+
+    def get(self, name: str) -> bytes | None:
+        return self.values.get(name)
+
+    def delete(self, *names: str) -> int:
+        return sum(int(self.values.pop(name, None) is not None) for name in names)
+
+
 class FakeTransport(NetworkTransport):
     def __init__(
         self,

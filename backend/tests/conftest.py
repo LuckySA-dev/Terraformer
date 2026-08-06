@@ -16,8 +16,9 @@ from app.core.config import Settings
 from app.core.security import MasterKeyProvider
 from app.drivers import CiscoIOSXEDriver, DriverRegistry, GenericReadOnlyDriver
 from app.main import create_app
-from app.models import Base
-from tests.fakes import FakeConnectionGate, FakeQueue, FakeTransportFactory
+from app.models import Base, SSHCompatibility
+from app.services.ssh_trust import HostKeyCandidateStore, HostKeyMaterial
+from tests.fakes import FakeConnectionGate, FakeQueue, FakeRedis, FakeTransportFactory
 
 
 @pytest.fixture
@@ -114,6 +115,18 @@ def container(
     )
     cisco = CiscoIOSXEDriver(transport_factory)
     generic = GenericReadOnlyDriver(transport_factory)
+
+    async def host_key_probe(
+        _host: str,
+        _port: int,
+        _mode: SSHCompatibility,
+    ) -> HostKeyMaterial:
+        return HostKeyMaterial(
+            "ssh-ed25519",
+            "ssh-ed25519 AAAAfixture",
+            "SHA256:fixture-host-key",
+        )
+
     return ApplicationContainer(
         settings=settings,
         session_factory=session_factory,
@@ -121,6 +134,8 @@ def container(
         queue=fake_queue,
         key_provider=key_provider,
         connection_gate=fake_connection_gate,  # type: ignore[arg-type]
+        host_key_candidate_store=HostKeyCandidateStore(FakeRedis()),
+        host_key_probe=host_key_probe,
     )
 
 

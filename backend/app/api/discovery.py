@@ -42,6 +42,7 @@ def approve_discovery_candidate(
         settings=container.settings,
         drivers=container.drivers,
         vault=container.credential_vault,
+        host_key_trust=container.host_key_trust,
         connection_gate=container.connection_gate,
     )
     return approve_candidate(session, job_id=job_id, request=request, devices=devices)

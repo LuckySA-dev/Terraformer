@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Any
 
-from app.core.errors import DriverCommandRejectedError
+from app.core.errors import DriverCommandRejectedError, DriverHostKeyUnknownError
 from app.drivers.base import ConnectionParameters, NetworkTransport
 from app.drivers.ssh_compatibility import compatibility_policy
 from app.drivers.ssh_errors import password_only_openssh_options
@@ -11,36 +14,51 @@ from app.drivers.ssh_errors import password_only_openssh_options
 class ScrapliTransport:
     """Small adapter that keeps Scrapli outside the service and parser layers."""
 
-    def __init__(self, parameters: ConnectionParameters, *, strict_host_key: bool) -> None:
-        from scrapli import Scrapli
+    def __init__(self, parameters: ConnectionParameters) -> None:
+        self._known_hosts_path, open_cmd = _pinned_open_options(parameters)
+        self._closed = False
+        try:
+            from scrapli import Scrapli
 
-        device: dict[str, Any] = {
-            "host": parameters.host,
-            "port": parameters.port,
-            "auth_username": parameters.username,
-            "auth_password": parameters.password,
-            "auth_secondary": parameters.enable_password or "",
-            "auth_strict_key": strict_host_key,
-            "platform": "cisco_iosxe",
-            "transport": "system",
-            "timeout_socket": parameters.connect_timeout_seconds,
-            "timeout_transport": parameters.connect_timeout_seconds,
-            "timeout_ops": parameters.command_timeout_seconds,
-            "transport_options": {
-                "open_cmd": list(
-                    password_only_openssh_options(
-                        compatibility_policy(parameters.ssh_compatibility)
-                    )
-                )
-            },
-        }
-        self._connection = Scrapli(**device)
+            device: dict[str, Any] = {
+                "host": parameters.host,
+                "port": parameters.port,
+                "auth_username": parameters.username,
+                "auth_password": parameters.password,
+                "auth_secondary": parameters.enable_password or "",
+                "auth_strict_key": True,
+                "platform": "cisco_iosxe",
+                "transport": "system",
+                "timeout_socket": parameters.connect_timeout_seconds,
+                "timeout_transport": parameters.connect_timeout_seconds,
+                "timeout_ops": parameters.command_timeout_seconds,
+                "transport_options": {"open_cmd": open_cmd},
+            }
+            self._connection = Scrapli(**device)
+        except BaseException:
+            self._remove_known_hosts()
+            raise
 
     def open(self) -> None:
-        self._connection.open()
+        try:
+            self._connection.open()
+        except BaseException:
+            self._remove_known_hosts()
+            raise
 
     def close(self) -> None:
-        self._connection.close()
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self._connection.close()
+        finally:
+            self._remove_known_hosts()
+
+    def _remove_known_hosts(self) -> None:
+        path, self._known_hosts_path = self._known_hosts_path, None
+        if path is not None:
+            Path(path).unlink(missing_ok=True)
 
     def send_command(self, command: str) -> str:
         response = self._connection.send_command(command)
@@ -50,43 +68,55 @@ class ScrapliTransport:
 
 
 class ScrapliTransportFactory:
-    def __init__(self, *, strict_host_key: bool = True) -> None:
-        self._strict_host_key = strict_host_key
-
     def __call__(self, parameters: ConnectionParameters) -> NetworkTransport:
-        return ScrapliTransport(parameters, strict_host_key=self._strict_host_key)
+        return ScrapliTransport(parameters)
 
 
 class ScrapliGenericTransport:
     """Authenticated SSH transport without a vendor/platform privilege model."""
 
-    def __init__(self, parameters: ConnectionParameters, *, strict_host_key: bool) -> None:
-        from scrapli.driver import GenericDriver
+    def __init__(self, parameters: ConnectionParameters) -> None:
+        self._known_hosts_path, open_cmd = _pinned_open_options(parameters)
+        self._closed = False
+        try:
+            from scrapli.driver import GenericDriver
 
-        self._connection = GenericDriver(
-            host=parameters.host,
-            port=parameters.port,
-            auth_username=parameters.username,
-            auth_password=parameters.password,
-            auth_strict_key=strict_host_key,
-            transport="system",
-            timeout_socket=parameters.connect_timeout_seconds,
-            timeout_transport=parameters.connect_timeout_seconds,
-            timeout_ops=parameters.command_timeout_seconds,
-            transport_options={
-                "open_cmd": list(
-                    password_only_openssh_options(
-                        compatibility_policy(parameters.ssh_compatibility)
-                    )
-                )
-            },
-        )
+            self._connection = GenericDriver(
+                host=parameters.host,
+                port=parameters.port,
+                auth_username=parameters.username,
+                auth_password=parameters.password,
+                auth_strict_key=True,
+                transport="system",
+                timeout_socket=parameters.connect_timeout_seconds,
+                timeout_transport=parameters.connect_timeout_seconds,
+                timeout_ops=parameters.command_timeout_seconds,
+                transport_options={"open_cmd": open_cmd},
+            )
+        except BaseException:
+            self._remove_known_hosts()
+            raise
 
     def open(self) -> None:
-        self._connection.open()
+        try:
+            self._connection.open()
+        except BaseException:
+            self._remove_known_hosts()
+            raise
 
     def close(self) -> None:
-        self._connection.close()
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self._connection.close()
+        finally:
+            self._remove_known_hosts()
+
+    def _remove_known_hosts(self) -> None:
+        path, self._known_hosts_path = self._known_hosts_path, None
+        if path is not None:
+            Path(path).unlink(missing_ok=True)
 
     def send_command(self, command: str) -> str:
         response = self._connection.send_command(command)
@@ -96,8 +126,29 @@ class ScrapliGenericTransport:
 
 
 class ScrapliGenericTransportFactory:
-    def __init__(self, *, strict_host_key: bool = True) -> None:
-        self._strict_host_key = strict_host_key
-
     def __call__(self, parameters: ConnectionParameters) -> NetworkTransport:
-        return ScrapliGenericTransport(parameters, strict_host_key=self._strict_host_key)
+        return ScrapliGenericTransport(parameters)
+
+
+def _pinned_open_options(parameters: ConnectionParameters) -> tuple[str, list[str]]:
+    if not parameters.known_hosts.strip():
+        raise DriverHostKeyUnknownError(details={"phase": "host_key_verification"})
+    temporary = NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n", delete=False)
+    try:
+        temporary.write(parameters.known_hosts.rstrip("\r\n") + "\n")
+        temporary.close()
+        os.chmod(temporary.name, 0o600)
+    except BaseException:
+        temporary.close()
+        Path(temporary.name).unlink(missing_ok=True)
+        raise
+    options = list(
+        password_only_openssh_options(compatibility_policy(parameters.ssh_compatibility))
+    )
+    for value in (
+        "StrictHostKeyChecking=yes",
+        f"UserKnownHostsFile={temporary.name}",
+        "GlobalKnownHostsFile=none",
+    ):
+        options.extend(("-o", value))
+    return temporary.name, options

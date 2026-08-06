@@ -78,12 +78,14 @@ The `lab` test suite requires all of the following before it opens a socket:
 4. `LAB_EXPECTED_PLATFORM=cisco_iosxe`;
 5. `LAB_DEVICE_USERNAME` and `LAB_DEVICE_PASSWORD` supplied outside Git and
    never as CLI arguments;
-6. a low connection/command limit, defaulting to one; and
-7. a preflight that aborts on platform mismatch or unexpected privilege.
+6. `LAB_KNOWN_HOSTS_FILE` containing exactly the selected endpoint and its
+   explicitly verified public host key;
+7. a low connection/command limit, defaulting to one; and
+8. a preflight that aborts on platform mismatch or unexpected privilege.
 
-Optional settings are `LAB_DEVICE_PORT`, `LAB_DEVICE_ENABLE_PASSWORD`, and
-`LAB_SSH_STRICT_HOST_KEY`. `RUN_LAB_TESTS=1` never authorizes structured or
-Direct Mode writes.
+Optional settings are `LAB_DEVICE_PORT` and `LAB_DEVICE_ENABLE_PASSWORD`.
+There is no relaxed host-key mode. `RUN_LAB_TESTS=1` never authorizes structured
+or Direct Mode writes.
 
 The harness uses one SSH session for the facts/interface/neighbor observation
 batch. Connection testing and the running-config read use separate sessions.

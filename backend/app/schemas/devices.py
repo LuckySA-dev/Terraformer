@@ -20,6 +20,7 @@ class DeviceConnectionFields(APIModel):
     credential_profile_id: UUID
     ssh_compatibility: SSHCompatibility = SSHCompatibility.MODERN
     group1_risk_acknowledged: bool = False
+    host_key_candidate_id: UUID | None = None
 
     @field_validator("management_address")
     @classmethod
@@ -50,6 +51,7 @@ class DeviceUpdate(APIModel):
     credential_profile_id: UUID | None = None
     ssh_compatibility: SSHCompatibility | None = None
     group1_risk_acknowledged: bool = False
+    host_key_candidate_id: UUID | None = None
 
     @model_validator(mode="after")
     def reject_explicit_nulls(self) -> DeviceUpdate:

@@ -10,6 +10,20 @@ from app.jobs import tasks
 from app.models import Event, Job
 
 
+def _host_key_candidate(client: TestClient, profile_id: object) -> str:
+    response = client.post(
+        "/api/ssh-host-key-candidates",
+        json={
+            "management_address": "192.0.2.1",
+            "port": 22,
+            "vendor": "cisco_iosxe",
+            "credential_profile_id": profile_id,
+        },
+    )
+    assert response.status_code == 201, response.text
+    return str(response.json()["id"])
+
+
 def test_bounded_discovery_requires_explicit_candidate_approval(
     authenticated_client: TestClient,
     credential_profile: dict[str, object],
@@ -95,6 +109,9 @@ def test_bounded_discovery_requires_explicit_candidate_approval(
             "port": 22,
             "vendor": "cisco_iosxe",
             "credential_profile_id": credential_profile["id"],
+            "host_key_candidate_id": _host_key_candidate(
+                authenticated_client, credential_profile["id"]
+            ),
         },
     )
     assert approved.status_code == 201, approved.text
@@ -157,6 +174,9 @@ def test_discovery_candidate_cannot_select_or_escalate_compatibility(
             "port": 22,
             "vendor": "cisco_iosxe",
             "credential_profile_id": credential_profile["id"],
+            "host_key_candidate_id": _host_key_candidate(
+                authenticated_client, credential_profile["id"]
+            ),
         },
     )
 

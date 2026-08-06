@@ -161,6 +161,22 @@ class Device(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     snapshots: Mapped[list[ConfigSnapshot]] = relationship(back_populates="device")
 
 
+class DeviceSSHHostKey(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "device_ssh_host_keys"
+
+    device_id: Mapped[UUID] = mapped_column(
+        ForeignKey("devices.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    algorithm: Mapped[str] = mapped_column(String(64), nullable=False)
+    public_key: Mapped[str] = mapped_column(Text, nullable=False)
+    fingerprint: Mapped[str] = mapped_column(String(128), nullable=False)
+    confirmed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    confirmed_by: Mapped[str] = mapped_column(String(64), nullable=False, default="local-admin")
+
+
 class DeviceCapability(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "device_capabilities"
     __table_args__ = (UniqueConstraint("device_id", "name", name="uq_device_capability_name"),)

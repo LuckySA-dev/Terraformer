@@ -80,6 +80,7 @@ def test_migration_chain_upgrade_and_downgrade(tmp_path: Path, monkeypatch) -> N
             "app_settings",
             "credential_profiles",
             "devices",
+            "device_ssh_host_keys",
             "device_capabilities",
             "interfaces",
             "neighbors",
@@ -87,6 +88,21 @@ def test_migration_chain_upgrade_and_downgrade(tmp_path: Path, monkeypatch) -> N
             "jobs",
             "events",
         }.issubset(tables)
+        host_key_columns = {
+            column["name"] for column in inspect(engine).get_columns("device_ssh_host_keys")
+        }
+        assert {
+            "device_id",
+            "algorithm",
+            "public_key",
+            "fingerprint",
+            "confirmed_at",
+            "confirmed_by",
+        }.issubset(host_key_columns)
+        assert any(
+            constraint["column_names"] == ["device_id"]
+            for constraint in inspect(engine).get_unique_constraints("device_ssh_host_keys")
+        )
         engine.dispose()
 
         command.downgrade(config, "base")

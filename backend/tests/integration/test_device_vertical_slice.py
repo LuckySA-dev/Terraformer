@@ -16,14 +16,47 @@ from app.services.connection_gate import ConnectionOperation, ConnectionTarget
 from app.services.devices import DeviceService
 
 
-def _device_payload(profile_id: str) -> dict[str, object]:
-    return {
+def _device_payload(
+    client: TestClient,
+    profile_id: str,
+    **connection_changes: object,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
         "name": "edge-rtr-01",
         "management_address": "192.0.2.10",
         "port": 22,
         "vendor": "cisco_iosxe",
         "credential_profile_id": profile_id,
     }
+    payload.update(connection_changes)
+    candidate = client.post(
+        "/api/ssh-host-key-candidates",
+        json={key: value for key, value in payload.items() if key != "name"},
+    )
+    assert candidate.status_code == 201, candidate.text
+    payload["host_key_candidate_id"] = candidate.json()["id"]
+    return payload
+
+
+def _connection_edit_payload(
+    client: TestClient,
+    device: dict[str, object],
+    changes: dict[str, object],
+) -> dict[str, object]:
+    connection = {
+        key: device[key]
+        for key in (
+            "management_address",
+            "port",
+            "vendor",
+            "credential_profile_id",
+            "ssh_compatibility",
+        )
+    }
+    connection.update(changes)
+    candidate = client.post("/api/ssh-host-key-candidates", json=connection)
+    assert candidate.status_code == 201, candidate.text
+    return {**changes, "host_key_candidate_id": candidate.json()["id"]}
 
 
 def test_first_device_refresh_snapshot_and_event_flow(
@@ -34,7 +67,7 @@ def test_first_device_refresh_snapshot_and_event_flow(
     transport_factory,
     monkeypatch,
 ) -> None:
-    payload = _device_payload(str(credential_profile["id"]))
+    payload = _device_payload(authenticated_client, str(credential_profile["id"]))
     created = authenticated_client.post("/api/devices", json=payload)
     assert created.status_code == 201, created.text
     device = created.json()
@@ -145,7 +178,7 @@ def test_connection_failure_is_typed_and_does_not_create_device(
 ) -> None:
     transport_factory.open_error = ScrapliAuthenticationFailed("Permission denied")
     response = authenticated_client.post(
-        "/api/devices", json=_device_payload(str(credential_profile["id"]))
+        "/api/devices", json=_device_payload(authenticated_client, str(credential_profile["id"]))
     )
 
     assert response.status_code == 401
@@ -208,8 +241,11 @@ def test_transport_constructor_failure_is_sanitized_in_api_and_logs(
         "peer-offered-ssh-rsa",
     )
     transport_factory.factory_error = factory_error
-    payload = _device_payload(str(credential_profile["id"]))
-    payload["vendor"] = vendor
+    payload = _device_payload(
+        authenticated_client,
+        str(credential_profile["id"]),
+        vendor=vendor,
+    )
     capsys.readouterr()
 
     response = authenticated_client.post("/api/devices", json=payload)
@@ -242,7 +278,7 @@ def test_negotiation_failure_api_contains_only_fixed_safe_fields(
     )
 
     response = authenticated_client.post(
-        "/api/devices", json=_device_payload(str(credential_profile["id"]))
+        "/api/devices", json=_device_payload(authenticated_client, str(credential_profile["id"]))
     )
 
     assert response.status_code == 502
@@ -302,7 +338,7 @@ def test_background_driver_failure_does_not_log_raw_exception(
 
     created = authenticated_client.post(
         "/api/devices",
-        json=_device_payload(str(credential_profile["id"])),
+        json=_device_payload(authenticated_client, str(credential_profile["id"])),
     )
     job = authenticated_client.post(f"/api/devices/{created.json()['id']}/refresh")
     transport_factory.command_error = command_error
@@ -342,7 +378,7 @@ def test_queue_failure_marks_job_failed_and_returns_503(
     session_factory: sessionmaker[Session],
 ) -> None:
     created = authenticated_client.post(
-        "/api/devices", json=_device_payload(str(credential_profile["id"]))
+        "/api/devices", json=_device_payload(authenticated_client, str(credential_profile["id"]))
     )
     device_id = created.json()["id"]
     fake_queue.available = False
@@ -363,7 +399,7 @@ def test_device_test_create_and_registered_paths_default_to_modern_and_retest(
     transport_factory,
     fake_connection_gate,
 ) -> None:
-    payload = _device_payload(str(credential_profile["id"]))
+    payload = _device_payload(authenticated_client, str(credential_profile["id"]))
 
     candidate = authenticated_client.post(
         "/api/devices/connection-test",
@@ -396,8 +432,14 @@ def test_non_cisco_connection_requests_reject_cisco_legacy_modes(
     transport_factory,
     endpoint: str,
 ) -> None:
-    payload = _device_payload(str(credential_profile["id"]))
-    payload.update({"vendor": "generic", "ssh_compatibility": "cisco_legacy"})
+    payload = {
+        "name": "invalid-legacy-device",
+        "management_address": "192.0.2.10",
+        "port": 22,
+        "vendor": "generic",
+        "credential_profile_id": credential_profile["id"],
+        "ssh_compatibility": "cisco_legacy",
+    }
     if endpoint.endswith("connection-test"):
         payload.pop("name")
     call_count = len(transport_factory.parameters)
@@ -414,8 +456,12 @@ def test_generic_modern_connection_test_remains_allowed(
     authenticated_client: TestClient,
     credential_profile: dict[str, object],
 ) -> None:
-    payload = _device_payload(str(credential_profile["id"]))
-    payload.update({"vendor": "generic", "ssh_compatibility": "modern"})
+    payload = _device_payload(
+        authenticated_client,
+        str(credential_profile["id"]),
+        vendor="generic",
+        ssh_compatibility="modern",
+    )
     payload.pop("name")
 
     response = authenticated_client.post("/api/devices/connection-test", json=payload)
@@ -429,8 +475,11 @@ def test_update_rejects_legacy_mode_combined_with_existing_non_cisco_vendor(
     container: ApplicationContainer,
     transport_factory,
 ) -> None:
-    payload = _device_payload(str(credential_profile["id"]))
-    payload["vendor"] = "generic"
+    payload = _device_payload(
+        authenticated_client,
+        str(credential_profile["id"]),
+        vendor="generic",
+    )
     created = authenticated_client.post("/api/devices", json=payload).json()
     container.settings.ssh_legacy_enabled = True
     call_count = len(transport_factory.parameters)
@@ -470,14 +519,19 @@ def test_connection_relevant_edit_retests_before_save(
     value: object,
 ) -> None:
     created = authenticated_client.post(
-        "/api/devices", json=_device_payload(str(credential_profile["id"]))
+        "/api/devices", json=_device_payload(authenticated_client, str(credential_profile["id"]))
     )
     if field == "ssh_compatibility":
         container.settings.ssh_legacy_enabled = True
     call_count = len(transport_factory.parameters)
 
     updated = authenticated_client.patch(
-        f"/api/devices/{created.json()['id']}", json={field: value}
+        f"/api/devices/{created.json()['id']}",
+        json=_connection_edit_payload(
+            authenticated_client,
+            created.json(),
+            {field: value},
+        ),
     )
 
     assert updated.status_code == 200, updated.text
@@ -491,7 +545,7 @@ def test_credential_profile_edit_retests_before_save(
     transport_factory,
 ) -> None:
     created = authenticated_client.post(
-        "/api/devices", json=_device_payload(str(credential_profile["id"]))
+        "/api/devices", json=_device_payload(authenticated_client, str(credential_profile["id"]))
     )
     replacement = authenticated_client.post(
         "/api/credential-profiles",
@@ -505,7 +559,11 @@ def test_credential_profile_edit_retests_before_save(
 
     updated = authenticated_client.patch(
         f"/api/devices/{created.json()['id']}",
-        json={"credential_profile_id": replacement.json()["id"]},
+        json=_connection_edit_payload(
+            authenticated_client,
+            created.json(),
+            {"credential_profile_id": replacement.json()["id"]},
+        ),
     )
 
     assert updated.status_code == 200, updated.text
@@ -521,7 +579,7 @@ def test_connection_edit_commits_only_the_exact_tuple_that_was_tested(
     monkeypatch,
 ) -> None:
     created = authenticated_client.post(
-        "/api/devices", json=_device_payload(str(credential_profile["id"]))
+        "/api/devices", json=_device_payload(authenticated_client, str(credential_profile["id"]))
     ).json()
     replacement = authenticated_client.post(
         "/api/credential-profiles",
@@ -559,15 +617,16 @@ def test_connection_edit_commits_only_the_exact_tuple_that_was_tested(
         "cisco_legacy",
     )
 
+    changes = {
+        "management_address": requested_tuple[0],
+        "port": requested_tuple[1],
+        "vendor": requested_tuple[2],
+        "credential_profile_id": requested_tuple[3],
+        "ssh_compatibility": requested_tuple[4],
+    }
     updated = authenticated_client.patch(
         f"/api/devices/{created['id']}",
-        json={
-            "management_address": requested_tuple[0],
-            "port": requested_tuple[1],
-            "vendor": requested_tuple[2],
-            "credential_profile_id": requested_tuple[3],
-            "ssh_compatibility": requested_tuple[4],
-        },
+        json=_connection_edit_payload(authenticated_client, created, changes),
     )
 
     assert updated.status_code == 200, updated.text
@@ -608,7 +667,7 @@ def test_failed_edit_retest_does_not_mutate_saved_device(
     field: str,
 ) -> None:
     created = authenticated_client.post(
-        "/api/devices", json=_device_payload(str(credential_profile["id"]))
+        "/api/devices", json=_device_payload(authenticated_client, str(credential_profile["id"]))
     ).json()
     values: dict[str, object] = {
         "management_address": "192.0.2.99",
@@ -636,7 +695,11 @@ def test_failed_edit_retest_does_not_mutate_saved_device(
 
     failed = authenticated_client.patch(
         f"/api/devices/{created['id']}",
-        json={field: values[field]},
+        json=_connection_edit_payload(
+            authenticated_client,
+            created,
+            {field: values[field]},
+        ),
     )
     stored = authenticated_client.get(f"/api/devices/{created['id']}").json()
     with session_factory() as session:
@@ -666,7 +729,7 @@ def test_policy_denials_precede_transport_and_preserve_saved_status(
     fake_connection_gate,
 ) -> None:
     created = authenticated_client.post(
-        "/api/devices", json=_device_payload(str(credential_profile["id"]))
+        "/api/devices", json=_device_payload(authenticated_client, str(credential_profile["id"]))
     ).json()
     transport_count = len(transport_factory.parameters)
     permit_count = len(fake_connection_gate.acquired)
@@ -691,7 +754,9 @@ def test_policy_denials_precede_transport_and_preserve_saved_status(
         json={
             **{
                 key: value
-                for key, value in _device_payload(str(credential_profile["id"])).items()
+                for key, value in _device_payload(
+                    authenticated_client, str(credential_profile["id"])
+                ).items()
                 if key != "name"
             },
             "ssh_compatibility": "cisco_legacy_group1",
@@ -708,7 +773,9 @@ def test_policy_denials_precede_transport_and_preserve_saved_status(
         json={
             **{
                 key: value
-                for key, value in _device_payload(str(credential_profile["id"])).items()
+                for key, value in _device_payload(
+                    authenticated_client, str(credential_profile["id"])
+                ).items()
                 if key != "name"
             },
             "ssh_compatibility": "cisco_legacy_group1",
@@ -740,7 +807,7 @@ def test_admission_happens_before_decryption_and_auth_accounting_is_tuple_scoped
     transport_factory.open_error = ScrapliAuthenticationFailed("denied")
 
     failed = authenticated_client.post(
-        "/api/devices", json=_device_payload(str(credential_profile["id"]))
+        "/api/devices", json=_device_payload(authenticated_client, str(credential_profile["id"]))
     )
 
     assert failed.status_code == 401
@@ -752,7 +819,7 @@ def test_admission_happens_before_decryption_and_auth_accounting_is_tuple_scoped
 
     transport_factory.open_error = None
     succeeded = authenticated_client.post(
-        "/api/devices", json=_device_payload(str(credential_profile["id"]))
+        "/api/devices", json=_device_payload(authenticated_client, str(credential_profile["id"]))
     )
 
     assert succeeded.status_code == 201, succeeded.text
@@ -774,7 +841,7 @@ def test_terminal_io_failure_after_auth_clears_prior_tuple_failures(
     monkeypatch,
 ) -> None:
     created = authenticated_client.post(
-        "/api/devices", json=_device_payload(str(credential_profile["id"]))
+        "/api/devices", json=_device_payload(authenticated_client, str(credential_profile["id"]))
     ).json()
     fake_connection_gate.acquired.clear()
     fake_connection_gate.released.clear()
@@ -824,7 +891,7 @@ def test_audit_failure_still_releases_the_permit_once(
     monkeypatch.setattr(DeviceService, "_audit_connection", fail_audit)
 
     response = authenticated_client.post(
-        "/api/devices", json=_device_payload(str(credential_profile["id"]))
+        "/api/devices", json=_device_payload(authenticated_client, str(credential_profile["id"]))
     )
 
     assert response.status_code == 500
@@ -840,7 +907,7 @@ def test_refresh_and_snapshot_each_use_one_structured_read_permit(
     monkeypatch,
 ) -> None:
     created = authenticated_client.post(
-        "/api/devices", json=_device_payload(str(credential_profile["id"]))
+        "/api/devices", json=_device_payload(authenticated_client, str(credential_profile["id"]))
     ).json()
     fake_connection_gate.acquired.clear()
     fake_connection_gate.released.clear()
@@ -870,7 +937,7 @@ def test_connection_admission_audit_uses_only_the_approved_metadata_allowlist(
     session_factory: sessionmaker[Session],
 ) -> None:
     created = authenticated_client.post(
-        "/api/devices", json=_device_payload(str(credential_profile["id"]))
+        "/api/devices", json=_device_payload(authenticated_client, str(credential_profile["id"]))
     )
     assert created.status_code == 201, created.text
     registered = authenticated_client.post(f"/api/devices/{created.json()['id']}/test-connection")

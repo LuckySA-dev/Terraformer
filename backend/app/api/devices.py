@@ -29,6 +29,7 @@ def _service(session: SessionDependency, container: ContainerDependency) -> Devi
         settings=container.settings,
         drivers=container.drivers,
         vault=container.credential_vault,
+        host_key_trust=container.host_key_trust,
         connection_gate=container.connection_gate,
     )
 

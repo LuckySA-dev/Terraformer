@@ -240,9 +240,10 @@ async def _acquire_terminal_permit(
 async def _open_terminal(
     parameters: ConnectionParameters,
     *,
-    strict_host_key: bool,
     pty_timeout_seconds: float,
 ) -> TerminalSession:
+    if not parameters.known_hosts.strip():
+        raise _TerminalFailure("device_host_key_unknown")
     policy = compatibility_policy(parameters.ssh_compatibility)
     options: dict[str, object] = {
         "host": parameters.host,
@@ -262,9 +263,8 @@ async def _open_terminal(
         "disable_trivial_auth": True,
         "encoding": "utf-8",
         "errors": "replace",
+        "known_hosts": asyncssh.import_known_hosts(parameters.known_hosts),
     }
-    if not strict_host_key:
-        options["known_hosts"] = None
     for name, value in (
         ("kex_algs", policy.asyncssh_kex_algs),
         ("server_host_key_algs", policy.asyncssh_server_host_key_algs),
@@ -427,7 +427,6 @@ async def terminal(websocket: WebSocket, device_id: UUID) -> None:
         parameters = await asyncio.to_thread(_connection_parameters, container, target)
         session = await _open_terminal(
             parameters,
-            strict_host_key=container.settings.ssh_strict_host_key,
             pty_timeout_seconds=container.settings.terminal_pty_timeout_seconds,
         )
         await asyncio.to_thread(gate.authentication_succeeded, gate_target)
@@ -501,6 +500,7 @@ def _terminal_target(
             settings=container.settings,
             drivers=container.drivers,
             vault=container.credential_vault,
+            host_key_trust=container.host_key_trust,
         )
         device = service.get(device_id)
         return _TerminalTarget(
@@ -522,8 +522,10 @@ def _connection_parameters(
             settings=container.settings,
             drivers=container.drivers,
             vault=container.credential_vault,
+            host_key_trust=container.host_key_trust,
         )
         parameters = service.connection_parameters(
+            device_id=target.device_id,
             profile_id=target.profile_id,
             host=target.host,
             port=target.port,

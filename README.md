@@ -149,11 +149,10 @@ Real-device tests are excluded from routine test runs and require deliberate
 opt-in. Read [`docs/lab-test-guide.md`](docs/lab-test-guide.md) before connecting
 any device.
 
-The local-lab Compose profile sets `SSH_STRICT_HOST_KEY=false` so a new lab
-device can be reached without pre-provisioning `known_hosts`. This permits an
-SSH man-in-the-middle attack. For a persistent or LAN-accessible deployment,
-provision and mount a trusted `known_hosts` file, set
-`SSH_STRICT_HOST_KEY=true`, and keep the connect and command timeouts separate.
+Every device connection requires an explicitly inspected and confirmed SSH host
+key. The application stores one exact pin per registered device and has no
+global relaxed host-key mode. The opt-in lab harness likewise requires an exact
+`LAB_KNOWN_HOSTS_FILE`; keep connect and command timeouts separate.
 
 ## Documentation
 

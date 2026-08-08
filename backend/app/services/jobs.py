@@ -11,6 +11,14 @@ from app.repositories.devices import DeviceRepository
 from app.repositories.events import EventRepository
 from app.repositories.jobs import JobRepository
 
+# Job types that must not run concurrently with themselves. Discovery touches
+# many devices; analysis parses the whole configuration set and Batfish is a
+# single instance.
+_EXCLUSIVE_JOB_TYPES = {
+    JobType.DISCOVER_SSH: "A discovery job is already active",
+    JobType.ANALYZE_NETWORK: "An analysis job is already active",
+}
+
 
 class JobService:
     def __init__(self, session: Session, queue: JobQueue) -> None:
@@ -30,8 +38,8 @@ class JobService:
         device_id: UUID | None = None,
         input_data: dict[str, object] | None = None,
     ) -> Job:
-        if job_type == JobType.DISCOVER_SSH and self._jobs.has_active(job_type):
-            raise ConflictError("A discovery job is already active")
+        if job_type in _EXCLUSIVE_JOB_TYPES and self._jobs.has_active(job_type):
+            raise ConflictError(_EXCLUSIVE_JOB_TYPES[job_type])
         if device_id is not None:
             self._devices.get(device_id)
         job = self._jobs.add(

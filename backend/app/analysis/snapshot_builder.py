@@ -10,12 +10,10 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable, Mapping, Sequence
-from datetime import datetime
-from typing import Protocol
 from uuid import UUID
 
 from app.analysis.types import AnalysisInput, DeviceConfig, ExcludedDevice, Layer1Edge
-from app.models import ExclusionReason, Vendor
+from app.models import ConfigSnapshot, Device, ExclusionReason, Neighbor, Vendor
 
 # Batfish can parse Cisco IOS/IOS-XE. FortiOS support is limited and the generic
 # driver reads nothing, so both are excluded rather than parsed badly.
@@ -24,23 +22,11 @@ SUPPORTED_VENDORS = frozenset({Vendor.CISCO_IOSXE})
 _HOSTNAME = re.compile(r"^\s*hostname\s+(\S+)\s*$", re.MULTILINE)
 _UNSAFE_HOSTNAME_CHARS = re.compile(r"[^a-z0-9._-]+")
 
-
-class _HasIdVendor(Protocol):
-    id: UUID
-    name: str
-    vendor: Vendor
-
-
-class _HasCreatedAt(Protocol):
-    id: UUID
-    created_at: datetime
-
-
-class _HasNeighbor(Protocol):
-    device_id: UUID
-    local_interface: str
-    remote_device_name: str
-    remote_interface: str
+# Typed against the concrete ORM models rather than a Protocol: pyright only
+# checks app/ (see [tool.pyright] include in pyproject.toml), so the unit
+# tests' lightweight duck-typed fakes never need to satisfy these signatures
+# statically, and Device.id etc. being Mapped[X] descriptors never becomes an
+# issue here.
 
 
 def batfish_hostname(config: str, *, fallback: str) -> str:
@@ -57,10 +43,10 @@ def batfish_hostname(config: str, *, fallback: str) -> str:
 
 def build_analysis_input(
     *,
-    devices: Iterable[_HasIdVendor],
-    latest_snapshot_for: Mapping[UUID, _HasCreatedAt],
+    devices: Iterable[Device],
+    latest_snapshot_for: Mapping[UUID, ConfigSnapshot],
     sanitized_content_for: Mapping[UUID, str],
-    neighbors: Sequence[_HasNeighbor],
+    neighbors: Sequence[Neighbor],
     max_devices: int,
 ) -> AnalysisInput:
     device_list = list(devices)
@@ -106,7 +92,7 @@ def build_analysis_input(
 
 
 def _layer1_edges(
-    configs: Sequence[DeviceConfig], neighbors: Sequence[_HasNeighbor]
+    configs: Sequence[DeviceConfig], neighbors: Sequence[Neighbor]
 ) -> tuple[Layer1Edge, ...]:
     """Derive layer-1 edges from observed neighbours.
 

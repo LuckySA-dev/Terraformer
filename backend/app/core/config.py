@@ -53,6 +53,20 @@ class Settings(BaseSettings):
     ssh_group1_enabled: bool = False
     ssh_very_old_enabled: bool = False
     ssh_terminal_enabled: bool = True
+
+    # Read-only Batfish configuration analysis. Off by default: it requires an
+    # extra container, and the documented resource floor assumes it is absent.
+    analysis_enabled: bool = False
+    batfish_host: str = "batfish"
+    batfish_port: int = Field(default=9996, ge=1, le=65_535)
+    analysis_query_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
+    analysis_parse_timeout_seconds: float = Field(default=600.0, gt=0, le=3600)
+    # Enforced bounds that protect the host. They are not a claim that the
+    # feature has been shown to work at this scale — see the design spec §8.4.
+    analysis_max_devices: int = Field(default=200, ge=1, le=1000)
+    analysis_max_findings: int = Field(default=1000, ge=1, le=100_000)
+    analysis_retained_snapshots: int = Field(default=10, ge=1, le=100)
+
     terminal_pty_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
     terminal_max_duration_seconds: int = Field(default=3600, ge=60, le=86400)
     max_device_connections: int = Field(

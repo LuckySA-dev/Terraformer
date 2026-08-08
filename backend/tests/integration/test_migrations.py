@@ -87,6 +87,9 @@ def test_migration_chain_upgrade_and_downgrade(tmp_path: Path, monkeypatch) -> N
             "config_snapshots",
             "jobs",
             "events",
+            "analysis_snapshots",
+            "analysis_snapshot_members",
+            "analysis_findings",
         }.issubset(tables)
         host_key_columns = {
             column["name"] for column in inspect(engine).get_columns("device_ssh_host_keys")

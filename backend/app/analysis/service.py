@@ -12,6 +12,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.analysis.client import AnalysisBackend
+from app.analysis.drift import topology_drift_findings
 from app.analysis.findings import to_findings
 from app.analysis.snapshot_builder import build_analysis_input
 from app.core.config import Settings
@@ -123,6 +124,10 @@ class AnalysisService:
             analysis_input.layer1_edges,
         )
         raw = self._backend.parse_findings(str(snapshot.id))
+        raw += topology_drift_findings(
+            analysis_input.layer1_edges,
+            self._backend.interface_properties(str(snapshot.id)),
+        )
         hostname_to_device = {
             item.batfish_hostname: item.device_id for item in analysis_input.configs
         }

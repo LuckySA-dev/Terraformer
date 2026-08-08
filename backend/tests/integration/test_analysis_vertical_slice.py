@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import UUID
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -207,3 +209,74 @@ def test_retention_keeps_only_the_configured_number_of_snapshots(
         tasks.execute_job(queued.json()["id"])
 
     assert len(authenticated_client.get("/api/analysis-snapshots").json()) == 2
+
+
+def test_topology_drift_is_persisted_as_a_finding(
+    authenticated_client: TestClient,
+    credential_profile: dict[str, object],
+    container: ApplicationContainer,
+    fake_batfish: FakeBatfishClient,
+    monkeypatch,
+) -> None:
+    """The neighbour-reported interface is missing from the far end's config."""
+    from app.analysis.client import InterfaceProperty
+    from app.core.time import new_uuid
+    from app.models import ConfigSnapshot
+    from app.repositories.snapshots import ConfigSnapshotRepository
+
+    fake_batfish.interface_properties_result = (
+        InterfaceProperty("edge-rtr-01", "GigabitEthernet1", "ACCESS", 10),
+        # No entry for dist-sw-01's GigabitEthernet0/1 -- CDP names it, but the
+        # far end's configuration never mentions it. That absence is the drift.
+    )
+    profile_id = str(credential_profile["id"])
+    local_id = _register_cisco(authenticated_client, profile_id, "192.0.2.10")
+    remote_id = _register_cisco(authenticated_client, profile_id, "192.0.2.20")
+    _capture(authenticated_client, local_id, container, monkeypatch)
+
+    # The CDP fixture reports a neighbour named "dist-sw-01.example.test"; give
+    # the second registered device a configuration Batfish would see as that
+    # same hostname, without going through the driver, so a real cross-device
+    # layer-1 edge can form. FakeTransportFactory returns identical canned
+    # output for every device, so the normal capture flow cannot produce two
+    # distinct hostnames on its own.
+    with container.session_factory() as session:
+        snapshot_id = new_uuid()
+        artifact = container.snapshot_store.put(
+            snapshot_id=snapshot_id,
+            device_id=UUID(remote_id),
+            content="hostname dist-sw-01\n",
+        )
+        ConfigSnapshotRepository(session).add(
+            ConfigSnapshot(
+                id=snapshot_id,
+                device_id=UUID(remote_id),
+                artifact_path=artifact.relative_path,
+                sha256=artifact.sha256,
+                plaintext_size=artifact.plaintext_size,
+                compressed_size=artifact.compressed_size,
+                ciphertext_size=artifact.ciphertext_size,
+            )
+        )
+        session.commit()
+
+    monkeypatch.setattr(tasks, "get_default_container", lambda: container)
+    refresh = authenticated_client.post(f"/api/devices/{local_id}/refresh")
+    tasks.execute_job(refresh.json()["id"])
+
+    queued = authenticated_client.post("/api/analysis-snapshots")
+    tasks.execute_job(queued.json()["id"])
+    snapshot = authenticated_client.get("/api/analysis-snapshots").json()[0]
+    assert snapshot["completeness"]["observed_link_count"] == 1, (
+        "the layer-1 edge did not form; check the CDP fixture's remote device name"
+    )
+
+    findings = authenticated_client.get(
+        f"/api/analysis-snapshots/{snapshot['id']}/findings",
+        params={"category": "topology_drift"},
+    )
+
+    assert findings.status_code == 200, findings.text
+    assert len(findings.json()) >= 1
+    assert all(item["evidence"] == "INFERRED" for item in findings.json())
+    assert any("GigabitEthernet0/1" in item["detail"] for item in findings.json())

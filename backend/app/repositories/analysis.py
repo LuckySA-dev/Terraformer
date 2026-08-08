@@ -38,17 +38,10 @@ class AnalysisRepository:
             raise NotFoundError("The requested analysis snapshot was not found")
         return snapshot
 
-    def latest(self) -> AnalysisSnapshot | None:
-        return self._session.scalars(
-            select(AnalysisSnapshot).order_by(AnalysisSnapshot.created_at.desc()).limit(1)
-        ).one_or_none()
-
     def list(self, *, limit: int = 20) -> list[AnalysisSnapshot]:
         return list(
             self._session.scalars(
-                select(AnalysisSnapshot)
-                .order_by(AnalysisSnapshot.created_at.desc())
-                .limit(limit)
+                select(AnalysisSnapshot).order_by(AnalysisSnapshot.created_at.desc()).limit(limit)
             )
         )
 
@@ -104,9 +97,7 @@ class AnalysisRepository:
             )
         )
 
-    def add_findings(
-        self, snapshot: AnalysisSnapshot, findings: Sequence[PreparedFinding]
-    ) -> None:
+    def add_findings(self, snapshot: AnalysisSnapshot, findings: Sequence[PreparedFinding]) -> None:
         for finding in findings:
             self._session.add(
                 AnalysisFinding(
@@ -144,9 +135,7 @@ class AnalysisRepository:
         """Delete all but the newest `keep` snapshots; findings cascade."""
         keep_ids = list(
             self._session.scalars(
-                select(AnalysisSnapshot.id)
-                .order_by(AnalysisSnapshot.created_at.desc())
-                .limit(keep)
+                select(AnalysisSnapshot.id).order_by(AnalysisSnapshot.created_at.desc()).limit(keep)
             )
         )
         if not keep_ids:

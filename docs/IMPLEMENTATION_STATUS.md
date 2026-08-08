@@ -156,3 +156,10 @@ verification, virtual-lab evidence, and physical-lab evidence.
   the host, not evidence of capacity: the recorded validation reached a small
   number of nodes, and everything above that is unverified. Measured capacity
   belongs to Phase 7.
+- No analysis query or parse timeout is enforced. The design spec §8.2/§8.3
+  called for one, but `pybatfish` drives a module-level `requests.Session`
+  that exposes no timeout knob, so the setting was removed rather than left
+  in place claiming a protection that does not exist. A hung Batfish query
+  therefore blocks its caller until the container is restarted. Enforcing it
+  would need a supervising thread or a patched HTTP session; neither is
+  justified for a single-user local tool yet.

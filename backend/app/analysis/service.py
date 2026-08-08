@@ -7,6 +7,8 @@ client or the repository directly.
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Callable
+from typing import TypeVar
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -28,6 +30,8 @@ from app.repositories.devices import DeviceRepository
 from app.repositories.events import EventRepository
 from app.schemas.analysis import CompletenessView, ExclusionView
 from app.services.snapshots import SnapshotService
+
+_QueryResultT = TypeVar("_QueryResultT")
 
 
 class AnalysisService:
@@ -66,9 +70,7 @@ class AnalysisService:
         try:
             result = self._initialise(snapshot)
         except AppError as error:
-            self._analysis.set_status(
-                snapshot, AnalysisStatus.FAILED, failure_code=error.code
-            )
+            self._analysis.set_status(snapshot, AnalysisStatus.FAILED, failure_code=error.code)
             self._session.commit()
             raise
         self._session.commit()
@@ -167,9 +169,7 @@ class AnalysisService:
     def completeness(self, snapshot: AnalysisSnapshot) -> CompletenessView:
         members = self._analysis.list_members(snapshot.id)
         counts: Counter[ExclusionReason] = Counter(
-            member.exclusion_reason
-            for member in members
-            if member.exclusion_reason is not None
+            member.exclusion_reason for member in members if member.exclusion_reason is not None
         )
         return CompletenessView(
             registered_device_count=len(members),
@@ -195,20 +195,16 @@ class AnalysisService:
 
     def path_check(
         self, analysis_snapshot_id: UUID, *, source_device_id: UUID, destination_ip: str
-    ) -> TraceResult:
+    ) -> tuple[TraceResult, CompletenessView]:
         snapshot = self._analysis.get(analysis_snapshot_id)
         hostname = self._hostname_for(snapshot, source_device_id)
-        try:
-            result = self._backend.traceroute(str(snapshot.id), hostname, destination_ip)
-        except AnalysisSnapshotExpiredError:
-            self._mark_expired(snapshot)
-            raise
-        self._audit_query(
+        result = self._query(
             snapshot,
+            lambda: self._backend.traceroute(str(snapshot.id), hostname, destination_ip),
             "path_check",
             {"source_device_id": str(source_device_id), "destination_ip": destination_ip},
         )
-        return result
+        return result, self.completeness(snapshot)
 
     def filter_check(
         self,
@@ -219,23 +215,19 @@ class AnalysisService:
         destination_ip: str,
         protocol: str,
         destination_port: int | None,
-    ) -> FilterVerdict:
+    ) -> tuple[FilterVerdict, CompletenessView]:
         snapshot = self._analysis.get(analysis_snapshot_id)
         hostname = self._hostname_for(snapshot, device_id)
-        try:
-            verdict = self._backend.test_filter(
+        verdict = self._query(
+            snapshot,
+            lambda: self._backend.test_filter(
                 str(snapshot.id),
                 hostname,
                 filter_name,
                 destination_ip,
                 protocol,
                 destination_port,
-            )
-        except AnalysisSnapshotExpiredError:
-            self._mark_expired(snapshot)
-            raise
-        self._audit_query(
-            snapshot,
+            ),
             "filter_check",
             {
                 "device_id": str(device_id),
@@ -244,7 +236,27 @@ class AnalysisService:
                 "protocol": protocol,
             },
         )
-        return verdict
+        return verdict, self.completeness(snapshot)
+
+    def _query(
+        self,
+        snapshot: AnalysisSnapshot,
+        run: Callable[[], _QueryResultT],
+        query_type: str,
+        parameters: dict[str, str],
+    ) -> _QueryResultT:
+        """Run one interactive query, handling expiry and auditing identically.
+
+        Both query kinds must mark the snapshot expired if Batfish has lost it,
+        and must audit only on success, so the ordering lives here once.
+        """
+        try:
+            result = run()
+        except AnalysisSnapshotExpiredError:
+            self._mark_expired(snapshot)
+            raise
+        self._audit_query(snapshot, query_type, parameters)
+        return result
 
     def _audit_query(
         self, snapshot: AnalysisSnapshot, query_type: str, parameters: dict[str, str]

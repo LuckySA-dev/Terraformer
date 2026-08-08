@@ -7,6 +7,7 @@ import pytest
 
 from app.analysis.snapshot_builder import batfish_hostname, build_analysis_input
 from app.analysis.types import Layer1Edge
+from app.core.errors import AnalysisTooManyDevicesError
 from app.models import ExclusionReason, Vendor
 
 
@@ -18,9 +19,7 @@ class FakeDevice:
 
 
 def _snapshot(device_id: UUID, captured_at: datetime) -> object:
-    return type(
-        "Snap", (), {"id": uuid4(), "device_id": device_id, "created_at": captured_at}
-    )()
+    return type("Snap", (), {"id": uuid4(), "device_id": device_id, "created_at": captured_at})()
 
 
 def test_hostname_comes_from_the_configuration_not_the_record() -> None:
@@ -136,7 +135,7 @@ def test_device_count_over_the_bound_is_rejected() -> None:
     devices = [FakeDevice(f"sw{index}", Vendor.CISCO_IOSXE) for index in range(3)]
     now = datetime.now(UTC)
 
-    with pytest.raises(ValueError, match="exceeds the analysis device bound"):
+    with pytest.raises(AnalysisTooManyDevicesError, match="exceeds the analysis device bound"):
         build_analysis_input(
             devices=devices,
             latest_snapshot_for={item.id: _snapshot(item.id, now) for item in devices},

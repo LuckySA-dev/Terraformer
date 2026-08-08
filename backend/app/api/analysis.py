@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Depends, Query, status
 
 from app.analysis.service import AnalysisService
 from app.api.dependencies import Authenticated, ContainerDependency, SessionDependency
@@ -23,12 +23,19 @@ from app.services.devices import DeviceService
 from app.services.jobs import JobService
 from app.services.snapshots import SnapshotService
 
-router = APIRouter(prefix="/analysis-snapshots", tags=["analysis"])
-
 
 def _require_enabled(container: ContainerDependency) -> None:
     if not container.settings.analysis_enabled:
         raise AnalysisDisabledByPolicyError()
+
+
+# Applied to the whole router rather than per handler: the kill switch must
+# hold for every analysis route, including any added later.
+router = APIRouter(
+    prefix="/analysis-snapshots",
+    tags=["analysis"],
+    dependencies=[Depends(_require_enabled)],
+)
 
 
 def _service(session: SessionDependency, container: ContainerDependency) -> AnalysisService:
@@ -71,7 +78,6 @@ def start_analysis(
     session: SessionDependency,
     container: ContainerDependency,
 ):
-    _require_enabled(container)
     # The snapshot row is created by the job, not here: a request rejected by
     # the one-at-a-time guard must not leave an orphan pending row.
     return JobService(session, container.queue).enqueue(
@@ -85,7 +91,6 @@ def list_analysis_snapshots(
     session: SessionDependency,
     container: ContainerDependency,
 ):
-    _require_enabled(container)
     service = _service(session, container)
     return [_view(service, snapshot) for snapshot in AnalysisRepository(session).list()]
 
@@ -97,7 +102,6 @@ def get_analysis_snapshot(
     session: SessionDependency,
     container: ContainerDependency,
 ):
-    _require_enabled(container)
     service = _service(session, container)
     snapshot = AnalysisRepository(session).get(analysis_snapshot_id)
     return _view(service, snapshot)
@@ -108,11 +112,9 @@ def list_findings(
     analysis_snapshot_id: UUID,
     _auth: Authenticated,
     session: SessionDependency,
-    container: ContainerDependency,
     category: FindingCategory | None = Query(default=None),
     device_id: UUID | None = Query(default=None),
 ):
-    _require_enabled(container)
     return AnalysisRepository(session).list_findings(
         analysis_snapshot_id, category=category, device_id=device_id
     )
@@ -126,21 +128,18 @@ def path_check(
     session: SessionDependency,
     container: ContainerDependency,
 ):
-    _require_enabled(container)
-    service = _service(session, container)
-    result = service.path_check(
+    result, completeness = _service(session, container).path_check(
         analysis_snapshot_id,
         source_device_id=request.source_device_id,
         destination_ip=str(request.destination_ip),
     )
-    snapshot = AnalysisRepository(session).get(analysis_snapshot_id)
     return PathCheckView(
         disposition=result.disposition,
         hops=[
             TraceHopView(hostname=hop.hostname, action=hop.action, detail=hop.detail)
             for hop in result.hops
         ],
-        completeness=service.completeness(snapshot),
+        completeness=completeness,
     )
 
 
@@ -152,9 +151,7 @@ def filter_check(
     session: SessionDependency,
     container: ContainerDependency,
 ):
-    _require_enabled(container)
-    service = _service(session, container)
-    verdict = service.filter_check(
+    verdict, completeness = _service(session, container).filter_check(
         analysis_snapshot_id,
         device_id=request.device_id,
         filter_name=request.filter_name,
@@ -162,10 +159,9 @@ def filter_check(
         protocol=request.protocol,
         destination_port=request.destination_port,
     )
-    snapshot = AnalysisRepository(session).get(analysis_snapshot_id)
     return FilterCheckView(
         permitted=verdict.permitted,
         matched_line_index=verdict.matched_line_index,
         matched_line=verdict.matched_line,
-        completeness=service.completeness(snapshot),
+        completeness=completeness,
     )

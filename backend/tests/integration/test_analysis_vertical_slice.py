@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.analysis.client import RawFinding
 from app.container import ApplicationContainer
-from app.core.errors import AnalysisNoConfigsError
+from app.core.errors import AnalysisNoConfigsError, AnalysisTooManyDevicesError
 from app.jobs import tasks
 from app.models import FindingCategory
 from tests.fakes import FakeBatfishClient
@@ -38,7 +38,9 @@ def _register_cisco(client: TestClient, profile_id: str, address: str) -> str:
     return str(created.json()["id"])
 
 
-def _capture(client: TestClient, device_id: str, container: ApplicationContainer, monkeypatch) -> None:  # noqa: E501
+def _capture(
+    client: TestClient, device_id: str, container: ApplicationContainer, monkeypatch
+) -> None:
     monkeypatch.setattr(tasks, "get_default_container", lambda: container)
     queued = client.post(f"/api/devices/{device_id}/config-snapshots")
     assert queued.status_code == 202, queued.text
@@ -68,9 +70,7 @@ def test_analysis_reports_completeness_including_excluded_devices(
     assert snapshot["status"] == "ready"
     assert snapshot["completeness"]["analysed_device_count"] == 1
     assert snapshot["completeness"]["registered_device_count"] == 2
-    exclusions = {
-        item["reason"]: item["count"] for item in snapshot["completeness"]["exclusions"]
-    }
+    exclusions = {item["reason"]: item["count"] for item in snapshot["completeness"]["exclusions"]}
     assert exclusions["no_snapshot"] == 1
 
 
@@ -156,6 +156,40 @@ def test_analysis_without_any_snapshot_is_rejected(
     state = authenticated_client.get(f"/api/jobs/{job_id}").json()
     assert state["state"] == "failed"
     assert state["error_code"] == "analysis_no_configs"
+
+
+def test_exceeding_the_device_bound_fails_the_snapshot_instead_of_stranding_it(
+    authenticated_client: TestClient,
+    credential_profile: dict[str, object],
+    container: ApplicationContainer,
+    monkeypatch,
+) -> None:
+    """The bound must raise a typed AppError, not a bare ValueError.
+
+    AnalysisService.initialise only converts AppError into a `failed` status,
+    so an untyped exception would leave the snapshot stuck in `parsing`.
+    """
+    profile_id = str(credential_profile["id"])
+    first = _register_cisco(authenticated_client, profile_id, "192.0.2.10")
+    second = _register_cisco(authenticated_client, profile_id, "192.0.2.11")
+    _capture(authenticated_client, first, container, monkeypatch)
+    _capture(authenticated_client, second, container, monkeypatch)
+    container.settings.analysis_max_devices = 1
+
+    queued = authenticated_client.post("/api/analysis-snapshots")
+    assert queued.status_code == 202, queued.text
+    job_id = queued.json()["id"]
+
+    with pytest.raises(AnalysisTooManyDevicesError):
+        tasks.execute_job(job_id)
+
+    state = authenticated_client.get(f"/api/jobs/{job_id}").json()
+    assert state["state"] == "failed"
+    assert state["error_code"] == "analysis_too_many_devices"
+
+    snapshot = authenticated_client.get("/api/analysis-snapshots").json()[0]
+    assert snapshot["status"] == "failed"
+    assert snapshot["failure_code"] == "analysis_too_many_devices"
 
 
 def test_every_endpoint_fails_closed_when_analysis_is_disabled(

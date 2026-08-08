@@ -197,7 +197,7 @@ class AnalysisSnapshotExpiredError(ConflictError):
     default_message = "The analysis snapshot is no longer loaded and must be re-parsed"
 
 
-class AnalysisTimeoutError(AppError):
-    code = "analysis_timeout"
-    status_code = 504
-    default_message = "The analysis query exceeded its time limit"
+class AnalysisTooManyDevicesError(AppError):
+    code = "analysis_too_many_devices"
+    status_code = 422
+    default_message = "More devices are registered than the analysis device bound allows"

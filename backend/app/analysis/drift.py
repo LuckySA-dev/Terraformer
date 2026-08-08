@@ -24,16 +24,12 @@ from app.models import FindingCategory
 def topology_drift_findings(
     edges: Sequence[Layer1Edge], properties: Sequence[InterfaceProperty]
 ) -> tuple[RawFinding, ...]:
-    by_key = {
-        (item.hostname.lower(), item.interface.lower()): item for item in properties
-    }
+    by_key = {(item.hostname.lower(), item.interface.lower()): item for item in properties}
     findings: list[RawFinding] = []
 
     for edge in edges:
-        near_key = (edge.node1_hostname.lower(), edge.node1_interface.lower())
-        far_key = (edge.node2_hostname.lower(), edge.node2_interface.lower())
-        near = by_key.get(near_key)
-        far = by_key.get(far_key)
+        near = by_key.get((edge.node1_hostname.lower(), edge.node1_interface.lower()))
+        far = by_key.get((edge.node2_hostname.lower(), edge.node2_interface.lower()))
 
         for hostname, interface, found in (
             (edge.node1_hostname, edge.node1_interface, near),
@@ -41,58 +37,55 @@ def topology_drift_findings(
         ):
             if found is None:
                 findings.append(
-                    RawFinding(
-                        category=FindingCategory.TOPOLOGY_DRIFT,
-                        hostname=hostname,
-                        structure_type="interface",
-                        structure_name=interface,
-                        detail=(
-                            f"{interface} is reported by a neighbour discovery record"
-                            " but does not appear in the parsed configuration"
-                        ),
-                        line_number=None,
+                    _drift(
+                        hostname,
+                        interface,
+                        f"{interface} is reported by a neighbour discovery record"
+                        " but does not appear in the parsed configuration",
                     )
                 )
         if near is None or far is None:
             continue
 
-        if _mode(near) != _mode(far):
+        near_mode, far_mode = _mode(near), _mode(far)
+        if near_mode != far_mode:
             findings.append(
-                RawFinding(
-                    category=FindingCategory.TOPOLOGY_DRIFT,
-                    hostname=edge.node1_hostname,
-                    structure_type="interface",
-                    structure_name=edge.node1_interface,
-                    detail=(
-                        "Observed link ends disagree on switchport mode:"
-                        f" {edge.node1_hostname} {edge.node1_interface} is {_mode(near)}"
-                        f" and {edge.node2_hostname} {edge.node2_interface} is {_mode(far)}"
-                    ),
-                    line_number=None,
+                _drift(
+                    edge.node1_hostname,
+                    edge.node1_interface,
+                    "Observed link ends disagree on switchport mode:"
+                    f" {edge.node1_hostname} {edge.node1_interface} is {near_mode}"
+                    f" and {edge.node2_hostname} {edge.node2_interface} is {far_mode}",
                 )
             )
         elif (
-            _mode(near) == "ACCESS"
+            near_mode == "ACCESS"
             and near.access_vlan is not None
             and far.access_vlan is not None
             and near.access_vlan != far.access_vlan
         ):
             findings.append(
-                RawFinding(
-                    category=FindingCategory.TOPOLOGY_DRIFT,
-                    hostname=edge.node1_hostname,
-                    structure_type="interface",
-                    structure_name=edge.node1_interface,
-                    detail=(
-                        "Observed link ends disagree on access VLAN:"
-                        f" {edge.node1_hostname} {edge.node1_interface} uses"
-                        f" {near.access_vlan} and {edge.node2_hostname}"
-                        f" {edge.node2_interface} uses {far.access_vlan}"
-                    ),
-                    line_number=None,
+                _drift(
+                    edge.node1_hostname,
+                    edge.node1_interface,
+                    "Observed link ends disagree on access VLAN:"
+                    f" {edge.node1_hostname} {edge.node1_interface} uses"
+                    f" {near.access_vlan} and {edge.node2_hostname}"
+                    f" {edge.node2_interface} uses {far.access_vlan}",
                 )
             )
     return tuple(findings)
+
+
+def _drift(hostname: str, interface: str, detail: str) -> RawFinding:
+    return RawFinding(
+        category=FindingCategory.TOPOLOGY_DRIFT,
+        hostname=hostname,
+        structure_type="interface",
+        structure_name=interface,
+        detail=detail,
+        line_number=None,
+    )
 
 
 def _mode(item: InterfaceProperty) -> str:

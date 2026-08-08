@@ -8,7 +8,7 @@ from app.core.errors import (
     AnalysisDisabledByPolicyError,
     AnalysisNoConfigsError,
     AnalysisSnapshotExpiredError,
-    AnalysisTimeoutError,
+    AnalysisTooManyDevicesError,
     AnalysisUnavailableError,
 )
 from app.models import AnalysisStatus, ExclusionReason, FindingCategory, JobType
@@ -29,8 +29,17 @@ def test_analysis_bounds_have_conservative_defaults(settings: Settings) -> None:
     assert settings.analysis_max_devices == 200
     assert settings.analysis_max_findings == 1000
     assert settings.analysis_retained_snapshots == 10
-    assert settings.analysis_query_timeout_seconds == 30.0
-    assert settings.analysis_parse_timeout_seconds == 600.0
+
+
+def test_no_unenforced_timeout_setting_is_offered() -> None:
+    """pybatfish exposes no timeout knob, so neither may Settings.
+
+    A configurable timeout that nothing reads would claim a protection the
+    feature does not have.
+    """
+    assert not [
+        name for name in Settings.model_fields if name.startswith("analysis_") and "timeout" in name
+    ]
 
 
 @pytest.mark.parametrize(
@@ -41,7 +50,7 @@ def test_analysis_bounds_have_conservative_defaults(settings: Settings) -> None:
         (AnalysisBackendUnavailableError, "analysis_backend_unavailable", 503),
         (AnalysisNoConfigsError, "analysis_no_configs", 422),
         (AnalysisSnapshotExpiredError, "analysis_snapshot_expired", 409),
-        (AnalysisTimeoutError, "analysis_timeout", 504),
+        (AnalysisTooManyDevicesError, "analysis_too_many_devices", 422),
     ],
 )
 def test_analysis_errors_are_typed_and_stable(

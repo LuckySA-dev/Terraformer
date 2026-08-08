@@ -59,8 +59,11 @@ class Settings(BaseSettings):
     analysis_enabled: bool = False
     batfish_host: str = "batfish"
     batfish_port: int = Field(default=9996, ge=1, le=65_535)
-    analysis_query_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
-    analysis_parse_timeout_seconds: float = Field(default=600.0, gt=0, le=3600)
+    # No analysis timeout setting is offered: pybatfish drives a module-level
+    # requests.Session that exposes no timeout knob, so a query timeout could
+    # not be enforced even if it were configured. Offering the setting anyway
+    # would claim a protection that does not exist. Tracked as a known gap.
+    #
     # Enforced bounds that protect the host. They are not a claim that the
     # feature has been shown to work at this scale — see the design spec §8.4.
     analysis_max_devices: int = Field(default=200, ge=1, le=1000)

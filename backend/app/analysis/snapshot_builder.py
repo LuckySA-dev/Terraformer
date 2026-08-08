@@ -13,6 +13,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from uuid import UUID
 
 from app.analysis.types import AnalysisInput, DeviceConfig, ExcludedDevice, Layer1Edge
+from app.core.errors import AnalysisTooManyDevicesError
 from app.models import ConfigSnapshot, Device, ExclusionReason, Neighbor, Vendor
 
 # Batfish can parse Cisco IOS/IOS-XE. FortiOS support is limited and the generic
@@ -56,7 +57,10 @@ def build_analysis_input(
         if device.vendor in SUPPORTED_VENDORS and device.id in latest_snapshot_for
     ]
     if len(included) > max_devices:
-        raise ValueError(
+        # A typed AppError, not ValueError: AnalysisService.initialise only
+        # converts AppError into a failed status, so an untyped exception here
+        # would strand the snapshot in `parsing` and surface as a 500.
+        raise AnalysisTooManyDevicesError(
             f"{len(included)} devices exceeds the analysis device bound of {max_devices}"
         )
 

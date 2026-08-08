@@ -199,7 +199,12 @@ export type JobState = 'queued' | 'started' | 'succeeded' | 'failed' | 'cancelle
 
 export interface Job {
   id: string;
-  type: 'refresh_device' | 'capture_config' | 'discover_ssh' | 'run_diagnostic';
+  type:
+    | 'refresh_device'
+    | 'capture_config'
+    | 'discover_ssh'
+    | 'run_diagnostic'
+    | 'analyze_network';
   state: JobState;
   device_id: string | null;
   result: Record<string, unknown> | null;
@@ -220,4 +225,71 @@ export interface EventRecord {
   message: string;
   details: Record<string, unknown>;
   created_at: string;
+}
+
+export type AnalysisStatus = 'pending' | 'parsing' | 'ready' | 'failed' | 'expired';
+export type ExclusionReason = 'no_snapshot' | 'unsupported_vendor';
+export type FindingCategory =
+  | 'parse_warning'
+  | 'undefined_reference'
+  | 'unused_structure'
+  | 'topology_drift';
+
+export interface AnalysisExclusion {
+  reason: ExclusionReason;
+  count: number;
+}
+
+export interface AnalysisCompleteness {
+  registered_device_count: number;
+  analysed_device_count: number;
+  observed_link_count: number;
+  exclusions: AnalysisExclusion[];
+  oldest_config_at: string | null;
+  newest_config_at: string | null;
+}
+
+export interface AnalysisSnapshot {
+  id: string;
+  status: AnalysisStatus;
+  evidence: 'INFERRED';
+  parse_warning_count: number;
+  findings_truncated: boolean;
+  failure_code: string | null;
+  completeness: AnalysisCompleteness;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AnalysisFinding {
+  id: string;
+  category: FindingCategory;
+  severity: 'info' | 'warning' | 'error';
+  device_id: string | null;
+  structure_type: string | null;
+  structure_name: string | null;
+  detail: string;
+  line_number: number | null;
+  evidence: 'INFERRED';
+}
+
+export interface TraceHop {
+  hostname: string;
+  action: string;
+  detail: string;
+}
+
+export interface PathCheckResult {
+  disposition: string;
+  hops: TraceHop[];
+  evidence: 'INFERRED';
+  completeness: AnalysisCompleteness;
+}
+
+export interface FilterCheckResult {
+  permitted: boolean;
+  matched_line_index: number | null;
+  matched_line: string | null;
+  evidence: 'INFERRED';
+  completeness: AnalysisCompleteness;
 }

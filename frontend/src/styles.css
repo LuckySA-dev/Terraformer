@@ -2570,3 +2570,120 @@ p {
     animation-duration: 1.6s;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Configuration analysis (Batfish)
+   --------------------------------------------------------------------------- */
+
+.analysis-page {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+  max-width: 100%;
+}
+
+.analysis-page__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.analysis-page__header h2 {
+  margin: 0 8px 0 0;
+  display: inline;
+}
+
+.completeness-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.completeness-banner svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--muted);
+}
+
+.completeness-banner ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  display: grid;
+  gap: 2px;
+}
+
+.analysis-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.analysis-tabs button {
+  padding: 8px 14px;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+
+.analysis-tabs button.is-active {
+  color: var(--ink);
+  border-bottom-color: var(--teal);
+  font-weight: 600;
+}
+
+.analysis-empty {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 12px 0;
+}
+
+.analysis-findings {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.analysis-findings li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+
+.analysis-trace {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-soft);
+  font-size: 12px;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.analysis-trace ol {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+}

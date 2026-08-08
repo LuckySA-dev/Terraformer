@@ -1,5 +1,7 @@
 import { apiRequest, apiRequestWithStatus } from './client';
 import type {
+  AnalysisFinding,
+  AnalysisSnapshot,
   ConfigSnapshot,
   ConnectionTestResult,
   CredentialProfile,
@@ -12,9 +14,12 @@ import type {
   DeviceInterface,
   DeviceNeighbor,
   EventRecord,
+  FilterCheckResult,
+  FindingCategory,
   HealthResponse,
   Job,
   HostKeyCandidate,
+  PathCheckResult,
   SessionStatus,
   SetupStatus,
 } from '../types/api';
@@ -141,4 +146,34 @@ export const api = {
     return apiRequest<EventRecord[]>(`/events?${params.toString()}`);
   },
   job: (id: string) => apiRequest<Job>(`/jobs/${encodeURIComponent(id)}`),
+
+  analysisSnapshots: () => apiRequest<AnalysisSnapshot[]>('/analysis-snapshots'),
+  startAnalysis: () => apiRequest<Job>('/analysis-snapshots', { method: 'POST' }),
+  analysisFindings: (id: string, category?: FindingCategory) => {
+    const params = new URLSearchParams();
+    if (category !== undefined) params.set('category', category);
+    const query = params.toString();
+    return apiRequest<AnalysisFinding[]>(
+      `/analysis-snapshots/${encodeURIComponent(id)}/findings${query === '' ? '' : `?${query}`}`,
+    );
+  },
+  pathCheck: (id: string, sourceDeviceId: string, destinationIp: string) =>
+    apiRequest<PathCheckResult>(`/analysis-snapshots/${encodeURIComponent(id)}/path-checks`, {
+      method: 'POST',
+      body: json({ source_device_id: sourceDeviceId, destination_ip: destinationIp }),
+    }),
+  filterCheck: (
+    id: string,
+    input: {
+      device_id: string;
+      filter_name: string;
+      destination_ip: string;
+      protocol: 'tcp' | 'udp' | 'icmp';
+      destination_port?: number;
+    },
+  ) =>
+    apiRequest<FilterCheckResult>(`/analysis-snapshots/${encodeURIComponent(id)}/filter-checks`, {
+      method: 'POST',
+      body: json(input),
+    }),
 };

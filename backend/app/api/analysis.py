@@ -9,7 +9,15 @@ from app.api.dependencies import Authenticated, ContainerDependency, SessionDepe
 from app.core.errors import AnalysisDisabledByPolicyError
 from app.models import AnalysisSnapshot, FindingCategory, JobType
 from app.repositories.analysis import AnalysisRepository
-from app.schemas.analysis import AnalysisSnapshotView, FindingView
+from app.schemas.analysis import (
+    AnalysisSnapshotView,
+    FilterCheckRequest,
+    FilterCheckView,
+    FindingView,
+    PathCheckRequest,
+    PathCheckView,
+    TraceHopView,
+)
 from app.schemas.jobs import JobView
 from app.services.devices import DeviceService
 from app.services.jobs import JobService
@@ -107,4 +115,57 @@ def list_findings(
     _require_enabled(container)
     return AnalysisRepository(session).list_findings(
         analysis_snapshot_id, category=category, device_id=device_id
+    )
+
+
+@router.post("/{analysis_snapshot_id}/path-checks", response_model=PathCheckView)
+def path_check(
+    analysis_snapshot_id: UUID,
+    request: PathCheckRequest,
+    _auth: Authenticated,
+    session: SessionDependency,
+    container: ContainerDependency,
+):
+    _require_enabled(container)
+    service = _service(session, container)
+    result = service.path_check(
+        analysis_snapshot_id,
+        source_device_id=request.source_device_id,
+        destination_ip=str(request.destination_ip),
+    )
+    snapshot = AnalysisRepository(session).get(analysis_snapshot_id)
+    return PathCheckView(
+        disposition=result.disposition,
+        hops=[
+            TraceHopView(hostname=hop.hostname, action=hop.action, detail=hop.detail)
+            for hop in result.hops
+        ],
+        completeness=service.completeness(snapshot),
+    )
+
+
+@router.post("/{analysis_snapshot_id}/filter-checks", response_model=FilterCheckView)
+def filter_check(
+    analysis_snapshot_id: UUID,
+    request: FilterCheckRequest,
+    _auth: Authenticated,
+    session: SessionDependency,
+    container: ContainerDependency,
+):
+    _require_enabled(container)
+    service = _service(session, container)
+    verdict = service.filter_check(
+        analysis_snapshot_id,
+        device_id=request.device_id,
+        filter_name=request.filter_name,
+        destination_ip=str(request.destination_ip),
+        protocol=request.protocol,
+        destination_port=request.destination_port,
+    )
+    snapshot = AnalysisRepository(session).get(analysis_snapshot_id)
+    return FilterCheckView(
+        permitted=verdict.permitted,
+        matched_line_index=verdict.matched_line_index,
+        matched_line=verdict.matched_line,
+        completeness=service.completeness(snapshot),
     )

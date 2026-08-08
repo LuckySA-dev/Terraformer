@@ -11,12 +11,17 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.analysis.client import AnalysisBackend
+from app.analysis.client import AnalysisBackend, FilterVerdict, TraceResult
 from app.analysis.drift import topology_drift_findings
 from app.analysis.findings import to_findings
 from app.analysis.snapshot_builder import build_analysis_input
 from app.core.config import Settings
-from app.core.errors import AnalysisNoConfigsError, AppError
+from app.core.errors import (
+    AnalysisNoConfigsError,
+    AnalysisSnapshotExpiredError,
+    AppError,
+    NotFoundError,
+)
 from app.models import AnalysisSnapshot, AnalysisStatus, ConfigSnapshot, ExclusionReason
 from app.repositories.analysis import AnalysisRepository
 from app.repositories.devices import DeviceRepository
@@ -177,3 +182,86 @@ class AnalysisService:
             oldest_config_at=snapshot.oldest_config_at,
             newest_config_at=snapshot.newest_config_at,
         )
+
+    def _hostname_for(self, snapshot: AnalysisSnapshot, device_id: UUID) -> str:
+        for member in self._analysis.list_members(snapshot.id):
+            if member.device_id == device_id and member.batfish_hostname is not None:
+                return member.batfish_hostname
+        raise NotFoundError("That device is not part of this analysis snapshot")
+
+    def _mark_expired(self, snapshot: AnalysisSnapshot) -> None:
+        self._analysis.set_status(snapshot, AnalysisStatus.EXPIRED)
+        self._session.commit()
+
+    def path_check(
+        self, analysis_snapshot_id: UUID, *, source_device_id: UUID, destination_ip: str
+    ) -> TraceResult:
+        snapshot = self._analysis.get(analysis_snapshot_id)
+        hostname = self._hostname_for(snapshot, source_device_id)
+        try:
+            result = self._backend.traceroute(str(snapshot.id), hostname, destination_ip)
+        except AnalysisSnapshotExpiredError:
+            self._mark_expired(snapshot)
+            raise
+        self._audit_query(
+            snapshot,
+            "path_check",
+            {"source_device_id": str(source_device_id), "destination_ip": destination_ip},
+        )
+        return result
+
+    def filter_check(
+        self,
+        analysis_snapshot_id: UUID,
+        *,
+        device_id: UUID,
+        filter_name: str,
+        destination_ip: str,
+        protocol: str,
+        destination_port: int | None,
+    ) -> FilterVerdict:
+        snapshot = self._analysis.get(analysis_snapshot_id)
+        hostname = self._hostname_for(snapshot, device_id)
+        try:
+            verdict = self._backend.test_filter(
+                str(snapshot.id),
+                hostname,
+                filter_name,
+                destination_ip,
+                protocol,
+                destination_port,
+            )
+        except AnalysisSnapshotExpiredError:
+            self._mark_expired(snapshot)
+            raise
+        self._audit_query(
+            snapshot,
+            "filter_check",
+            {
+                "device_id": str(device_id),
+                "filter_name": filter_name,
+                "destination_ip": destination_ip,
+                "protocol": protocol,
+            },
+        )
+        return verdict
+
+    def _audit_query(
+        self, snapshot: AnalysisSnapshot, query_type: str, parameters: dict[str, str]
+    ) -> None:
+        """Record that a query was asked, not what it returned.
+
+        Query results are ephemeral by design; auditing the question keeps the
+        trail complete without storing analysis output.
+        """
+        self._events.record(
+            event_type="analysis.query",
+            message="Read-only analysis query executed",
+            details={
+                "analysis_snapshot_id": str(snapshot.id),
+                "query_type": query_type,
+                "evidence": "INFERRED",
+                **parameters,
+            },
+        )
+        self._session.commit()

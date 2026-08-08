@@ -18,7 +18,13 @@ from app.drivers import CiscoIOSXEDriver, DriverRegistry, GenericReadOnlyDriver
 from app.main import create_app
 from app.models import Base, SSHCompatibility
 from app.services.ssh_trust import HostKeyCandidateStore, HostKeyMaterial
-from tests.fakes import FakeConnectionGate, FakeQueue, FakeRedis, FakeTransportFactory
+from tests.fakes import (
+    FakeBatfishClient,
+    FakeConnectionGate,
+    FakeQueue,
+    FakeRedis,
+    FakeTransportFactory,
+)
 
 
 @pytest.fixture
@@ -86,6 +92,11 @@ def fake_connection_gate() -> FakeConnectionGate:
 
 
 @pytest.fixture
+def fake_batfish() -> FakeBatfishClient:
+    return FakeBatfishClient()
+
+
+@pytest.fixture
 def settings(tmp_path: Path) -> Settings:
     root_key = base64.urlsafe_b64encode(b"k" * 32).decode("ascii")
     return Settings(
@@ -98,6 +109,9 @@ def settings(tmp_path: Path) -> Settings:
         csrf_trusted_origins="http://testserver,http://127.0.0.1",
         ssh_connect_timeout_seconds=7,
         ssh_command_timeout_seconds=41,
+        # Exercised in most integration tests; explicitly disabled where the
+        # kill switch itself is under test.
+        analysis_enabled=True,
     )
 
 
@@ -108,6 +122,7 @@ def container(
     transport_factory: FakeTransportFactory,
     fake_queue: FakeQueue,
     fake_connection_gate: FakeConnectionGate,
+    fake_batfish: FakeBatfishClient,
 ) -> ApplicationContainer:
     key_provider = MasterKeyProvider(
         key_file=settings.master_key_file,
@@ -136,6 +151,7 @@ def container(
         connection_gate=fake_connection_gate,  # type: ignore[arg-type]
         host_key_candidate_store=HostKeyCandidateStore(FakeRedis()),
         host_key_probe=host_key_probe,
+        analysis_client=fake_batfish,  # type: ignore[arg-type]
     )
 
 

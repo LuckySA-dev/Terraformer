@@ -14,9 +14,15 @@ from app.core.errors import (
 from app.models import AnalysisStatus, ExclusionReason, FindingCategory, JobType
 
 
-def test_analysis_is_disabled_unless_explicitly_enabled(settings: Settings) -> None:
-    """The kill switch must default off, like TELNET_ENABLED."""
-    assert settings.analysis_enabled is False
+def test_analysis_is_disabled_unless_explicitly_enabled() -> None:
+    """The kill switch must default off, like TELNET_ENABLED.
+
+    Checks the class default directly rather than the shared `settings`
+    fixture: that fixture deliberately sets analysis_enabled=True so the rest
+    of the suite can exercise the feature without repeating the override in
+    every test.
+    """
+    assert Settings.model_fields["analysis_enabled"].default is False
 
 
 def test_analysis_bounds_have_conservative_defaults(settings: Settings) -> None:

@@ -14,6 +14,10 @@ class HostKeyCandidateRequest(DeviceConnectionFields):
     pass
 
 
+class HostKeyRepinRequest(APIModel):
+    host_key_candidate_id: UUID
+
+
 class HostKeyCandidateView(APIModel):
     id: UUID
     algorithm: str = Field(max_length=64)

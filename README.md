@@ -15,6 +15,12 @@ administrator and a small management network.
 > capabilities remain lab-unverified. Do not treat this repository as a
 > production network controller.
 
+> **Virtual labs:** devices can be marked as lab devices (GNS3, EVE-NG). Those
+> may re-pin their SSH host key after a node restart, and — only when the server
+> sets `TELNET_ENABLED` — may use a Telnet console. Telnet is cleartext with no
+> host identity to verify; Terraformer never sends stored credentials over it.
+> Keep it to an isolated lab.
+
 The authoritative product scope is
 [`docs/network-automation-final-plan.md`](docs/network-automation-final-plan.md).
 Current implementation evidence and gaps are tracked in

@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-08-06
+Last updated: 2026-08-08
 Current delivery target: phases 0–2
 
 This is the status ledger, not a roadmap. Product intent and future scope remain
@@ -13,18 +13,23 @@ verification, virtual-lab evidence, and physical-lab evidence.
 ## Status meanings
 
 - **Implemented** — code exists and required automated verification passes.
-- **Lab unverified** — automated checks pass, but real-device acceptance has not
-  been recorded.
+- **Lab unverified** — automated checks pass, but no device acceptance run
+  (virtual or physical) has been recorded.
 - **Not Implemented** — no supported product path.
+
+**Evidence policy changed 2026-08-08 by owner decision:** a virtual-lab run
+(GNS3/EVE-NG) satisfies phase exit, and physical-hardware evidence is no longer
+required before starting the next phase. See `PHASE_1_2_READINESS.md` for what
+that policy does and does not cover.
 
 ## Phase summary
 
 | Phase | Status | Delivered boundary | Exit-criterion result |
 |---|---|---|---|
 | 0 — Repository and safety foundation | Implemented | Local Compose stack, file-secret bootstrap, PostgreSQL/Redis/RQ, migrations, health, authentication, encrypted credentials, sanitized logging, tests and operator docs | Passed automated and local-runtime acceptance |
-| 1 — First real device | Implemented; exit blocked — lab unverified | Exact-target manual add, capability-gated Cisco IOS/IOS-XE structured read-only connection/facts/interfaces/running-config snapshots, generic authenticated connection test, jobs/events and operator UI | Automated acceptance passed; phase exit requires an authorized real Cisco structured read-only run, which is not recorded |
-| 2 — Topology and terminal | Implemented; exit blocked — lab unverified | Bounded multi-port SSH-aware discovery/approval; CDP/LLDP topology with saved layouts and unverified manual links; allowlisted show/ping/traceroute diagnostics; guarded Web PTY Direct Mode | Automated acceptance passed; phase exit still requires an authorized lab topology plus terminal/diagnostic evidence |
-| 3 — Safe configuration MVP | Not Implemented | None; all structured writes remain Level D | Not started because Phase 2 lab exit is not yet proven |
+| 1 — First real device | Implemented; exit unblocked | Exact-target manual add, capability-gated Cisco IOS/IOS-XE structured read-only connection/facts/interfaces/running-config snapshots, generic authenticated connection test, jobs/events and operator UI | Automated acceptance passed. Exit no longer gated on physical hardware; record a GNS3/EVE-NG read-only run as the acceptance evidence |
+| 2 — Topology and terminal | Implemented; exit unblocked | Bounded multi-port SSH-aware discovery/approval; CDP/LLDP topology with saved layouts and unverified manual links; allowlisted show/ping/traceroute diagnostics; guarded Web PTY Direct Mode; Telnet console for lab devices | Automated acceptance passed. Exit no longer gated on physical hardware; record a GNS3/EVE-NG topology plus terminal/diagnostic run |
+| 3 — Safe configuration MVP | Not Implemented | None; all structured writes remain Level D | May now start; no longer held behind a physical-lab prerequisite |
 | 4–8 | Not Implemented | None | Future phases |
 
 ## Phase 0 checklist
@@ -107,6 +112,46 @@ verification, virtual-lab evidence, and physical-lab evidence.
 | 2026-08-06 | Very Old SSHv2 capability and Fortinet driver integration | Backend Ruff, Pyright, complete pytest; frontend typecheck, lint, complete Vitest, production build; database migration `20260806_0005_very_old_ssh` | **Automated verification passed; hardware validation pending.** Backend 285 passed/1 opt-in lab skipped; frontend 12 files/134 tests passed. All 3 kill-switches enforced for very_old_ssh; password-only and exact-device pinning preserved. No device connection or external network operation was performed. |
 | 2026-08-08 | Read-only Batfish analysis: opt-in real-container parse test | `docker compose --env-file .env -f deploy/compose.yml -f deploy/compose.analysis.yml --profile analysis up --detach --wait`; `RUN_ANALYSIS_TESTS=1 BATFISH_HOST=127.0.0.1 BATFISH_PORT=<mapped> .venv/Scripts/python.exe -m pytest tests/analysis -v`; full backend `pytest`; Ruff; Pyright | Batfish parsed this application's real sanitized Cisco IOS-XE fixture (`tests/fixtures/cisco_iosxe/running_config.txt`, 1 device, 1 interface) with zero parse warnings; `interfaceProperties`, `traceroute` (disposition `DELIVERED_TO_SUBNET`, correct per-hop action from a real multi-step trace) and `testFilters` (correct `PERMIT`/`DENY` verdict and matched ACL line, confirmed against both a permit and a deny result) were exercised manually against the same container and matched expectations; two real client bugs found and fixed this way (`port_v2` must be a `Session` constructor argument, not set post-construction; `interfaceProperties` rejects a `properties=` filter argument in this Batfish release). Validation reached **1 device**. The 200-device `analysis_max_devices` bound is enforced in code but is not evidence of capacity at that scale — see design spec §8.4. Backend suite unaffected: 315 passed/6 pre-existing unrelated failures/1 opt-in lab skipped; Ruff and Pyright clean. |
 
+| 2026-08-08 | Post-hardware-test defect closure (migration, add-device, legacy SSH, lab/telnet, UI) | Backend Ruff, Pyright, complete pytest; frontend typecheck, lint, complete Vitest, production build; `alembic upgrade head` + `alembic check`; `docker compose config --quiet` | **Automated verification passed; hardware validation pending.** Backend 309 passed / 1 opt-in lab skipped; frontend 13 files / 146 tests plus typecheck, lint and production build passed; no Alembic model drift. **Correction to the prior record:** re-running the suite at commit `9fc21fc` reproduced **8 pre-existing failures**, so the "285 passed" entry below did not hold at that commit. |
+| 2026-08-08 | Migration chain on real PostgreSQL 17 | `postgres:17.10-alpine3.23` container; `pytest tests/integration/test_migrations.py` with `TEST_POSTGRES_URL`; complete backend suite with the same variable | **Verified on the dialect that actually failed.** 8 migration tests and 312 backend tests passed. The pre-fix migration was re-run against the same server and reproduced the reported failure exactly — `psycopg.errors.InFailedSqlTransaction: current transaction is aborted`, caused by dropping the non-existent `ck_devices_vendor` — confirming both the diagnosis and the fix. Downgrade past `20260806_0005` with a stored `fortinet_fortios` device correctly raises instead of truncating the column, and the device is left intact. |
+| 2026-08-08 | Compose runtime | `docker compose --env-file .env -f deploy/compose.yml up --build --detach --wait`; container `alembic current`/`check`; `ssh -V`; health routes | **Runtime verified.** Images built; `migrate` exited 0; PostgreSQL, Redis, API, worker and web all reported healthy; `GET /healthz` returned 200 and `GET /api/health` reported database, Redis and worker `ok`. The previously pending backend-image `ssh -V` smoke test now passes: **OpenSSH_9.2p1 Debian-2+deb12u10**, which both supports `RequiredRSASize` (OpenSSH 9.1+) and is the version that enforces the 1024-bit RSA host-key floor the legacy modes exist to lower. |
+| 2026-08-08 | Existing-database repair (`20260808_0007`) | The running Compose database, which was already stamped at head with the un-widened column; `alembic upgrade head`; `alembic check`; direct insert | **A defect only a real deployment revealed.** That database sat at head with `devices.vendor` still `VARCHAR(11)`, because it had been stamped past the failing `20260806_0005` rather than re-running it — so registering a Fortinet device would still have failed. `20260808_0007` reconciles both enum columns idempotently: `vendor` widened 11 → 16, exactly one canonical CHECK per column, `alembic check` clean, and an insert of `fortinet_fortios` / `very_old_ssh` (previously rejected) now succeeds. |
+
+## Known defects found and fixed on 2026-08-08
+
+Reported after a real-device test session, all traceable to commit `9fc21fc`:
+
+- **Migration failed on Docker/PostgreSQL.** `20260806_0005` dropped
+  `ck_devices_vendor`, a constraint that never existed — `sa.Enum` defaults to
+  `create_constraint=False`. On PostgreSQL a failed DDL statement aborts the
+  whole transaction, so `alembic upgrade head` failed and the API and worker
+  never started. SQLite tolerated it, so no test caught it.
+- **`devices.vendor` was too narrow.** The column was `VARCHAR(11)`, sized to
+  the original two-value enum, while `fortinet_fortios` is 16 characters.
+  PostgreSQL rejects the insert; SQLite ignores VARCHAR length.
+- **Adding a device returned 422.** The frontend sent
+  `very_old_risk_acknowledged`, which the request schemas did not declare and
+  `extra="forbid"` rejected. Frontend tests mock `fetch`, so no test exercised
+  the real schema.
+- **Duplicate/stale CHECK constraints** left `ssh_compatibility` restricted to
+  its pre-`very_old_ssh` values.
+- **Model/migration drift** on `device_ssh_host_keys` made `alembic check` fail,
+  contrary to the earlier record.
+- **Databases stamped past the broken migration stayed broken.** Running the
+  real stack showed a database recorded at head while `devices.vendor` was still
+  `VARCHAR(11)`, because the usual way out of the original failure is
+  `alembic stamp`. `20260808_0007` repairs both enum columns idempotently, so no
+  operator has to work out how their database got there.
+- **Legacy Cisco SSH could not connect.** OpenSSH ≥ 9.1 enforces a 1024-bit
+  minimum RSA host key, which no algorithm option can override, and Catalyst
+  2960/2960-X and ISR 1941 commonly present 512/768-bit keys. The legacy modes
+  now set `RequiredRSASize=768`, and the failure maps to a negotiation error
+  instead of being reported as an authentication failure.
+
+New regression guards: migrations are executed and `alembic check` is asserted;
+a contract test posts the frontend's exact payloads to every device endpoint;
+and an opt-in `TEST_POSTGRES_URL` test runs the chain against real PostgreSQL.
+
 ## Security decisions verified
 
 - Device credentials are encrypted server-side with AES-GCM and are never
@@ -124,15 +169,16 @@ verification, virtual-lab evidence, and physical-lab evidence.
 
 ## Known gaps
 
-- No real-device lab result is recorded. Phase 1 exit remains blocked; the user
-  explicitly directed fixture-only Phase 2 work, so Cisco reads remain **lab
-  unverified**.
+- No device acceptance run — virtual or physical — is recorded yet, so Cisco
+  reads remain **lab unverified**. Phase exit is no longer *blocked* on this
+  (see the evidence policy above), but the status stays unverified until a run
+  is recorded.
 - Mandatory host-key pinning and its explicit UI enrollment flow have automated
   coverage only. No unknown or changed key is trusted automatically, and no
   authorized metadata-only virtual or physical acceptance record exists yet.
-- The backend Dockerfile now includes the OpenSSH client required by Scrapli's
-  explicit system transport, but the rebuilt-image `ssh -V` smoke-test is
-  pending because Docker Desktop was unavailable during this verification.
+- ~~The backend-image `ssh -V` smoke test is pending.~~ **Closed 2026-08-08:**
+  the rebuilt image reports OpenSSH_9.2p1, which provides the `RequiredRSASize`
+  option the legacy SSH modes depend on.
 - Manual USB Console automated verification passed, but hardware validation is
   pending. It remains lab-unverified, and no device/vendor support is inferred
   from browser, fake-stream, serving-policy, or local Compose evidence. Manual
@@ -142,9 +188,17 @@ verification, virtual-lab evidence, and physical-lab evidence.
 - Backup/restore acceptance is not implemented in phases 0–2.
 - Broader LAN exposure has not been hardened or tested; normal deployment stays
   loopback-only.
-- Phase 2 automated implementation is complete, but its exit cannot be promoted
-  without an authorized real-lab topology plus terminal/diagnostic run. Phase 3
-  remains intentionally unstarted until that evidence exists.
+- Phase 2 automated implementation is complete. Its exit now needs a recorded
+  GNS3/EVE-NG topology plus terminal/diagnostic run rather than physical
+  hardware. Phase 3 is no longer held behind that evidence.
+- The Telnet console for lab devices has automated coverage only. It is
+  cleartext with no host identity, is off unless `TELNET_ENABLED` is set, and is
+  refused for any device not marked as a lab device. Credentials are never sent
+  automatically over it.
+- `RequiredRSASize=768` in the legacy SSH modes is the fix for undersized RSA
+  host keys on Catalyst 2960/2960-X and ISR 1941. It is covered by unit tests
+  only; no such device has been contacted. It also requires OpenSSH 9.1+ in the
+  backend image (Debian bookworm ships 9.2).
 - Direct Mode is an explicit operator escape hatch and can change a device. It
   has no parser, approval plan, rollback guarantee, or recording by design.
 - Cisco legacy SSH terminal and topology claims remain lab-unverified. The

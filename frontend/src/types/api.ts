@@ -51,6 +51,39 @@ export interface CredentialProfileInput {
 export type DeviceStatus = 'reachable' | 'unreachable' | 'unknown';
 export type SshCompatibility = 'modern' | 'cisco_legacy' | 'cisco_legacy_group1' | 'very_old_ssh';
 export type Vendor = 'cisco_iosxe' | 'fortinet_fortios' | 'generic';
+export type ConsoleTransport = 'ssh' | 'telnet';
+
+/**
+ * Which SSH compatibility modes each vendor accepts.
+ *
+ * Mirrors the guard in backend/app/api/ssh_trust.py. Kept here as the single
+ * source for the UI so the form cannot offer a mode the backend will reject
+ * only after the operator has filled in the whole form.
+ */
+export const SSH_MODES_BY_VENDOR: Record<Vendor, readonly SshCompatibility[]> = {
+  cisco_iosxe: ['modern', 'cisco_legacy', 'cisco_legacy_group1', 'very_old_ssh'],
+  fortinet_fortios: ['modern', 'very_old_ssh'],
+  generic: ['modern'],
+};
+
+export const SSH_MODE_LABELS: Record<SshCompatibility, { label: string; hint: string }> = {
+  modern: {
+    label: 'Modern',
+    hint: 'Current algorithms only. Correct for anything from roughly the last decade.',
+  },
+  cisco_legacy: {
+    label: 'Cisco legacy',
+    hint: 'Adds SHA-1 key exchange and CBC ciphers. Try this first for IOS 15.x.',
+  },
+  cisco_legacy_group1: {
+    label: 'Cisco legacy + Group1',
+    hint: 'Also adds diffie-hellman-group1-sha1, for older IOS builds.',
+  },
+  very_old_ssh: {
+    label: 'Very Old SSH',
+    hint: 'Adds 3DES, DSA and MD5. Last resort for Catalyst 2960/2960-X and ISR 1941.',
+  },
+};
 
 export interface DeviceFacts {
   hostname?: string | null;
@@ -76,6 +109,8 @@ export interface Device {
   vendor: Vendor;
   credential_profile_id: string;
   ssh_compatibility?: SshCompatibility;
+  is_lab: boolean;
+  console_transport: ConsoleTransport;
   status: DeviceStatus;
   facts: DeviceFacts;
   capabilities: DeviceCapability[];
@@ -92,6 +127,8 @@ export interface DeviceInput {
   vendor: Vendor;
   credential_profile_id: string;
   ssh_compatibility: SshCompatibility;
+  is_lab: boolean;
+  console_transport: ConsoleTransport;
   group1_risk_acknowledged: boolean;
   very_old_risk_acknowledged: boolean;
   host_key_candidate_id?: string;

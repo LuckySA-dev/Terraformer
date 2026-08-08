@@ -19,9 +19,11 @@ column width needs to change.
 
 Note on down_revision: this migration was developed on a branch created before
 20260808_0006 (lab devices) and 20260808_0007 (enum column repair) existed on
-`main`. When these branches are reconciled, down_revision here must be updated
-to point at whichever of those lands last, and this revision id must remain
-after both in the chain.
+`main`. Reconciled by repointing 0006's down_revision at this revision instead
+of the reverse, since 0006/0007 only touch the `devices` table and this one
+does not, so either ordering was equally valid — this needed only a one-line
+change instead of two. down_revision here is unchanged from when it was
+written.
 """
 
 from collections.abc import Sequence

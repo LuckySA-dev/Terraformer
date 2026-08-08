@@ -46,6 +46,15 @@ from app.drivers.transport import ScrapliGenericTransport, ScrapliTransport
 from app.models import SSHCompatibility
 from tests.fakes import FakeTransportFactory
 
+# The fixed, sanitized guidance returned for every negotiation failure. Spelled
+# out here rather than imported so a change to the user-facing text has to be
+# made deliberately in both places.
+_NEGOTIATION_ACTION = (
+    "The device and this client share no usable SSH algorithm. Select a"
+    " higher SSH compatibility mode for this device. Older Cisco switches"
+    " and routers often also need a regenerated 2048-bit host key."
+)
+
 
 def parameters() -> ConnectionParameters:
     return ConnectionParameters(
@@ -506,7 +515,7 @@ def test_scrapli_transports_scope_exact_compatibility_options(
             {
                 "phase": "ssh_negotiation",
                 "retryable": False,
-                "recommended_action": ("Verify the saved compatibility mode for this device."),
+                "recommended_action": _NEGOTIATION_ACTION,
             },
         ),
         (
@@ -623,7 +632,7 @@ def test_algorithm_mismatch_is_always_negotiation(marker: str) -> None:
     assert translated.details == {
         "phase": "ssh_negotiation",
         "retryable": False,
-        "recommended_action": "Verify the saved compatibility mode for this device.",
+        "recommended_action": _NEGOTIATION_ACTION,
     }
     assert "raw-" not in str(translated)
     assert "raw-" not in repr(translated.details)

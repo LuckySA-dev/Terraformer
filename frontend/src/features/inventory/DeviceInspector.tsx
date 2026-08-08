@@ -9,6 +9,7 @@ import {
   Clock3,
   Download,
   FileLock2,
+  KeyRound,
   LoaderCircle,
   ListTree,
   Network,
@@ -37,6 +38,7 @@ import type {
   Job,
 } from '../../types/api';
 import { AppState, InlineNotice, QueryErrorState } from '../../components/ui/AppState';
+import { ConnectionError } from '../../components/ui/ConnectionError';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { InputField, SelectField } from '../../components/ui/FormField';
@@ -514,6 +516,28 @@ export function DeviceInspector({ device, onClose, onEdit, onDelete }: DeviceIns
     mutationFn: (target: Device) => api.captureSnapshot(target.id),
     onSuccess: (job: Job) => setActiveJob({ id: job.id, label: 'Capturing running configuration' }),
   });
+  // Virtual lab nodes regenerate their SSH host key on every restart, which
+  // otherwise blocks every operation until the device is deleted and re-added.
+  const repin = useMutation({
+    mutationFn: async (target: Device) => {
+      const candidate = await api.collectHostKeyCandidate({
+        name: target.name,
+        management_address: target.management_address,
+        port: target.port,
+        vendor: target.vendor,
+        credential_profile_id: target.credential_profile_id,
+        ssh_compatibility: target.ssh_compatibility ?? 'modern',
+        is_lab: target.is_lab,
+        console_transport: target.console_transport,
+        group1_risk_acknowledged: target.ssh_compatibility === 'cisco_legacy_group1',
+        very_old_risk_acknowledged: target.ssh_compatibility === 'very_old_ssh',
+      });
+      return api.repinHostKey(target.id, candidate.id);
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['devices'] });
+    },
+  });
   const diagnostic = useMutation({
     mutationFn: ({ device: target, action, destination }: {
       device: Device;
@@ -591,6 +615,10 @@ export function DeviceInspector({ device, onClose, onEdit, onDelete }: DeviceIns
             device.ssh_compatibility === 'very_old_ssh' ? (
               <Badge tone="warning">LEGACY SSH</Badge>
             ) : null}
+            {device.is_lab ? <Badge tone="purple">LAB</Badge> : null}
+            {device.console_transport === 'telnet' ? (
+              <Badge tone="danger">TELNET · CLEARTEXT</Badge>
+            ) : null}
             <span className="mono">{device.management_address}</span>
           </div>
         </div>
@@ -605,10 +633,27 @@ export function DeviceInspector({ device, onClose, onEdit, onDelete }: DeviceIns
         <Button size="small" variant="ghost" onClick={() => onEdit(device)}>
           <Pencil size={14} /> Edit
         </Button>
+        {device.is_lab ? (
+          <Button
+            size="small"
+            variant="ghost"
+            onClick={() => repin.mutate(device)}
+            busy={repin.isPending}
+            title="Re-inspect and pin the host key this lab node presents now"
+          >
+            <KeyRound size={14} /> Re-pin host key
+          </Button>
+        ) : null}
         <Button size="small" variant="ghost" className="button--icon-only" onClick={() => onDelete(device)} aria-label="Delete device">
           <Trash2 size={14} />
         </Button>
       </div>
+      {repin.isError ? <ConnectionError error={repin.error} fallback="Re-pinning failed." /> : null}
+      {repin.isSuccess ? (
+        <InlineNotice tone="safe" title="Host key re-pinned">
+          The key this lab node presents now is the one Terraformer will trust.
+        </InlineNotice>
+      ) : null}
       {activeJob === undefined ? null : (
         <div
           className={`job-banner ${jobFailed ? 'job-banner--error' : ''}`}
@@ -667,6 +712,7 @@ export function DeviceInspector({ device, onClose, onEdit, onDelete }: DeviceIns
             <TerminalPanel
               deviceId={device.id}
               sshCompatibility={device.ssh_compatibility ?? 'modern'}
+              consoleTransport={device.console_transport}
             />
           </Suspense>
         ) : null}

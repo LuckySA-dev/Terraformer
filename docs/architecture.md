@@ -26,6 +26,24 @@ worker (same backend image as api)
   -> explicitly approved management-network device
 ```
 
+Lab devices (GNS3/EVE-NG) may additionally use a Telnet console:
+
+```text
+Browser
+  -> web -> `/ws/terminal/{device_id}` (authenticated, same-origin)
+      -> api -> TCP Telnet to an explicitly registered lab node
+```
+
+Telnet is refused unless all three hold, checked before any socket is opened:
+`TELNET_ENABLED` is set on the server, the device is marked `is_lab`, and the
+operator confirms the cleartext warning for that session. The link is
+unencrypted and presents no host key, so SSH host-key pinning does not apply and
+credentials are never decrypted or transmitted for it — the operator types them
+into the session. Structured reads always use SSH and are unavailable over
+Telnet. `api` and `worker` also resolve `host.docker.internal`, so a lab running
+on the Docker host is reachable by name; this adds a name, not a route, and
+devices are still contacted only after explicit registration.
+
 Manual USB Console uses a separate, browser-local path:
 
 ```text

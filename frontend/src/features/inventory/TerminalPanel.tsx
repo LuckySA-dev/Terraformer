@@ -1,6 +1,6 @@
 import { Plus, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import type { SshCompatibility } from '../../types/api';
+import type { ConsoleTransport, SshCompatibility } from '../../types/api';
 import { SshWebSocketTransport } from '../terminal/SshWebSocketTransport';
 import { TerminalSession } from '../terminal/TerminalSession';
 
@@ -9,9 +9,11 @@ const MAX_TERMINALS = 3;
 export function TerminalPanel({
   deviceId,
   sshCompatibility = 'modern',
+  consoleTransport = 'ssh',
 }: {
   deviceId: string;
   sshCompatibility?: SshCompatibility;
+  consoleTransport?: ConsoleTransport;
 }) {
   const [sessions, setSessions] = useState([1]);
   const [active, setActive] = useState(1);
@@ -20,7 +22,9 @@ export function TerminalPanel({
   const pendingFocus = useRef<number | undefined>(undefined);
   const requiresGroup1Acknowledgement = sshCompatibility === 'cisco_legacy_group1';
   const requiresVeryOldAcknowledgement = sshCompatibility === 'very_old_ssh';
-  const requireAuthorization = requiresGroup1Acknowledgement || requiresVeryOldAcknowledgement;
+  const isTelnet = consoleTransport === 'telnet';
+  const requireAuthorization =
+    requiresGroup1Acknowledgement || requiresVeryOldAcknowledgement || isTelnet;
 
   const add = () => {
     if (sessions.length >= MAX_TERMINALS) return;
@@ -89,14 +93,21 @@ export function TerminalPanel({
               deviceId,
               requiresGroup1Acknowledgement && authorizationAcknowledged,
               requiresVeryOldAcknowledgement && authorizationAcknowledged,
+              isTelnet && authorizationAcknowledged,
             )}
-            warningTitle="Direct Mode — no rollback protection"
-            warningBody="Commands run on the device exactly as typed and may change its configuration. The app does not parse, approve, record, or automatically undo terminal commands."
-            acknowledgementLabel={requiresVeryOldAcknowledgement
-              ? 'I understand Very Old SSH uses obsolete cryptographic algorithms and is a last-resort exception.'
-              : requiresGroup1Acknowledgement
-                ? 'I understand Group1 is a last-resort per-device SSH exception.'
-                : 'I understand — open Direct Mode'}
+            warningTitle={isTelnet
+              ? 'Telnet Direct Mode — cleartext, no rollback protection'
+              : 'Direct Mode — no rollback protection'}
+            warningBody={isTelnet
+              ? 'This console is unencrypted and the device identity cannot be verified, so anything typed — including passwords — is visible on the network. Terraformer never sends the stored credentials over Telnet. Commands run exactly as typed and are not parsed, approved, recorded, or undone.'
+              : 'Commands run on the device exactly as typed and may change its configuration. The app does not parse, approve, record, or automatically undo terminal commands.'}
+            acknowledgementLabel={isTelnet
+              ? 'I understand this Telnet console sends everything in cleartext and cannot verify the device identity.'
+              : requiresVeryOldAcknowledgement
+                ? 'I understand Very Old SSH uses obsolete cryptographic algorithms and is a last-resort exception.'
+                : requiresGroup1Acknowledgement
+                  ? 'I understand Group1 is a last-resort per-device SSH exception.'
+                  : 'I understand — open Direct Mode'}
             requireAuthorization={requireAuthorization}
             openLabel="I understand — open Direct Mode"
             inputPolicy={{ lineEnding: 'raw', localEcho: false, confirmMultiline: true }}

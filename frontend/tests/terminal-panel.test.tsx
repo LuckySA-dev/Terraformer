@@ -173,14 +173,14 @@ describe('Direct Mode terminal', () => {
     act(() => terminalMocks.instances[0]?.emitInput(`${commandMarker}\r\nreload`));
 
     expect(socket.sent).toEqual([
-      JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: false, very_old_risk_acknowledged: false }),
+      JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: false, very_old_risk_acknowledged: false, telnet_cleartext_acknowledged: false }),
     ]);
     expect(screen.getByText('2 lines and 28 characters are waiting. Review before sending.'))
       .toBeVisible();
     expect(document.body.textContent).not.toContain(commandMarker);
     await user.click(screen.getByRole('button', { name: 'Send 2 lines' }));
     expect(socket.sent).toEqual([
-      JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: false, very_old_risk_acknowledged: false }),
+      JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: false, very_old_risk_acknowledged: false, telnet_cleartext_acknowledged: false }),
       JSON.stringify({ type: 'input', data: `${commandMarker}\r\nreload` }),
     ]);
   });
@@ -209,7 +209,7 @@ describe('Direct Mode terminal', () => {
     terminalMocks.instances[0]?.emitInput('show version');
 
     expect(socket.sent).toEqual([
-      JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: true, very_old_risk_acknowledged: false }),
+      JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: true, very_old_risk_acknowledged: false, telnet_cleartext_acknowledged: false }),
       JSON.stringify({ type: 'input', data: 'show version' }),
     ]);
 
@@ -242,7 +242,7 @@ describe('Direct Mode terminal', () => {
     terminalMocks.instances[0]?.emitInput('show version');
 
     expect(socket.sent).toEqual([
-      JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: false, very_old_risk_acknowledged: true }),
+      JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: false, very_old_risk_acknowledged: true, telnet_cleartext_acknowledged: false }),
       JSON.stringify({ type: 'input', data: 'show version' }),
     ]);
 
@@ -625,7 +625,7 @@ describe('Direct Mode terminal', () => {
 
     act(() => terminalMocks.instances[0]?.emitInput('show version'));
     expect(socket.sent).toEqual([
-      JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: false, very_old_risk_acknowledged: false }),
+      JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: false, very_old_risk_acknowledged: false, telnet_cleartext_acknowledged: false }),
     ]);
 
     act(() => socket.onmessage?.({
@@ -684,10 +684,10 @@ describe('Direct Mode terminal', () => {
     secondSocket.readyState = FakeWebSocket.OPEN;
     secondSocket.onopen?.();
     expect(firstSocket.sent).toEqual([
-      JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: true, very_old_risk_acknowledged: false }),
+      JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: true, very_old_risk_acknowledged: false, telnet_cleartext_acknowledged: false }),
     ]);
     expect(secondSocket.sent).toEqual([
-      JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: true, very_old_risk_acknowledged: false }),
+      JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: true, very_old_risk_acknowledged: false, telnet_cleartext_acknowledged: false }),
     ]);
   });
 

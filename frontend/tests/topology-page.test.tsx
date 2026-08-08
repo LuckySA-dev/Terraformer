@@ -34,6 +34,8 @@ const device: Device = {
   management_address: '192.0.2.10',
   port: 22,
   vendor: 'cisco_iosxe',
+    is_lab: false,
+    console_transport: 'ssh',
   credential_profile_id: 'c6d6a5be-bf2e-4d6a-bda8-3a559f985631',
   status: 'reachable',
   facts: { hostname: 'edge-01' },

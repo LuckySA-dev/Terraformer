@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import Field, field_validator, model_validator
 
-from app.models import DeviceStatus, SafetyLevel, SSHCompatibility, Vendor
+from app.models import ConsoleTransport, DeviceStatus, SafetyLevel, SSHCompatibility, Vendor
 from app.schemas.common import APIModel
 
 _HOST = re.compile(r"^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?)$")
@@ -20,6 +20,7 @@ class DeviceConnectionFields(APIModel):
     credential_profile_id: UUID
     ssh_compatibility: SSHCompatibility = SSHCompatibility.MODERN
     group1_risk_acknowledged: bool = False
+    very_old_risk_acknowledged: bool = False
     host_key_candidate_id: UUID | None = None
 
     @field_validator("management_address")
@@ -33,6 +34,8 @@ class DeviceConnectionFields(APIModel):
 
 class DeviceCreate(DeviceConnectionFields):
     name: str = Field(min_length=1, max_length=100)
+    is_lab: bool = False
+    console_transport: ConsoleTransport = ConsoleTransport.SSH
 
     @field_validator("name")
     @classmethod
@@ -42,6 +45,16 @@ class DeviceCreate(DeviceConnectionFields):
             raise ValueError("name cannot be blank")
         return value
 
+    @model_validator(mode="after")
+    def telnet_requires_a_lab_device(self) -> DeviceCreate:
+        # Telnet is cleartext and offers no host key to pin, so it is never
+        # available for a device the operator has not marked as a lab device.
+        # Enforced here as well as in the service so the API cannot be used to
+        # bypass the UI control.
+        if self.console_transport is ConsoleTransport.TELNET and not self.is_lab:
+            raise ValueError("console_transport 'telnet' requires is_lab to be true")
+        return self
+
 
 class DeviceUpdate(APIModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
@@ -50,7 +63,10 @@ class DeviceUpdate(APIModel):
     vendor: Vendor | None = None
     credential_profile_id: UUID | None = None
     ssh_compatibility: SSHCompatibility | None = None
+    is_lab: bool | None = None
+    console_transport: ConsoleTransport | None = None
     group1_risk_acknowledged: bool = False
+    very_old_risk_acknowledged: bool = False
     host_key_candidate_id: UUID | None = None
 
     @model_validator(mode="after")
@@ -86,6 +102,8 @@ class DeviceView(APIModel):
     port: int
     vendor: Vendor
     ssh_compatibility: SSHCompatibility
+    is_lab: bool
+    console_transport: ConsoleTransport
     status: DeviceStatus
     credential_profile_id: UUID
     facts: dict[str, Any]

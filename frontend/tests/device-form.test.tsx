@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ApiError } from '../src/api/client';
 import { api } from '../src/api/network';
@@ -30,6 +30,8 @@ const legacyDevice: Device = {
   vendor: 'cisco_iosxe',
   credential_profile_id: credential.id,
   ssh_compatibility: 'cisco_legacy',
+  is_lab: false,
+  console_transport: 'ssh',
   status: 'reachable',
   facts: {},
   capabilities: [],
@@ -244,6 +246,8 @@ describe('DeviceForm explicit connection safety gate', () => {
       vendor: 'cisco_iosxe',
       credential_profile_id: credential.id,
       ssh_compatibility: 'modern',
+      is_lab: false,
+      console_transport: 'ssh',
       group1_risk_acknowledged: false,
       very_old_risk_acknowledged: false,
       host_key_candidate_id: hostKeyCandidate.id,
@@ -259,6 +263,8 @@ describe('DeviceForm explicit connection safety gate', () => {
         vendor: 'cisco_iosxe',
         credential_profile_id: credential.id,
         ssh_compatibility: 'modern',
+        is_lab: false,
+        console_transport: 'ssh',
         group1_risk_acknowledged: false,
         very_old_risk_acknowledged: false,
         host_key_candidate_id: hostKeyCandidate.id,
@@ -411,9 +417,8 @@ describe('DeviceForm explicit connection safety gate', () => {
     await inspectAndConfirm(user);
     await user.click(screen.getByRole('button', { name: 'Test connection' }));
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      'The SSH host key changed. Inspect and verify again.',
-    );
+    expect(await screen.findByRole('alert')).toHaveTextContent('The SSH host key changed.');
+    expect(screen.getByText(/Inspect the SSH host key again to continue\./)).toBeVisible();
     expect(screen.queryByText('SHA256:fixture')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Inspect SSH host key' })).toBeEnabled();
   });
@@ -441,5 +446,62 @@ describe('DeviceForm explicit connection safety gate', () => {
     expect(await screen.findByText('Device is unreachable')).toBeVisible();
     expect(screen.getByText('Authentication failed.')).toBeVisible();
     expect(screen.getByRole('button', { name: 'Save device' })).toBeDisabled();
+  });
+});
+
+describe('lab devices and telnet', () => {
+  const renderForm = () =>
+    render(
+      <DeviceForm
+        credentials={[credential]}
+        onSubmit={vi.fn(() => Promise.resolve())}
+        onCancel={vi.fn()}
+        onCreateCredential={vi.fn()}
+      />,
+    );
+
+  it('offers telnet only after the device is marked as a virtual lab', async () => {
+    const user = userEvent.setup();
+    renderForm();
+    const transport = screen.getByLabelText('Console transport');
+
+    expect(within(transport).queryByRole('option', { name: 'Telnet' })).not.toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText('Device kind'), 'true');
+
+    expect(within(transport).getByRole('option', { name: 'Telnet' })).toBeInTheDocument();
+  });
+
+  it('warns that telnet is cleartext and never carries the stored credentials', async () => {
+    const user = userEvent.setup();
+    renderForm();
+    await user.selectOptions(screen.getByLabelText('Device kind'), 'true');
+    await user.selectOptions(screen.getByLabelText('Console transport'), 'telnet');
+
+    expect(screen.getByText(/Telnet sends everything in cleartext/)).toBeVisible();
+    expect(screen.getByText(/never sends the stored credentials over Telnet/)).toBeVisible();
+  });
+
+  it('drops back to SSH when the device stops being a lab device', async () => {
+    const user = userEvent.setup();
+    renderForm();
+    await user.selectOptions(screen.getByLabelText('Device kind'), 'true');
+    await user.selectOptions(screen.getByLabelText('Console transport'), 'telnet');
+
+    await user.selectOptions(screen.getByLabelText('Device kind'), 'false');
+
+    expect(screen.getByLabelText('Console transport')).toHaveValue('ssh');
+  });
+
+  it('hides Cisco-only compatibility modes for other platform drivers', async () => {
+    const user = userEvent.setup();
+    renderForm();
+    const modes = screen.getByLabelText('SSH compatibility');
+    expect(within(modes).getByRole('option', { name: 'Cisco legacy + Group1' })).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText('Platform driver'), 'generic');
+
+    expect(within(modes).queryByRole('option', { name: 'Cisco legacy' })).not.toBeInTheDocument();
+    expect(within(modes).queryByRole('option', { name: 'Very Old SSH' })).not.toBeInTheDocument();
   });
 });

@@ -288,7 +288,11 @@ def test_negotiation_failure_api_contains_only_fixed_safe_fields(
         "details": {
             "phase": "ssh_negotiation",
             "retryable": False,
-            "recommended_action": "Verify the saved compatibility mode for this device.",
+            "recommended_action": (
+                "The device and this client share no usable SSH algorithm. Select a"
+                " higher SSH compatibility mode for this device. Older Cisco switches"
+                " and routers often also need a regenerated 2048-bit host key."
+            ),
         },
         "request_id": response.headers["x-request-id"],
     }
@@ -957,6 +961,7 @@ def test_connection_admission_audit_uses_only_the_approved_metadata_allowlist(
         "principal",
         "requested_mode",
         "group1_risk_acknowledged",
+        "very_old_risk_acknowledged",
         "compatibility_policy_version",
         "operation",
         "phase",

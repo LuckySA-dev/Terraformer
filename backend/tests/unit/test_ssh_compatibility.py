@@ -7,6 +7,7 @@ import pytest
 from app.core.config import Settings
 from app.core.errors import ConfigurationError
 from app.drivers.ssh_compatibility import (
+    ALGORITHM_OPTION_KEYS,
     SSH_COMPATIBILITY_POLICY_VERSION,
     SSHCompatibility,
     compatibility_policy,
@@ -14,33 +15,57 @@ from app.drivers.ssh_compatibility import (
 )
 
 
-def test_policy_version_is_2() -> None:
-    assert SSH_COMPATIBILITY_POLICY_VERSION == 2
+def test_policy_version_is_3() -> None:
+    assert SSH_COMPATIBILITY_POLICY_VERSION == 3
 
 
 def test_approved_policy_is_versioned_and_additive() -> None:
-    assert SSH_COMPATIBILITY_POLICY_VERSION == 2
+    assert SSH_COMPATIBILITY_POLICY_VERSION == 3
     assert compatibility_policy(SSHCompatibility.MODERN).openssh_options == ()
     assert compatibility_policy(SSHCompatibility.CISCO_LEGACY).openssh_options == (
         "KexAlgorithms=+diffie-hellman-group14-sha1,diffie-hellman-group-exchange-sha1",
         "HostKeyAlgorithms=+ssh-rsa",
         "Ciphers=+aes256-cbc,aes192-cbc,aes128-cbc",
         "MACs=+hmac-sha1,hmac-sha1-96",
+        "RequiredRSASize=768",
     )
     assert "diffie-hellman-group1-sha1" not in " ".join(
         compatibility_policy(SSHCompatibility.CISCO_LEGACY).openssh_options
     )
     group1_policy = compatibility_policy(SSHCompatibility.CISCO_LEGACY_GROUP1)
-    assert group1_policy.version == 2
+    assert group1_policy.version == 3
     assert group1_policy.openssh_options == (
         "KexAlgorithms=+diffie-hellman-group14-sha1,"
         "diffie-hellman-group-exchange-sha1,diffie-hellman-group1-sha1",
         "HostKeyAlgorithms=+ssh-rsa",
         "Ciphers=+aes256-cbc,aes192-cbc,aes128-cbc",
         "MACs=+hmac-sha1,hmac-sha1-96",
+        "RequiredRSASize=768",
     )
     assert group1_policy.asyncssh_kex_algs is not None
     assert group1_policy.asyncssh_kex_algs.endswith(",diffie-hellman-group1-sha1")
+
+
+def test_modern_mode_never_lowers_the_rsa_key_floor() -> None:
+    """The relaxed key-size floor is a per-device exception, never a default."""
+    assert compatibility_policy(SSHCompatibility.MODERN).openssh_options == ()
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        SSHCompatibility.CISCO_LEGACY,
+        SSHCompatibility.CISCO_LEGACY_GROUP1,
+        SSHCompatibility.VERY_OLD_SSH,
+    ],
+)
+def test_legacy_modes_accept_undersized_rsa_host_keys(mode: SSHCompatibility) -> None:
+    """Catalyst 2960/2960-X and ISR 1941 ship 512/768-bit RSA host keys.
+
+    OpenSSH >= 9.1 rejects those before authentication no matter which
+    algorithms are enabled, so the floor has to be lowered explicitly.
+    """
+    assert "RequiredRSASize=768" in compatibility_policy(mode).openssh_options
 
 
 @pytest.mark.parametrize("prohibited", ["ssh-dss", "hmac-md5", "3des-cbc", "arcfour"])
@@ -102,11 +127,19 @@ def test_policy_is_immutable() -> None:
 
 
 def test_very_old_openssh_options_are_additive() -> None:
+    """Algorithm lists must extend the client defaults, never replace them.
+
+    Scoped to the algorithm options: RequiredRSASize is a numeric key-size
+    floor, not a list, so '+' does not apply to it.
+    """
     policy = compatibility_policy(SSHCompatibility.VERY_OLD_SSH)
-    for opt in policy.openssh_options:
-        if "=" in opt:
-            _key, value = opt.split("=", 1)
-            assert value.startswith("+"), f"Option is not additive (missing '+'): {opt}"
+    algorithm_options = [
+        opt for opt in policy.openssh_options if opt.split("=", 1)[0] in ALGORITHM_OPTION_KEYS
+    ]
+    assert len(algorithm_options) == len(ALGORITHM_OPTION_KEYS)
+    for opt in algorithm_options:
+        _key, value = opt.split("=", 1)
+        assert value.startswith("+"), f"Option is not additive (missing '+'): {opt}"
 
 
 def test_very_old_openssh_contains_group1_kex() -> None:

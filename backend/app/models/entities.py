@@ -47,6 +47,17 @@ class SSHCompatibility(StrEnum):
     VERY_OLD_SSH = "very_old_ssh"
 
 
+class ConsoleTransport(StrEnum):
+    """How the Direct Mode terminal reaches a device.
+
+    TELNET is cleartext and offers no host identity to pin, so it is restricted
+    to lab devices and gated by its own server-side kill switch.
+    """
+
+    SSH = "ssh"
+    TELNET = "telnet"
+
+
 class SafetyLevel(StrEnum):
     READ_ONLY = "D"
 
@@ -156,6 +167,15 @@ class Device(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ),
         nullable=False,
         default=SSHCompatibility.MODERN,
+    )
+    # Marks a virtual device (GNS3, EVE-NG, or similar). Those regenerate their
+    # SSH host key on every restart, so re-pinning is offered for them instead
+    # of requiring a delete-and-recreate. It also gates telnet.
+    is_lab: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    console_transport: Mapped[ConsoleTransport] = mapped_column(
+        enum_type(ConsoleTransport, "console_transport"),
+        nullable=False,
+        default=ConsoleTransport.SSH,
     )
     credential_profile_id: Mapped[UUID] = mapped_column(
         ForeignKey("credential_profiles.id", ondelete="RESTRICT"),

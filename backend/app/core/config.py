@@ -70,6 +70,9 @@ class Settings(BaseSettings):
     analysis_max_findings: int = Field(default=1000, ge=1, le=100_000)
     analysis_retained_snapshots: int = Field(default=10, ge=1, le=100)
 
+    # Telnet is cleartext with no host identity. Off by default; intended only
+    # for virtual labs (GNS3/EVE-NG) whose consoles are Telnet-only.
+    telnet_enabled: bool = False
     terminal_pty_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
     terminal_max_duration_seconds: int = Field(default=3600, ge=60, le=86400)
     max_device_connections: int = Field(

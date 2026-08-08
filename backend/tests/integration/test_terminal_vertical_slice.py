@@ -803,6 +803,8 @@ def test_terminal_relays_pty_without_recording_commands(
         "principal",
         "requested_mode",
         "group1_risk_acknowledged",
+        "very_old_risk_acknowledged",
+        "console_transport",
         "compatibility_policy_version",
         "operation",
         "phase",
@@ -1120,3 +1122,113 @@ def test_terminal_rejects_unauthenticated_or_cross_origin_clients(
         ):
             pass
     assert disconnected.value.code == expected_code
+
+
+def _register_telnet_lab_device(client: TestClient, profile_id: str) -> str:
+    connection = {
+        "management_address": "192.0.2.10",
+        "port": 5000,
+        "vendor": "cisco_iosxe",
+        "credential_profile_id": profile_id,
+        "ssh_compatibility": "modern",
+    }
+    candidate = client.post("/api/ssh-host-key-candidates", json=connection)
+    assert candidate.status_code == 201, candidate.text
+    response = client.post(
+        "/api/devices",
+        json={
+            "name": "gns3-node",
+            **connection,
+            "is_lab": True,
+            "console_transport": "telnet",
+            "host_key_candidate_id": candidate.json()["id"],
+        },
+    )
+    assert response.status_code == 201, response.text
+    return str(response.json()["id"])
+
+
+@pytest.mark.parametrize(
+    ("telnet_enabled", "acknowledged", "expected_code"),
+    [
+        (False, True, "telnet_disabled_by_policy"),
+        (True, False, "telnet_direct_mode_required"),
+    ],
+)
+def test_telnet_console_denials_happen_before_any_socket_is_opened(
+    authenticated_client: TestClient,
+    credential_profile: dict[str, object],
+    container: ApplicationContainer,
+    fake_connection_gate: FakeConnectionGate,
+    telnet_enabled: bool,
+    acknowledged: bool,
+    expected_code: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device_id = _register_telnet_lab_device(authenticated_client, str(credential_profile["id"]))
+    container.settings.telnet_enabled = telnet_enabled
+    fake_connection_gate.acquired.clear()
+    opened = False
+
+    async def fake_open(*_args: object, **_kwargs: object) -> FakeTerminalSession:
+        nonlocal opened
+        opened = True
+        return FakeTerminalSession()
+
+    monkeypatch.setattr(terminal_api, "open_telnet_session", fake_open)
+    with authenticated_client.websocket_connect(
+        f"/ws/terminal/{device_id}", headers={"origin": "http://testserver"}
+    ) as websocket:
+        websocket.send_json(
+            {
+                "type": "accept_direct_mode",
+                "telnet_cleartext_acknowledged": acknowledged,
+            }
+        )
+        message = _receive_error(websocket)
+
+    assert message["code"] == expected_code
+    assert fake_connection_gate.acquired == []
+    assert opened is False
+
+
+def test_telnet_console_never_decrypts_device_credentials(
+    authenticated_client: TestClient,
+    credential_profile: dict[str, object],
+    container: ApplicationContainer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The link is cleartext, so the operator types credentials themselves."""
+    device_id = _register_telnet_lab_device(authenticated_client, str(credential_profile["id"]))
+    container.settings.telnet_enabled = True
+    session = FakeTerminalSession(outputs=["Username: "])
+    decrypted = False
+
+    def fail_if_called(*_args: object, **_kwargs: object) -> object:
+        nonlocal decrypted
+        decrypted = True
+        raise AssertionError("Telnet must not decrypt credentials")
+
+    async def fake_open(*_args: object, **_kwargs: object) -> FakeTerminalSession:
+        return session
+
+    monkeypatch.setattr(terminal_api, "open_telnet_session", fake_open)
+    monkeypatch.setattr(terminal_api, "_connection_parameters", fail_if_called)
+
+    with authenticated_client.websocket_connect(
+        f"/ws/terminal/{device_id}", headers={"origin": "http://testserver"}
+    ) as websocket:
+        websocket.send_json(
+            {
+                "type": "accept_direct_mode",
+                "telnet_cleartext_acknowledged": True,
+            }
+        )
+        while True:
+            message = websocket.receive_json()
+            if message.get("type") == "output":
+                assert message["data"] == "Username: "
+                break
+            assert message.get("type") == "status", message
+
+    assert decrypted is False

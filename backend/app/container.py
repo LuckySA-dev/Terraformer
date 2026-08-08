@@ -5,6 +5,7 @@ from functools import cached_property, lru_cache
 from redis import Redis
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.analysis.client import AnalysisBackend, build_backend
 from app.core.config import Settings, get_settings
 from app.core.database import create_database_engine, create_session_factory
 from app.core.security import (
@@ -35,6 +36,7 @@ class ApplicationContainer:
         connection_gate: RedisConnectionGate | None = None,
         host_key_candidate_store: HostKeyCandidateStore | None = None,
         host_key_probe: HostKeyProbe | None = None,
+        analysis_client: AnalysisBackend | None = None,
     ) -> None:
         self.settings = settings or get_settings()
         self._session_factory = session_factory
@@ -49,6 +51,7 @@ class ApplicationContainer:
         self._connection_gate = connection_gate
         self._host_key_candidate_store = host_key_candidate_store
         self._host_key_probe = host_key_probe
+        self._analysis_client = analysis_client
 
     @cached_property
     def session_factory(self) -> sessionmaker[Session]:
@@ -107,6 +110,12 @@ class ApplicationContainer:
             self.settings.snapshot_dir,
             EnvelopeCipher(self.key_provider, purpose="config-snapshots"),
         )
+
+    @cached_property
+    def analysis_client(self) -> AnalysisBackend:
+        if self._analysis_client is not None:
+            return self._analysis_client
+        return build_backend(self.settings)
 
     @cached_property
     def session_tokens(self) -> SessionTokenService:

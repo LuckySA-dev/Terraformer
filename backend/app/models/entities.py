@@ -56,6 +56,28 @@ class JobType(StrEnum):
     CAPTURE_CONFIG = "capture_config"
     DISCOVER_SSH = "discover_ssh"
     RUN_DIAGNOSTIC = "run_diagnostic"
+    ANALYZE_NETWORK = "analyze_network"
+
+
+class AnalysisStatus(StrEnum):
+    PENDING = "pending"
+    PARSING = "parsing"
+    READY = "ready"
+    FAILED = "failed"
+    # The Batfish container lost the parsed snapshot, usually on restart.
+    EXPIRED = "expired"
+
+
+class ExclusionReason(StrEnum):
+    NO_SNAPSHOT = "no_snapshot"
+    UNSUPPORTED_VENDOR = "unsupported_vendor"
+
+
+class FindingCategory(StrEnum):
+    PARSE_WARNING = "parse_warning"
+    UNDEFINED_REFERENCE = "undefined_reference"
+    UNUSED_STRUCTURE = "unused_structure"
+    TOPOLOGY_DRIFT = "topology_drift"
 
 
 class JobState(StrEnum):
@@ -165,11 +187,15 @@ class Device(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 class DeviceSSHHostKey(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "device_ssh_host_keys"
+    # Declared as a named UniqueConstraint plus a plain index to match what
+    # 20260806_0004 created. `unique=True, index=True` on the column would
+    # instead render a single unique index, which `alembic check` reports as
+    # drift. Exactly one pinned key per device either way.
+    __table_args__ = (UniqueConstraint("device_id", name="uq_device_ssh_host_key_device"),)
 
     device_id: Mapped[UUID] = mapped_column(
         ForeignKey("devices.id", ondelete="CASCADE"),
         nullable=False,
-        unique=True,
         index=True,
     )
     algorithm: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -337,3 +363,100 @@ class Event(UUIDPrimaryKeyMixin, Base):
         nullable=False,
         default=utc_now,
     )
+
+
+class AnalysisSnapshot(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """One parse of the network's configuration set.
+
+    The id is also the snapshot name inside Batfish, so a row can be located in
+    the container without a second mapping.
+    """
+
+    __tablename__ = "analysis_snapshots"
+
+    status: Mapped[AnalysisStatus] = mapped_column(
+        enum_type(AnalysisStatus, "analysis_status"),
+        nullable=False,
+        default=AnalysisStatus.PENDING,
+    )
+    device_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    observed_link_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    oldest_config_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    newest_config_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    parse_warning_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    findings_truncated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    failure_code: Mapped[str | None] = mapped_column(String(100))
+
+    members: Mapped[list[AnalysisSnapshotMember]] = relationship(
+        back_populates="analysis_snapshot",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    findings: Mapped[list[AnalysisFinding]] = relationship(
+        back_populates="analysis_snapshot",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class AnalysisSnapshotMember(UUIDPrimaryKeyMixin, Base):
+    """One row per device registered at analysis time, included or not.
+
+    Recording exclusions as data makes the completeness disclosure queryable
+    rather than recomputed, and preserves what was considered.
+    """
+
+    __tablename__ = "analysis_snapshot_members"
+    __table_args__ = (
+        UniqueConstraint(
+            "analysis_snapshot_id", "device_id", name="uq_analysis_member_device"
+        ),
+    )
+
+    analysis_snapshot_id: Mapped[UUID] = mapped_column(
+        ForeignKey("analysis_snapshots.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    device_id: Mapped[UUID] = mapped_column(
+        ForeignKey("devices.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    config_snapshot_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("config_snapshots.id", ondelete="RESTRICT")
+    )
+    batfish_hostname: Mapped[str | None] = mapped_column(String(255))
+    exclusion_reason: Mapped[ExclusionReason | None] = mapped_column(
+        enum_type(ExclusionReason, "exclusion_reason")
+    )
+
+    analysis_snapshot: Mapped[AnalysisSnapshot] = relationship(back_populates="members")
+
+
+class AnalysisFinding(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "analysis_findings"
+    __table_args__ = (
+        Index("ix_analysis_findings_snapshot_category", "analysis_snapshot_id", "category"),
+    )
+
+    analysis_snapshot_id: Mapped[UUID] = mapped_column(
+        ForeignKey("analysis_snapshots.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    category: Mapped[FindingCategory] = mapped_column(
+        enum_type(FindingCategory, "finding_category"), nullable=False
+    )
+    severity: Mapped[EventSeverity] = mapped_column(
+        enum_type(EventSeverity, "event_severity"),
+        nullable=False,
+        default=EventSeverity.WARNING,
+    )
+    device_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("devices.id", ondelete="CASCADE"), index=True
+    )
+    structure_type: Mapped[str | None] = mapped_column(String(100))
+    structure_name: Mapped[str | None] = mapped_column(String(255))
+    detail: Mapped[str] = mapped_column(Text, nullable=False)
+    line_number: Mapped[int | None] = mapped_column(Integer)
+
+    analysis_snapshot: Mapped[AnalysisSnapshot] = relationship(back_populates="findings")

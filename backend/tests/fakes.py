@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from uuid import uuid4
 
+from app.analysis.client import FilterVerdict, InterfaceProperty, RawFinding, TraceResult
+from app.analysis.types import Layer1Edge
+from app.core.errors import AnalysisSnapshotExpiredError
 from app.drivers.base import ConnectionParameters, NetworkTransport
 from app.models import Job
 from app.services.connection_gate import (
@@ -144,3 +147,67 @@ class FakeConnectionGate:
 
     def release(self, permit: ConnectionPermit) -> None:
         self.released.append(permit)
+
+
+class FakeBatfishClient:
+    """In-memory analysis backend, typed against the AnalysisBackend Protocol.
+
+    Records exactly what was handed to Batfish so tests can assert that no raw
+    secret left the database.
+    """
+
+    def __init__(self) -> None:
+        self.snapshots: dict[str, dict[str, str]] = {}
+        self.layer1_edges: dict[str, tuple[Layer1Edge, ...]] = {}
+        self.parse_findings_result: tuple[RawFinding, ...] = ()
+        self.interface_properties_result: tuple[InterfaceProperty, ...] = ()
+        self.trace_result: TraceResult | None = None
+        self.filter_verdict: FilterVerdict | None = None
+        self.init_error: Exception | None = None
+
+    def init_snapshot(
+        self, name: str, configs: Mapping[str, str], layer1_edges: Sequence[Layer1Edge]
+    ) -> None:
+        if self.init_error is not None:
+            raise self.init_error
+        self.snapshots[name] = dict(configs)
+        self.layer1_edges[name] = tuple(layer1_edges)
+
+    def snapshot_exists(self, name: str) -> bool:
+        return name in self.snapshots
+
+    def parse_findings(self, name: str) -> tuple[RawFinding, ...]:
+        self._require(name)
+        return self.parse_findings_result
+
+    def interface_properties(self, name: str) -> tuple[InterfaceProperty, ...]:
+        self._require(name)
+        return self.interface_properties_result
+
+    def traceroute(self, name: str, start_hostname: str, destination_ip: str) -> TraceResult:
+        del start_hostname, destination_ip
+        self._require(name)
+        assert self.trace_result is not None, "set trace_result before calling traceroute"
+        return self.trace_result
+
+    def test_filter(
+        self,
+        name: str,
+        hostname: str,
+        filter_name: str,
+        destination_ip: str,
+        protocol: str,
+        destination_port: int | None,
+    ) -> FilterVerdict:
+        del hostname, filter_name, destination_ip, protocol, destination_port
+        self._require(name)
+        assert self.filter_verdict is not None, "set filter_verdict before calling test_filter"
+        return self.filter_verdict
+
+    def forget(self, name: str) -> None:
+        """Simulate the container losing a parsed snapshot on restart."""
+        self.snapshots.pop(name, None)
+
+    def _require(self, name: str) -> None:
+        if name not in self.snapshots:
+            raise AnalysisSnapshotExpiredError()

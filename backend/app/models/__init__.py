@@ -1,5 +1,9 @@
 from app.models.base import Base
 from app.models.entities import (
+    AnalysisFinding,
+    AnalysisSnapshot,
+    AnalysisSnapshotMember,
+    AnalysisStatus,
     AppSetting,
     ConfigSnapshot,
     CredentialProfile,
@@ -9,6 +13,8 @@ from app.models.entities import (
     DeviceStatus,
     Event,
     EventSeverity,
+    ExclusionReason,
+    FindingCategory,
     Interface,
     Job,
     JobState,
@@ -20,6 +26,10 @@ from app.models.entities import (
 )
 
 __all__ = [
+    "AnalysisFinding",
+    "AnalysisSnapshot",
+    "AnalysisSnapshotMember",
+    "AnalysisStatus",
     "AppSetting",
     "Base",
     "ConfigSnapshot",
@@ -30,6 +40,8 @@ __all__ = [
     "DeviceStatus",
     "Event",
     "EventSeverity",
+    "ExclusionReason",
+    "FindingCategory",
     "Interface",
     "Job",
     "JobState",

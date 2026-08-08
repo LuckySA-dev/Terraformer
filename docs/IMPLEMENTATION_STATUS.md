@@ -105,6 +105,7 @@ verification, virtual-lab evidence, and physical-lab evidence.
 | 2026-08-06 | Cisco legacy SSH terminal final routine verification | Backend Ruff, Pyright, complete pytest; frontend typecheck, lint, complete Vitest, production build; focused secret/persistence/network/xterm regressions; normal/dev Compose `config --quiet` | **Automated verification passed; hardware validation pending.** Backend 236 passed/1 opt-in lab skipped; frontend 12 files/124 tests passed; focused backend 113 and frontend 85 tests passed. No lab opt-in, device connection, external network operation, preview, or Compose start was performed. |
 | 2026-08-06 | Phase 1-2 readiness closure (`e8a474e`, `348f636`) | Backend Ruff, Pyright and complete pytest; frontend `npm run verify`; normal and merged development Compose `config --quiet` | **Automated verification passed; hardware validation pending.** Backend 248 passed/1 opt-in lab skipped; frontend 12 files/131 tests plus typecheck, lint and production build passed; both Compose configurations valid. No lab opt-in, device connection, external network operation, preview, or Compose start was performed. |
 | 2026-08-06 | Very Old SSHv2 capability and Fortinet driver integration | Backend Ruff, Pyright, complete pytest; frontend typecheck, lint, complete Vitest, production build; database migration `20260806_0005_very_old_ssh` | **Automated verification passed; hardware validation pending.** Backend 285 passed/1 opt-in lab skipped; frontend 12 files/134 tests passed. All 3 kill-switches enforced for very_old_ssh; password-only and exact-device pinning preserved. No device connection or external network operation was performed. |
+| 2026-08-08 | Read-only Batfish analysis: opt-in real-container parse test | `docker compose --env-file .env -f deploy/compose.yml -f deploy/compose.analysis.yml --profile analysis up --detach --wait`; `RUN_ANALYSIS_TESTS=1 BATFISH_HOST=127.0.0.1 BATFISH_PORT=<mapped> .venv/Scripts/python.exe -m pytest tests/analysis -v`; full backend `pytest`; Ruff; Pyright | Batfish parsed this application's real sanitized Cisco IOS-XE fixture (`tests/fixtures/cisco_iosxe/running_config.txt`, 1 device, 1 interface) with zero parse warnings; `interfaceProperties`, `traceroute` (disposition `DELIVERED_TO_SUBNET`, correct per-hop action from a real multi-step trace) and `testFilters` (correct `PERMIT`/`DENY` verdict and matched ACL line, confirmed against both a permit and a deny result) were exercised manually against the same container and matched expectations; two real client bugs found and fixed this way (`port_v2` must be a `Session` constructor argument, not set post-construction; `interfaceProperties` rejects a `properties=` filter argument in this Batfish release). Validation reached **1 device**. The 200-device `analysis_max_devices` bound is enforced in code but is not evidence of capacity at that scale — see design spec §8.4. Backend suite unaffected: 315 passed/6 pre-existing unrelated failures/1 opt-in lab skipped; Ruff and Pyright clean. |
 
 ## Security decisions verified
 
@@ -149,3 +150,16 @@ verification, virtual-lab evidence, and physical-lab evidence.
 - Cisco legacy SSH terminal and topology claims remain lab-unverified. The
   approved compatibility-policy version, kill switches, and resource limits
   have automated coverage only; no real hardware result is recorded.
+- Read-only configuration analysis is optional and off by default. It is
+  Cisco IOS/IOS-XE only; Fortinet and generic devices are reported as
+  exclusions. Its device and findings limits are enforced bounds that protect
+  the host, not evidence of capacity: the recorded validation reached a small
+  number of nodes, and everything above that is unverified. Measured capacity
+  belongs to Phase 7.
+- No analysis query or parse timeout is enforced. The design spec §8.2/§8.3
+  called for one, but `pybatfish` drives a module-level `requests.Session`
+  that exposes no timeout knob, so the setting was removed rather than left
+  in place claiming a protection that does not exist. A hung Batfish query
+  therefore blocks its caller until the container is restarted. Enforcing it
+  would need a supervising thread or a patched HTTP session; neither is
+  justified for a single-user local tool yet.

@@ -20,6 +20,15 @@ dependencies = [
   "uvicorn[standard]==0.35.0",
 ]
 
+[project.optional-dependencies]
+# Read-only configuration analysis. Kept out of the default install because
+# pybatfish pulls in pandas and numpy, which would sit in the always-on image
+# even when ANALYSIS_ENABLED is false. Pinned to the latest PyPI release as of
+# 2026-08-08; `pip index versions pybatfish` confirmed no newer release exists.
+analysis = [
+  "pybatfish==2025.7.7.2423",
+]
+
 [dependency-groups]
 dev = [
   "httpx==0.28.1",
@@ -42,6 +51,7 @@ testpaths = ["tests"]
 markers = [
   "integration: database/API integration tests",
   "lab: opt-in tests that require a real network device",
+  "analysis: opt-in tests that require a running Batfish container",
 ]
 
 [tool.ruff]

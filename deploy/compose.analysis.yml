@@ -1,0 +1,60 @@
+# Optional read-only configuration analysis. Enable with:
+#   docker compose --env-file .env -f deploy/compose.yml \
+#     -f deploy/compose.analysis.yml --profile analysis up --detach --wait
+#
+# Batfish receives sanitized configuration text and returns findings. It holds
+# no credentials and has no reason to reach a device, so the `analysis` network
+# is internal-only. This is deliberately stricter than the `application`
+# network, which must retain outbound routing for the worker.
+#
+# batfish/allinone publishes no version-pinned tag matching the pybatfish PyPI
+# release scheme (only `latest` and dated `test-YYYY.MM.DD.NNNN` CI builds
+# exist, confirmed against the Docker Hub tag list on 2026-08-08). `latest` is
+# used here; pin a specific `test-*` tag instead if build reproducibility
+# becomes a requirement.
+services:
+  batfish:
+    profiles: ["analysis"]
+    image: batfish/allinone:latest
+    init: true
+    restart: unless-stopped
+    networks:
+      - analysis
+    expose:
+      - "9996"
+      - "9997"
+    volumes:
+      - batfish_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9996/ >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  api:
+    environment:
+      ANALYSIS_ENABLED: "${ANALYSIS_ENABLED:-false}"
+      BATFISH_HOST: batfish
+      BATFISH_PORT: "9996"
+    networks:
+      - edge
+      - application
+      - analysis
+
+  worker:
+    environment:
+      ANALYSIS_ENABLED: "${ANALYSIS_ENABLED:-false}"
+      BATFISH_HOST: batfish
+      BATFISH_PORT: "9996"
+    networks:
+      - application
+      - analysis
+
+networks:
+  analysis:
+    driver: bridge
+    internal: true
+
+volumes:
+  batfish_data:

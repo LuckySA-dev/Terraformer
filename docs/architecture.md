@@ -73,6 +73,18 @@ database, AI gateway container, or local model runtime in this phase.
 loopback for host-native development. It must not be used to expose those
 services to a management LAN.
 
+`deploy/compose.analysis.yml` adds one optional service, gated behind the
+`analysis` Compose profile and `ANALYSIS_ENABLED`:
+
+| Service | Responsibility | Host exposure | Persistence |
+|---|---|---|---|
+| `batfish` | Static configuration parsing/query engine (`batfish/allinone`) | None | `batfish_data` (its own snapshot working storage) |
+
+Neither `api` nor `worker` sends device credentials or live traffic to
+`batfish` — only already-sanitized stored configuration snapshots. Batfish
+never opens a connection to a network device; every "path check" or "filter
+check" it answers is computed from the configuration text alone.
+
 ## Networks and trust boundaries
 
 `web` and `api` share the `edge` network. Only backend services join the
@@ -89,6 +101,15 @@ The local-lab stack explicitly disables strict SSH host-key verification for
 first contact. This is a convenience/risk tradeoff, not a secure deployment
 default. Persistent installations must provision trusted host keys and enable
 strict verification before device connections.
+
+When the `analysis` profile is active, `batfish` joins its own `analysis`
+network, declared `internal: true` so it has no route out of the Compose
+project and no published host port — `api` and `worker` are the only peers
+that can reach it, and only over that internal network. It holds no secrets.
+Its `batfish_data` volume is Batfish's own working storage for uploaded
+snapshots — the same sanitized configuration text already stored in the
+application database, not new data — and, like the other named volumes,
+survives a plain `compose down` and is only discarded with `down -v`.
 
 ## Startup and readiness
 

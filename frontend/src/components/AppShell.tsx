@@ -6,6 +6,7 @@ import {
   LockKeyhole,
   Network,
   Router,
+  ScanSearch,
   Server,
   ShieldCheck,
 } from 'lucide-react';
@@ -17,8 +18,11 @@ import { ActivityPage } from '../features/inventory/ActivityPage';
 import { InventoryPage } from '../features/inventory/InventoryPage';
 
 const TopologyPage = lazy(() => import('../features/topology/TopologyPage'));
+const AnalysisPage = lazy(() =>
+  import('../features/analysis/AnalysisPage').then((module) => ({ default: module.AnalysisPage })),
+);
 
-type ViewId = 'inventory' | 'topology' | 'activity';
+type ViewId = 'inventory' | 'topology' | 'analysis' | 'activity';
 
 interface AppShellProps {
   health: HealthResponse;
@@ -81,6 +85,15 @@ export function AppShell({ health, onLogout }: AppShellProps) {
           </button>
           <button
             type="button"
+            className={view === 'analysis' ? 'is-active' : ''}
+            onClick={() => setView('analysis')}
+            aria-current={view === 'analysis' ? 'page' : undefined}
+          >
+            <ScanSearch size={18} />
+            <span>Configuration analysis</span>
+          </button>
+          <button
+            type="button"
             className={view === 'activity' ? 'is-active' : ''}
             onClick={() => setView('activity')}
             aria-current={view === 'activity' ? 'page' : undefined}
@@ -126,6 +139,18 @@ export function AppShell({ health, onLogout }: AppShellProps) {
             }
           >
             <TopologyPage />
+          </Suspense>
+        ) : view === 'analysis' ? (
+          <Suspense
+            fallback={
+              <AppState
+                kind="loading"
+                title="Loading analysis"
+                message="Preparing the configuration analysis view..."
+              />
+            }
+          >
+            <AnalysisPage />
           </Suspense>
         ) : (
           <ActivityPage />

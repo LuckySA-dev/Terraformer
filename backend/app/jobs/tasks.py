@@ -4,6 +4,7 @@ from uuid import UUID
 
 import structlog
 
+from app.analysis.service import AnalysisService
 from app.container import get_default_container
 from app.core.errors import AppError
 from app.models import EventSeverity, JobType
@@ -70,6 +71,19 @@ def execute_job(job_id: str) -> dict[str, object]:
                     target=str(diagnostic.target) if diagnostic.target is not None else None,
                     job_id=job.id,
                 )
+            elif job.type == JobType.ANALYZE_NETWORK and job.device_id is None:
+                analysis = AnalysisService(
+                    session,
+                    settings=container.settings,
+                    backend=container.analysis_client,
+                    snapshots=SnapshotService(
+                        session,
+                        store=container.snapshot_store,
+                        devices=devices,
+                        drivers=container.drivers,
+                    ),
+                )
+                result = analysis.initialise_new()
             else:
                 raise ValueError("Unsupported or incomplete job")
         with container.session_factory() as session:

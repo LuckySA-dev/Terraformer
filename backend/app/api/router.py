@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api import (
+    analysis,
     credentials,
     devices,
     diagnostics,
@@ -22,5 +23,6 @@ api_router.include_router(diagnostics.router)
 api_router.include_router(discovery.router)
 api_router.include_router(snapshots.router)
 api_router.include_router(ssh_trust.router)
+api_router.include_router(analysis.router)
 api_router.include_router(events.router)
 api_router.include_router(jobs.router)

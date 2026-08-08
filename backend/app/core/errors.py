@@ -166,3 +166,38 @@ class QueueUnavailableError(AppError):
     code = "queue_unavailable"
     status_code = 503
     default_message = "The background job queue is unavailable"
+
+
+class AnalysisDisabledByPolicyError(AppError):
+    code = "analysis_disabled_by_policy"
+    status_code = 403
+    default_message = "Configuration analysis is disabled by server policy"
+
+
+class AnalysisUnavailableError(AppError):
+    code = "analysis_unavailable"
+    status_code = 503
+    default_message = "Configuration analysis support is not installed"
+
+
+class AnalysisBackendUnavailableError(AppError):
+    code = "analysis_backend_unavailable"
+    status_code = 503
+    default_message = "The analysis service is not reachable"
+
+
+class AnalysisNoConfigsError(AppError):
+    code = "analysis_no_configs"
+    status_code = 422
+    default_message = "No device has a configuration snapshot to analyse"
+
+
+class AnalysisSnapshotExpiredError(ConflictError):
+    code = "analysis_snapshot_expired"
+    default_message = "The analysis snapshot is no longer loaded and must be re-parsed"
+
+
+class AnalysisTooManyDevicesError(AppError):
+    code = "analysis_too_many_devices"
+    status_code = 422
+    default_message = "More devices are registered than the analysis device bound allows"

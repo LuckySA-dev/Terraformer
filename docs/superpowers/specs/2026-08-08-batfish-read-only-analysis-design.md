@@ -348,6 +348,32 @@ already applied to discovery is applied here.
   deleted and their findings cascade. The plan lists unbounded disk growth as an
   acceptance risk.
 
+### 8.4 These limits are enforced bounds, not a capacity claim
+
+The numbers above exist to stop a runaway analysis from exhausting the host.
+They are **not** a statement that the feature has been shown to work at that
+scale, and this distinction must survive into the documentation.
+
+The available lab cannot reach these figures. Validation will run against a
+small number of nodes — one physical Cisco device and a handful of GNS3/EVE-NG
+nodes. Everything above the device count actually recorded is unverified, in the
+same sense that `CAPABILITY_MATRIX.md` separates "Implemented" from "Lab
+verified".
+
+Therefore:
+
+- The recorded validation run must state the device count it reached, and
+  `IMPLEMENTATION_STATUS.md` must describe the ceiling as enforced-but-untested.
+- No document may describe this feature as supporting 200 devices, or as
+  campus-scale, on the strength of this work.
+- Capacity for this feature is a **Phase 7** concern. The plan already assigns
+  50-device load testing and queue/concurrency tuning to that phase; measured
+  scale claims belong there, not here.
+
+Parse cost grows with configuration size and topology, not linearly with device
+count, so extrapolating from a five-node result to 200 would be unsound even if
+it were tempting.
+
 ## 9. Testing
 
 - **Fake Batfish client**, following the `FakeTransportFactory` pattern, so CI
@@ -391,6 +417,9 @@ already applied to discovery is applied here.
    EVE-NG node is sufficient — confirms Batfish parses configuration captured by
    this application. This is the reason the work was sequenced ahead of Phase 3
    and is required for the spec to be considered delivered.
+7. The recorded run states the device count it reached, and the documentation
+   describes the 200-device bound as enforced but untested, per §8.4. Delivery
+   does not require reaching that bound; it requires not claiming it.
 
 ## 11. Follow-on work
 

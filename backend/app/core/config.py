@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     ssh_group1_enabled: bool = False
     ssh_very_old_enabled: bool = False
     ssh_terminal_enabled: bool = True
+    # Telnet is cleartext with no host identity. Off by default; intended only
+    # for virtual labs (GNS3/EVE-NG) whose consoles are Telnet-only.
+    telnet_enabled: bool = False
     terminal_pty_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
     terminal_max_duration_seconds: int = Field(default=3600, ge=60, le=86400)
     max_device_connections: int = Field(

@@ -2,6 +2,7 @@ from app.models.base import Base
 from app.models.entities import (
     AppSetting,
     ConfigSnapshot,
+    ConsoleTransport,
     CredentialProfile,
     Device,
     DeviceCapability,
@@ -23,6 +24,7 @@ __all__ = [
     "AppSetting",
     "Base",
     "ConfigSnapshot",
+    "ConsoleTransport",
     "CredentialProfile",
     "Device",
     "DeviceCapability",

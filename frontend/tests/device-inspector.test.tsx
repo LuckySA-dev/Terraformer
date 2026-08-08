@@ -32,6 +32,8 @@ const device: Device = {
   vendor: 'generic',
   credential_profile_id: 'c6d6a5be-bf2e-4d6a-bda8-3a559f985631',
   ssh_compatibility: 'modern',
+  is_lab: false,
+  console_transport: 'ssh',
   status: 'reachable',
   facts: { hostname: 'edge-01', uptime: '9 days, 04:12:11' },
   capabilities: [{ name: 'connect', supported: true, safety_level: 'D' }],

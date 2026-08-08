@@ -13,6 +13,9 @@ export class SshWebSocketTransport implements TerminalTransport {
     private readonly deviceId: string,
     private readonly group1RiskAcknowledged = false,
     private readonly veryOldRiskAcknowledged = false,
+    // Telnet consoles carry no encryption and no host identity, so the server
+    // requires this separately from the Direct Mode confirmation.
+    private readonly telnetCleartextAcknowledged = false,
   ) {}
 
   open(listener: TerminalTransportListener): Promise<void> {
@@ -26,6 +29,7 @@ export class SshWebSocketTransport implements TerminalTransport {
         type: 'accept_direct_mode',
         group1_risk_acknowledged: this.group1RiskAcknowledged,
         very_old_risk_acknowledged: this.veryOldRiskAcknowledged,
+        telnet_cleartext_acknowledged: this.telnetCleartextAcknowledged,
       }));
     };
     this.socket.onmessage = (event) => {

@@ -17,6 +17,7 @@ from app.schemas.devices import (
     NeighborView,
 )
 from app.schemas.jobs import JobView
+from app.schemas.ssh_trust import HostKeyRepinRequest
 from app.services.devices import DeviceService
 from app.services.jobs import JobService
 
@@ -97,6 +98,18 @@ def delete_device(
 ) -> Response:
     _service(session, container).delete(device_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/{device_id}/ssh-host-key/repin", response_model=DeviceView)
+def repin_host_key(
+    device_id: UUID,
+    request: HostKeyRepinRequest,
+    _auth: Authenticated,
+    session: SessionDependency,
+    container: ContainerDependency,
+):
+    """Re-pin a lab device's SSH host key after it was regenerated."""
+    return _service(session, container).repin_host_key(device_id, request.host_key_candidate_id)
 
 
 @router.post("/{device_id}/test-connection", response_model=ConnectionTestView)

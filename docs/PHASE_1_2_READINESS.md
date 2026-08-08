@@ -1,11 +1,31 @@
 # Phase 1-2 readiness ledger
 
-Last updated: 2026-08-06
+Last updated: 2026-08-08
 
 This ledger separates implementation, automated verification, virtual-lab
-evidence, and physical-lab evidence. A passing fixture or virtual test never
-promotes a physical-device capability. The source of truth for product intent
+evidence, and physical-lab evidence. The source of truth for product intent
 remains `network-automation-final-plan.md`.
+
+## Evidence policy
+
+**Changed 2026-08-08 by owner decision: virtual-lab evidence now satisfies
+phase exit, and physical-hardware evidence is no longer a prerequisite for
+starting the next phase.**
+
+Previously a phase could not be closed without a physical-device run, which
+blocked Phase 1 and Phase 2 exit indefinitely and left Phase 3 unstarted. A
+GNS3 or EVE-NG run against the real driver and transport code now counts as
+acceptance evidence for phase exit.
+
+What this policy does **not** change:
+
+- A virtual run still does not prove a *physical* platform. Per-model claims in
+  `CAPABILITY_MATRIX.md` continue to require a run against that hardware, and
+  virtual evidence must be recorded as virtual.
+- Behaviour that virtual images cannot reproduce — notably legacy SSH
+  negotiation against a Catalyst 2960/2960-X or ISR 1941 with an undersized RSA
+  host key — is still unproven until it is run against that gear.
+- Every structured device write remains Not Implemented and Safety Level D.
 
 ## Classification
 
@@ -13,8 +33,9 @@ remains `network-automation-final-plan.md`.
 - **P1:** missing Phase 1-2 exit behavior or evidence.
 - **P2:** cosmetic or post-MVP work; excluded from this closure.
 
-`Missing implementation`, `Automated verification passed`, and `Hardware
-validation pending` are distinct states and must not be collapsed.
+`Missing implementation`, `Automated verification passed`, `Virtual lab
+verified`, and `Hardware validation pending` are distinct states and must not
+be collapsed.
 
 ## Conformance matrix
 

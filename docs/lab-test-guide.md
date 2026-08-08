@@ -172,3 +172,59 @@ record gate above; it does not promote structured write support.
 
 Without every gate, mark the capability **Not Implemented** or lab-unverified;
 do not reinterpret a successful read as evidence that a write is safe.
+
+## Virtual labs (GNS3 / EVE-NG)
+
+Added 2026-08-08, when virtual-lab evidence became sufficient for phase exit.
+See `PHASE_1_2_READINESS.md` for the exact scope of that policy.
+
+A virtual lab exercises the real drivers, transports, parsers, and safety gates.
+It does **not** prove any physical platform, so record the result as virtual and
+never promote a per-model claim in `CAPABILITY_MATRIX.md` from it.
+
+### Reaching the lab from the container
+
+The API and worker publish `host.docker.internal`, so a lab on the Docker host
+is reachable at that name. Use the node's real SSH port — GNS3 and EVE-NG rarely
+expose 22.
+
+```bash
+docker compose --env-file .env -f deploy/compose.yml exec worker getent hosts host.docker.internal
+```
+
+If a node is on a lab bridge the container cannot route to, add that network to
+the worker rather than widening `HOST_BIND`.
+
+### Marking a device as a lab device
+
+Set **Device kind** to *Virtual lab* when registering. That flag does two
+things, both refused for anything else:
+
+- **Re-pin host key.** GNS3/EVE-NG nodes regenerate their SSH host key on every
+  restart, which is indistinguishable from a man-in-the-middle. Lab devices can
+  be re-inspected and re-pinned in place; physical devices still require delete
+  and re-register, deliberately.
+- **Telnet console.** Only offered for lab devices.
+
+### Telnet consoles
+
+Telnet is off unless the server sets `TELNET_ENABLED=true`. It is cleartext and
+carries no host identity, so SSH host-key pinning does not apply and the link
+can be read by anyone on the path.
+
+Terraformer never sends the stored credential profile over Telnet — type
+credentials into the session yourself, as on a console cable. Structured reads
+(facts, interfaces, snapshots, diagnostics) always use SSH and are unavailable
+on a Telnet-only node.
+
+Enable it only for an isolated virtual lab, never on a management network that
+carries real device credentials.
+
+### What a virtual lab cannot prove
+
+- Legacy SSH negotiation against real Catalyst 2960/2960-X or ISR 1941 gear.
+  Virtual images present modern host keys, so they never exercise the
+  undersized-RSA path that `RequiredRSASize=768` exists to handle.
+- Vendor-specific CLI output from a physical platform or OS build not present in
+  the virtual image.
+- Timing, scale, and stability behaviour of real hardware.

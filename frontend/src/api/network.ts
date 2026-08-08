@@ -86,6 +86,11 @@ export const api = {
         host_key_candidate_id,
       }),
     }),
+  repinHostKey: (deviceId: string, hostKeyCandidateId: string) =>
+    apiRequest<Device>(`/devices/${encodeURIComponent(deviceId)}/ssh-host-key/repin`, {
+      method: 'POST',
+      body: json({ host_key_candidate_id: hostKeyCandidateId }),
+    }),
   collectHostKeyCandidate: ({
     management_address,
     port,

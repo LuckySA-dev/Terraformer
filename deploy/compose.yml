@@ -22,6 +22,7 @@ x-backend-environment: &backend-environment
   SSH_GROUP1_ENABLED: "${SSH_GROUP1_ENABLED:-false}"
   SSH_VERY_OLD_ENABLED: "${SSH_VERY_OLD_ENABLED:-false}"
   SSH_TERMINAL_ENABLED: "${SSH_TERMINAL_ENABLED:-true}"
+  TELNET_ENABLED: "${TELNET_ENABLED:-false}"
   TERMINAL_PTY_TIMEOUT_SECONDS: "${TERMINAL_PTY_TIMEOUT_SECONDS:-10}"
   TERMINAL_MAX_DURATION_SECONDS: "${TERMINAL_MAX_DURATION_SECONDS:-3600}"
   CONNECTION_TEST_RATE_LIMIT: "${CONNECTION_TEST_RATE_LIMIT:-5}"
@@ -53,6 +54,14 @@ x-service-security: &service-security
   security_opt:
     - no-new-privileges:true
 
+# Lets the worker and API reach a GNS3/EVE-NG lab running on the Docker host
+# itself. Without it, `host.docker.internal` does not resolve on Linux and a
+# virtual lab is only reachable by its LAN address. This adds a name, not a
+# network path: devices are still only contacted after explicit registration.
+x-host-gateway: &host-gateway
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+
 services:
   web:
     <<: *service-security
@@ -82,7 +91,7 @@ services:
       start_period: 10s
 
   api:
-    <<: *service-security
+    <<: [*service-security, *host-gateway]
     image: terraformer-backend:${APP_IMAGE_TAG:-local}
     build: *backend-build
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--ws-max-size", "8192"]
@@ -118,7 +127,7 @@ services:
       start_period: 20s
 
   worker:
-    <<: *service-security
+    <<: [*service-security, *host-gateway]
     image: terraformer-backend:${APP_IMAGE_TAG:-local}
     command: ["python", "-m", "app.jobs.worker"]
     init: true

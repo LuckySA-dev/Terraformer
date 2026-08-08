@@ -12,8 +12,10 @@ import type {
   DeviceInput,
   HostKeyCandidate,
 } from '../../types/api';
+import { SSH_MODES_BY_VENDOR, SSH_MODE_LABELS } from '../../types/api';
 import { InlineNotice } from '../../components/ui/AppState';
 import { Button } from '../../components/ui/Button';
+import { ConnectionError } from '../../components/ui/ConnectionError';
 import { InputField, SelectField } from '../../components/ui/FormField';
 
 const addressPattern = /^(?=.{1,253}$)[a-zA-Z0-9](?:[a-zA-Z0-9.-]{0,251}[a-zA-Z0-9])?$/;
@@ -30,6 +32,8 @@ const deviceSchema = z.object({
   vendor: z.enum(['cisco_iosxe', 'fortinet_fortios', 'generic']),
   credential_profile_id: z.uuid('Select a credential profile.'),
   ssh_compatibility: z.enum(['modern', 'cisco_legacy', 'cisco_legacy_group1', 'very_old_ssh']),
+  is_lab: z.boolean(),
+  console_transport: z.enum(['ssh', 'telnet']),
   group1_risk_acknowledged: z.boolean(),
   very_old_risk_acknowledged: z.boolean(),
 }).superRefine((value, context) => {
@@ -45,6 +49,22 @@ const deviceSchema = z.object({
       code: 'custom',
       path: ['very_old_risk_acknowledged'],
       message: 'Acknowledge the Very Old SSH risk before testing this connection.',
+    });
+  }
+  // Mirrors the backend guard so the operator is told immediately rather than
+  // after a failed round trip.
+  if (value.console_transport === 'telnet' && !value.is_lab) {
+    context.addIssue({
+      code: 'custom',
+      path: ['console_transport'],
+      message: 'A telnet console is only available for lab devices.',
+    });
+  }
+  if (!SSH_MODES_BY_VENDOR[value.vendor].includes(value.ssh_compatibility)) {
+    context.addIssue({
+      code: 'custom',
+      path: ['ssh_compatibility'],
+      message: 'This compatibility mode is not available for the selected platform driver.',
     });
   }
 });
@@ -73,26 +93,16 @@ const fingerprint = (input: DeviceInput): string =>
     very_old_risk_acknowledged: input.very_old_risk_acknowledged,
   });
 
-function connectionErrorText(error: unknown): string {
-  if (!(error instanceof ApiError)) return 'The connection test could not complete.';
-  if (
-    error.code === 'device_host_key_unknown' ||
-    error.code === 'device_host_key_changed' ||
-    error.code === 'host_key_candidate_expired' ||
-    error.code === 'host_key_candidate_mismatch'
-  ) {
-    return `${error.message} Inspect and verify again.`;
-  }
-  const details = error.details;
-  const recommendedAction =
-    typeof details === 'object' &&
-    details !== null &&
-    'recommended_action' in details &&
-    typeof details.recommended_action === 'string'
-      ? details.recommended_action
-      : undefined;
-  return recommendedAction === undefined ? error.message : `${error.message} ${recommendedAction}`;
-}
+/** Host-key problems are cleared by inspecting again, not by retrying. */
+const HOST_KEY_CODES = new Set([
+  'device_host_key_unknown',
+  'device_host_key_changed',
+  'host_key_candidate_expired',
+  'host_key_candidate_mismatch',
+]);
+
+const isHostKeyError = (error: unknown): boolean =>
+  error instanceof ApiError && HOST_KEY_CODES.has(error.code);
 
 export function DeviceForm({
   device,
@@ -107,7 +117,10 @@ export function DeviceForm({
   const [candidate, setCandidate] = useState<HostKeyCandidate>();
   const [candidateBinding, setCandidateBinding] = useState<string>();
   const [testResult, setTestResult] = useState<ConnectionTestResult>();
-  const [testError, setTestError] = useState<string>();
+  // Holds the thrown error, not a pre-flattened string, so ConnectionError can
+  // use the phase and recommended action the backend already sends.
+  const [testError, setTestError] = useState<unknown>();
+  const [blockedReason, setBlockedReason] = useState<string>();
   const form = useForm<DeviceFields>({
     resolver: zodResolver(deviceSchema),
     defaultValues: {
@@ -117,6 +130,8 @@ export function DeviceForm({
       vendor: device?.vendor ?? 'cisco_iosxe',
       credential_profile_id: device?.credential_profile_id ?? '',
       ssh_compatibility: device?.ssh_compatibility ?? 'modern',
+      is_lab: device?.is_lab ?? false,
+      console_transport: device?.console_transport ?? 'ssh',
       group1_risk_acknowledged: false,
       very_old_risk_acknowledged: false,
     },
@@ -130,6 +145,8 @@ export function DeviceForm({
     vendor: values.vendor,
     credential_profile_id: values.credential_profile_id,
     ssh_compatibility: values.ssh_compatibility,
+    is_lab: values.is_lab,
+    console_transport: values.console_transport,
     group1_risk_acknowledged: values.group1_risk_acknowledged,
     very_old_risk_acknowledged: values.very_old_risk_acknowledged,
   });
@@ -150,6 +167,7 @@ export function DeviceForm({
     setConnectionState('uninspected');
     setTestResult(undefined);
     setTestError(undefined);
+    setBlockedReason(undefined);
   };
 
   const inspectHostKey = async () => {
@@ -168,7 +186,7 @@ export function DeviceForm({
       setCandidate(undefined);
       setCandidateBinding(undefined);
       setConnectionState('failed');
-      setTestError(connectionErrorText(connectionError));
+      setTestError(connectionError);
     }
   };
 
@@ -185,14 +203,8 @@ export function DeviceForm({
       setConnectionState(result.reachable ? 'passed' : 'failed');
     } catch (connectionError) {
       setConnectionState('failed');
-      setTestError(connectionErrorText(connectionError));
-      if (
-        connectionError instanceof ApiError &&
-        (connectionError.code === 'device_host_key_unknown' ||
-          connectionError.code === 'device_host_key_changed' ||
-          connectionError.code === 'host_key_candidate_expired' ||
-          connectionError.code === 'host_key_candidate_mismatch')
-      ) {
+      setTestError(connectionError);
+      if (isHostKeyError(connectionError)) {
         setCandidate(undefined);
         setCandidateBinding(undefined);
       }
@@ -207,7 +219,7 @@ export function DeviceForm({
       connectionState !== 'passed' ||
       testResult?.reachable !== true
     ) {
-      setTestError('Test this exact connection successfully before saving.');
+      setBlockedReason('Test this exact connection successfully before saving.');
       return;
     }
     await onSubmit({ ...input, host_key_candidate_id: candidate.id });
@@ -215,12 +227,47 @@ export function DeviceForm({
   const exactCandidate = candidate !== undefined && candidateBinding === currentFingerprint;
   const readyToSave = connectionState === 'passed' && testResult?.reachable === true && exactCandidate;
 
+  // A disabled Save button used to give no reason at all. Name the step that is
+  // still outstanding instead.
+  const saveBlockedBecause = readyToSave
+    ? undefined
+    : !exactCandidate
+      ? 'Inspect the SSH host key for these exact connection settings.'
+      : connectionState === 'candidate'
+        ? 'Confirm you verified the fingerprint.'
+        : connectionState !== 'passed'
+          ? 'Run Test connection and let it succeed.'
+          : 'Test connection did not report the device as reachable.';
+
+  const availableModes = SSH_MODES_BY_VENDOR[watchedConnection.vendor ?? 'cisco_iosxe'];
+  const steps = [
+    { label: 'Inspect host key', done: exactCandidate },
+    {
+      label: 'Verify fingerprint',
+      done: connectionState === 'confirmed' || connectionState === 'passed',
+    },
+    { label: 'Test connection', done: readyToSave },
+  ];
+
   return (
     <form className="stack-form" onSubmit={form.handleSubmit(submit)} noValidate>
       <InlineNotice tone="safe" title="Read-only connection">
         A connection happens only when you select Test connection. Current phases run show commands only and
         never writes, reloads, or saves configuration.
       </InlineNotice>
+      <ol className="device-form__steps" aria-label="Steps required before saving">
+        {steps.map((step, index) => (
+          <li
+            key={step.label}
+            className={`device-form__step${step.done ? ' device-form__step--done' : ''}`}
+          >
+            <span className="device-form__step-number" aria-hidden>
+              {step.done ? '✓' : index + 1}
+            </span>
+            {step.label}
+          </li>
+        ))}
+      </ol>
       <div className="form-grid form-grid--two">
         <InputField
           label="Device name"
@@ -235,12 +282,15 @@ export function DeviceForm({
           {...form.register('vendor', {
             onChange: (e: React.ChangeEvent<HTMLSelectElement>) => {
               clearConnectionState();
-              if (e.target.value !== 'cisco_iosxe') {
-                const currentMode = form.getValues('ssh_compatibility');
-                if (currentMode === 'cisco_legacy' || currentMode === 'cisco_legacy_group1') {
-                  form.setValue('ssh_compatibility', 'modern', { shouldValidate: true });
-                  form.setValue('group1_risk_acknowledged', false, { shouldValidate: true });
-                }
+              // Fall back to the safe mode whenever the new vendor does not
+              // support the one currently selected, so the form never holds a
+              // combination the backend rejects.
+              const vendor = e.target.value as keyof typeof SSH_MODES_BY_VENDOR;
+              const allowed = SSH_MODES_BY_VENDOR[vendor];
+              if (!allowed.includes(form.getValues('ssh_compatibility'))) {
+                form.setValue('ssh_compatibility', 'modern', { shouldValidate: true });
+                form.setValue('group1_risk_acknowledged', false, { shouldValidate: true });
+                form.setValue('very_old_risk_acknowledged', false, { shouldValidate: true });
               }
             },
           })}
@@ -287,10 +337,44 @@ export function DeviceForm({
           </option>
         ))}
       </SelectField>
+      <div className="form-grid form-grid--two">
+        <SelectField
+          label="Device kind"
+          hint="Lab devices may re-pin their SSH host key after a restart."
+          {...form.register('is_lab', {
+            setValueAs: (value: string | boolean) => value === true || value === 'true',
+            onChange: () => {
+              clearConnectionState();
+              form.setValue('console_transport', 'ssh', { shouldValidate: true });
+            },
+          })}
+        >
+          <option value="false">Physical / production device</option>
+          <option value="true">Virtual lab (GNS3, EVE-NG)</option>
+        </SelectField>
+        <SelectField
+          label="Console transport"
+          error={form.formState.errors.console_transport?.message}
+          hint="Telnet is cleartext and only offered for lab devices."
+          {...form.register('console_transport', { onChange: clearConnectionState })}
+        >
+          <option value="ssh">SSH</option>
+          {watchedConnection.is_lab === true ? <option value="telnet">Telnet</option> : null}
+        </SelectField>
+      </div>
+      {watchedConnection.console_transport === 'telnet' ? (
+        <InlineNotice tone="warning" title="Telnet sends everything in cleartext">
+          There is no encryption and no host identity to verify, so the SSH host-key pin does not
+          apply. Terraformer never sends the stored credentials over Telnet — type them into the
+          session yourself. The server must also have TELNET_ENABLED set.
+        </InlineNotice>
+      ) : null}
       <SelectField
         label="SSH compatibility"
         error={form.formState.errors.ssh_compatibility?.message}
-        hint="Modern is the default for every new device."
+        hint={
+          SSH_MODE_LABELS[watchedConnection.ssh_compatibility ?? 'modern'].hint
+        }
         {...form.register('ssh_compatibility', {
           onChange: () => {
             clearConnectionState();
@@ -299,14 +383,11 @@ export function DeviceForm({
           },
         })}
       >
-        <option value="modern">Modern</option>
-        {watchedConnection.vendor === 'cisco_iosxe' ? (
-          <>
-            <option value="cisco_legacy">Cisco legacy</option>
-            <option value="cisco_legacy_group1">Cisco legacy + Group1</option>
-          </>
-        ) : null}
-        <option value="very_old_ssh">Very Old SSH (obsolete cryptography)</option>
+        {availableModes.map((mode) => (
+          <option key={mode} value={mode}>
+            {SSH_MODE_LABELS[mode].label}
+          </option>
+        ))}
       </SelectField>
       {watchedConnection.ssh_compatibility === 'cisco_legacy' ? (
         <InlineNotice tone="warning" title="Per-device SSH exception">
@@ -413,18 +494,29 @@ export function DeviceForm({
           </div>
         ) : null}
         {testError === undefined ? null : (
-          <div className="connection-test__result connection-test__result--error" role="alert">
-            <XCircle size={17} />
-            <span>{testError}</span>
-          </div>
+          <ConnectionError
+            error={testError}
+            fallback="The connection test could not complete."
+          />
         )}
+        {isHostKeyError(testError) ? (
+          <p className="connection-test__followup">Inspect the SSH host key again to continue.</p>
+        ) : null}
       </div>
       {error === undefined ? null : (
         <div className="form-error" role="alert">
           {error}
         </div>
       )}
+      {blockedReason === undefined ? null : (
+        <div className="form-error" role="alert">
+          {blockedReason}
+        </div>
+      )}
       <div className="form-actions">
+        {readyToSave ? null : (
+          <span className="form-actions__blocked">{saveBlockedBecause}</span>
+        )}
         <Button onClick={onCancel}>Cancel</Button>
         <Button type="submit" variant="primary" disabled={!readyToSave} busy={form.formState.isSubmitting}>
           <ShieldCheck size={16} /> {device === undefined ? 'Save device' : 'Save changes'}

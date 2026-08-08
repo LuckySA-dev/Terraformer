@@ -29,6 +29,7 @@ from app.drivers.ssh_compatibility import (
     enforce_compatibility_policy,
 )
 from app.models import (
+    ConsoleTransport,
     Device,
     DeviceStatus,
     EventSeverity,
@@ -129,6 +130,8 @@ class DeviceService:
             vendor=request.vendor,
             credential_profile_id=request.credential_profile_id,
             ssh_compatibility=request.ssh_compatibility,
+            is_lab=request.is_lab,
+            console_transport=request.console_transport,
             status=DeviceStatus.REACHABLE if result.reachable else DeviceStatus.UNREACHABLE,
             last_seen_at=utc_now() if result.reachable else None,
             facts={},
@@ -155,6 +158,7 @@ class DeviceService:
         device = self._devices.get(device_id, for_update=True)
         changes = request.model_dump(exclude_unset=True)
         group1_risk_acknowledged = bool(changes.pop("group1_risk_acknowledged", False))
+        very_old_risk_acknowledged = bool(changes.pop("very_old_risk_acknowledged", False))
         host_key_candidate_id = changes.pop("host_key_candidate_id", None)
         connection_fields = {
             "management_address",
@@ -172,8 +176,18 @@ class DeviceService:
             ),
             ssh_compatibility=changes.get("ssh_compatibility", device.ssh_compatibility),
             group1_risk_acknowledged=group1_risk_acknowledged,
+            very_old_risk_acknowledged=very_old_risk_acknowledged,
             host_key_candidate_id=host_key_candidate_id,
         )
+        # Evaluate the telnet rule against the record as it will be after the
+        # patch, so clearing is_lab and keeping telnet is rejected too.
+        if (
+            changes.get("console_transport", device.console_transport) is ConsoleTransport.TELNET
+            and not changes.get("is_lab", device.is_lab)
+        ):
+            raise UnsupportedCapabilityError(
+                "A telnet console is only available for devices marked as lab devices"
+            )
         replacement_host_key: ResolvedHostKeyCandidate | None = None
         if changes.keys() & connection_fields:
             other = self._devices.find_by_endpoint(candidate.management_address, candidate.port)
@@ -207,6 +221,53 @@ class DeviceService:
             self._host_key_trust.delete_candidate(replacement_host_key.id)
         return self._devices.get(device.id)
 
+    def repin_host_key(self, device_id: UUID, host_key_candidate_id: UUID) -> Device:
+        """Replace a lab device's pinned SSH host key without editing the record.
+
+        GNS3/EVE-NG nodes regenerate their host key on every restart, which
+        otherwise looks identical to a man-in-the-middle and can only be
+        cleared by deleting and recreating the device.
+
+        Restricted to devices the operator explicitly marked as lab devices, so
+        the pin on real hardware still cannot be replaced silently. The
+        operator must have inspected and confirmed a fresh candidate first, and
+        the connection is tested with the new key before it is stored.
+        """
+        device = self._devices.get(device_id, for_update=True)
+        if not device.is_lab:
+            raise UnsupportedCapabilityError(
+                "Re-pinning is only available for devices marked as lab devices."
+                " Verify the device identity and re-register it instead."
+            )
+        candidate = DeviceConnectionFields(
+            management_address=device.management_address,
+            port=device.port,
+            vendor=device.vendor,
+            credential_profile_id=device.credential_profile_id,
+            ssh_compatibility=device.ssh_compatibility,
+            group1_risk_acknowledged=(
+                device.ssh_compatibility
+                in (SSHCompatibility.CISCO_LEGACY_GROUP1, SSHCompatibility.VERY_OLD_SSH)
+            ),
+            very_old_risk_acknowledged=(
+                device.ssh_compatibility is SSHCompatibility.VERY_OLD_SSH
+            ),
+            host_key_candidate_id=host_key_candidate_id,
+        )
+        replacement = self._resolve_candidate(candidate)
+        self.test_connection(candidate, device_id=device.id, _commit=False)
+        self._host_keys.replace(device.id, replacement)
+        self._events.record(
+            event_type="device.host_key_repinned",
+            severity=EventSeverity.WARNING,
+            message="Lab device SSH host key was re-pinned after explicit confirmation",
+            device_id=device.id,
+            details={"algorithm": replacement.algorithm, "fingerprint": replacement.fingerprint},
+        )
+        self._session.commit()
+        self._host_key_trust.delete_candidate(replacement.id)
+        return self._devices.get(device.id)
+
     def delete(self, device_id: UUID) -> None:
         device = self._devices.get(device_id)
         try:
@@ -234,7 +295,7 @@ class DeviceService:
             Vendor.CISCO_IOSXE
         }:
             raise UnsupportedCapabilityError(
-                "This SSH compatibility mode is only available for Cisco IOS/IOS-XE devices"
+                "Cisco legacy SSH compatibility is only available for Cisco IOS/IOS-XE devices"
             )
         if (
             request.ssh_compatibility is SSHCompatibility.VERY_OLD_SSH
@@ -252,9 +313,7 @@ class DeviceService:
             vendor=request.vendor,
             compatibility=request.ssh_compatibility,
             group1_risk_acknowledged=request.group1_risk_acknowledged,
-            very_old_risk_acknowledged=(
-                request.ssh_compatibility is SSHCompatibility.VERY_OLD_SSH
-            ),
+            very_old_risk_acknowledged=request.very_old_risk_acknowledged,
             operation=ConnectionOperation.CONNECTION_TEST,
             host_key_candidate_id=request.host_key_candidate_id,
             _commit=_commit,
@@ -309,6 +368,11 @@ class DeviceService:
             group1_risk_acknowledged=(
                 device.ssh_compatibility
                 in (SSHCompatibility.CISCO_LEGACY_GROUP1, SSHCompatibility.VERY_OLD_SSH)
+            ),
+            # The acknowledgment was recorded when this device was registered;
+            # a re-test of a saved record carries it forward.
+            very_old_risk_acknowledged=(
+                device.ssh_compatibility is SSHCompatibility.VERY_OLD_SSH
             ),
         )
         return self.test_connection(request, device_id=device.id)

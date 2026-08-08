@@ -41,7 +41,7 @@ async def collect_host_key_candidate(
         Vendor.CISCO_IOSXE
     }:
         raise UnsupportedCapabilityError(
-            "This SSH compatibility mode is only available for Cisco IOS/IOS-XE devices"
+            "Cisco legacy SSH compatibility is only available for Cisco IOS/IOS-XE devices"
         )
     if (
         request.ssh_compatibility is SSHCompatibility.VERY_OLD_SSH
@@ -60,11 +60,12 @@ async def collect_host_key_candidate(
             not container.settings.ssh_group1_enabled or not request.group1_risk_acknowledged
         ):
             raise LegacyGroup1DisabledByPolicyError()
-        if request.ssh_compatibility is SSHCompatibility.VERY_OLD_SSH:
-            if not container.settings.ssh_group1_enabled:
-                raise LegacyVeryOldDisabledByPolicyError()
-            if not container.settings.ssh_very_old_enabled:
-                raise LegacyVeryOldDisabledByPolicyError()
+        if request.ssh_compatibility is SSHCompatibility.VERY_OLD_SSH and (
+            not container.settings.ssh_group1_enabled
+            or not container.settings.ssh_very_old_enabled
+            or not request.very_old_risk_acknowledged
+        ):
+            raise LegacyVeryOldDisabledByPolicyError()
 
     return await container.host_key_trust.collect_candidate(request)
 

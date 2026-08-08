@@ -157,3 +157,88 @@ def test_candidate_probe_respects_legacy_policy_before_network(
 
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "legacy_mode_disabled_by_policy"
+
+
+def _register(
+    client: TestClient,
+    profile_id: object,
+    *,
+    is_lab: bool,
+    address: str = "edge.example.test",
+) -> dict[str, object]:
+    host_key = candidate(client, profile_id, address=address)
+    created = client.post(
+        "/api/devices",
+        json={
+            "name": "Edge",
+            "management_address": address,
+            "port": 22,
+            "vendor": "cisco_iosxe",
+            "credential_profile_id": profile_id,
+            "ssh_compatibility": "modern",
+            "is_lab": is_lab,
+            "host_key_candidate_id": host_key["id"],
+        },
+    )
+    assert created.status_code == 201, created.text
+    return created.json()
+
+
+def test_lab_device_host_key_can_be_repinned_after_the_node_regenerates_it(
+    authenticated_client: TestClient,
+    credential_profile: dict[str, object],
+) -> None:
+    """GNS3/EVE-NG nodes regenerate their host key on every restart."""
+    device = _register(authenticated_client, credential_profile["id"], is_lab=True)
+    replacement = candidate(authenticated_client, credential_profile["id"])
+
+    response = authenticated_client.post(
+        f"/api/devices/{device['id']}/ssh-host-key/repin",
+        json={"host_key_candidate_id": replacement["id"]},
+    )
+
+    assert response.status_code == 200, response.text
+    trust = authenticated_client.get(f"/api/devices/{device['id']}/ssh-host-key")
+    assert trust.json()["fingerprint"] == "SHA256:fixture-host-key"
+
+
+def test_repin_is_refused_for_devices_not_marked_as_lab(
+    authenticated_client: TestClient,
+    credential_profile: dict[str, object],
+) -> None:
+    """Real hardware keeps the delete-and-re-register path; a changed key there
+    is indistinguishable from a man-in-the-middle."""
+    device = _register(authenticated_client, credential_profile["id"], is_lab=False)
+    replacement = candidate(authenticated_client, credential_profile["id"])
+
+    response = authenticated_client.post(
+        f"/api/devices/{device['id']}/ssh-host-key/repin",
+        json={"host_key_candidate_id": replacement["id"]},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "unsupported_capability"
+    assert "lab devices" in response.json()["error"]["message"]
+
+
+def test_telnet_console_requires_a_lab_device(
+    authenticated_client: TestClient,
+    credential_profile: dict[str, object],
+) -> None:
+    host_key = candidate(authenticated_client, credential_profile["id"])
+    response = authenticated_client.post(
+        "/api/devices",
+        json={
+            "name": "Edge",
+            "management_address": "edge.example.test",
+            "port": 22,
+            "vendor": "cisco_iosxe",
+            "credential_profile_id": credential_profile["id"],
+            "ssh_compatibility": "modern",
+            "is_lab": False,
+            "console_transport": "telnet",
+            "host_key_candidate_id": host_key["id"],
+        },
+    )
+
+    assert response.status_code == 422, response.text

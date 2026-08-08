@@ -47,6 +47,17 @@ class SSHCompatibility(StrEnum):
     VERY_OLD_SSH = "very_old_ssh"
 
 
+class ConsoleTransport(StrEnum):
+    """How the Direct Mode terminal reaches a device.
+
+    TELNET is cleartext and offers no host identity to pin, so it is restricted
+    to lab devices and gated by its own server-side kill switch.
+    """
+
+    SSH = "ssh"
+    TELNET = "telnet"
+
+
 class SafetyLevel(StrEnum):
     READ_ONLY = "D"
 
@@ -135,6 +146,15 @@ class Device(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=False,
         default=SSHCompatibility.MODERN,
     )
+    # Marks a virtual device (GNS3, EVE-NG, or similar). Those regenerate their
+    # SSH host key on every restart, so re-pinning is offered for them instead
+    # of requiring a delete-and-recreate. It also gates telnet.
+    is_lab: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    console_transport: Mapped[ConsoleTransport] = mapped_column(
+        enum_type(ConsoleTransport, "console_transport"),
+        nullable=False,
+        default=ConsoleTransport.SSH,
+    )
     credential_profile_id: Mapped[UUID] = mapped_column(
         ForeignKey("credential_profiles.id", ondelete="RESTRICT"),
         nullable=False,
@@ -165,11 +185,15 @@ class Device(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 class DeviceSSHHostKey(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "device_ssh_host_keys"
+    # Declared as a named UniqueConstraint plus a plain index to match what
+    # 20260806_0004 created. `unique=True, index=True` on the column would
+    # instead render a single unique index, which `alembic check` reports as
+    # drift. Exactly one pinned key per device either way.
+    __table_args__ = (UniqueConstraint("device_id", name="uq_device_ssh_host_key_device"),)
 
     device_id: Mapped[UUID] = mapped_column(
         ForeignKey("devices.id", ondelete="CASCADE"),
         nullable=False,
-        unique=True,
         index=True,
     )
     algorithm: Mapped[str] = mapped_column(String(64), nullable=False)

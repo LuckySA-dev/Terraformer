@@ -2570,3 +2570,228 @@ p {
     animation-duration: 1.6s;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Add-device step indicator
+   The gate is Inspect -> Verify -> Test -> Save, and a disabled Save button
+   used to give no clue which step was outstanding.
+   --------------------------------------------------------------------------- */
+
+.device-form__steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.device-form__step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.device-form__step--done {
+  border-color: var(--green);
+  background: var(--green-soft);
+  color: var(--green);
+}
+
+.device-form__step-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--border);
+  color: var(--ink);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.device-form__step--done .device-form__step-number {
+  background: var(--green);
+  color: #fff;
+}
+
+.form-actions {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.form-actions__blocked {
+  flex: 1 1 220px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* ---------------------------------------------------------------------------
+   Connection failure detail
+   Shows which stage failed, so an algorithm mismatch is not mistaken for a
+   wrong password.
+   --------------------------------------------------------------------------- */
+
+.connection-error {
+  display: grid;
+  gap: 9px;
+  margin-top: 11px;
+  padding: 11px 12px;
+  border: 1px solid var(--red);
+  border-radius: 6px;
+  background: var(--red-soft);
+  color: var(--ink);
+  font-size: 11px;
+}
+
+.connection-error__headline {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--red);
+}
+
+.connection-error__stages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.connection-error__stage {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted-2);
+}
+
+.connection-error__stage--done {
+  color: var(--green);
+}
+
+.connection-error__stage--failed {
+  color: var(--red);
+  font-weight: 600;
+}
+
+.connection-error__stage-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentcolor;
+}
+
+.connection-error__stage-tag {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--red);
+  color: #fff;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.connection-error__action,
+.connection-error__hint,
+.connection-error__retry {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.connection-error__hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px 9px;
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--muted);
+}
+
+.connection-error__retry {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.connection-test__followup {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* ---------------------------------------------------------------------------
+   Wide content must scroll inside its own box, never the page.
+   --------------------------------------------------------------------------- */
+
+.diagnostic-output,
+.snapshot-content,
+.table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+@media (max-width: 760px) {
+  .device-form__steps {
+    gap: 6px;
+  }
+
+  .device-form__step {
+    flex: 1 1 100%;
+  }
+
+  .form-actions__blocked {
+    flex: 1 1 100%;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Dark theme
+   The palette is already fully tokenised, so only the tokens are overridden.
+   --------------------------------------------------------------------------- */
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color: #e6ecea;
+    background: #0d1416;
+    --ink: #e6ecea;
+    --muted: #9aa8ad;
+    --muted-2: #7d8b90;
+    --surface: #151f22;
+    --surface-soft: #1b262a;
+    --surface-muted: #111a1c;
+    --border: #26343a;
+    --border-strong: #35474e;
+    --sidebar: #0a1113;
+    --sidebar-soft: #121b1e;
+    --teal: #3fbfa5;
+    --teal-dark: #2fa48c;
+    --teal-soft: #10312c;
+    --blue: #6ba6e8;
+    --blue-soft: #14253a;
+    --green: #4cbc8b;
+    --green-soft: #102e22;
+    --red: #f08a8f;
+    --red-soft: #33191d;
+    --amber: #e0a952;
+    --amber-soft: #33260f;
+    --violet: #b096e2;
+    --violet-soft: #241d38;
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / 40%), 0 4px 14px rgb(0 0 0 / 30%);
+    --shadow-lg: 0 24px 80px rgb(0 0 0 / 60%);
+  }
+
+  .device-form__step--done .device-form__step-number,
+  .connection-error__stage-tag {
+    color: #0d1416;
+  }
+}

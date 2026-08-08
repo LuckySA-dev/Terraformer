@@ -20,7 +20,8 @@ from app.drivers.ssh_compatibility import (
 )
 from app.drivers.ssh_errors import FAILURES as SSH_FAILURES
 from app.drivers.ssh_errors import SanitizedSSHFailure
-from app.models import SSHCompatibility
+from app.drivers.telnet import open_telnet_session
+from app.models import ConsoleTransport, SSHCompatibility
 from app.repositories.events import EventRepository
 from app.services.connection_gate import (
     ConnectionOperation,
@@ -63,6 +64,22 @@ _FAILURES: dict[str, _FailureSpec | SanitizedSSHFailure] = {
     ),
     "very_old_mode_disabled_by_policy": _FailureSpec(
         "Very old SSHv2 compatibility is not authorized.", "authorization", False
+    ),
+    "telnet_disabled_by_policy": _FailureSpec(
+        "Telnet consoles are disabled by server policy.",
+        "authorization",
+        False,
+        "Set TELNET_ENABLED=true only for an isolated virtual lab.",
+    ),
+    "telnet_requires_lab_device": _FailureSpec(
+        "Telnet is only available for devices marked as lab devices.",
+        "authorization",
+        False,
+    ),
+    "telnet_direct_mode_required": _FailureSpec(
+        "Confirm the cleartext Telnet warning before opening the console.",
+        "authorization",
+        False,
     ),
     "connection_gate_unavailable": _FailureSpec(
         "Connection admission is temporarily unavailable.", "authorization", True
@@ -134,6 +151,8 @@ class _TerminalTarget:
     port: int
     profile_id: UUID
     compatibility: SSHCompatibility
+    console_transport: ConsoleTransport
+    is_lab: bool
 
 
 class TerminalSession(Protocol):
@@ -200,6 +219,16 @@ def _connection_failure_code(exc: asyncssh.Error | OSError) -> str:
         return "device_name_resolution_failed"
     if isinstance(exc, ConnectionRefusedError):
         return "device_connection_refused"
+    return "device_connection_failed"
+
+
+def _telnet_failure_code(exc: OSError | TimeoutError) -> str:
+    if isinstance(exc, TimeoutError):
+        return "device_connection_timeout"
+    if isinstance(exc, ConnectionRefusedError):
+        return "device_connection_refused"
+    if isinstance(exc, gaierror):
+        return "device_name_resolution_failed"
     return "device_connection_failed"
 
 
@@ -409,10 +438,22 @@ async def terminal(websocket: WebSocket, device_id: UUID) -> None:
         if not isinstance(very_old_value, bool):
             raise _TerminalFailure("direct_mode_required")
         very_old_acknowledged = very_old_value
+        telnet_value: object = acknowledgement_data.get("telnet_cleartext_acknowledged", False)
+        if not isinstance(telnet_value, bool):
+            raise _TerminalFailure("direct_mode_required")
+        telnet_acknowledged = telnet_value
 
         target = await asyncio.to_thread(_terminal_target, container, device_id)
         if not container.settings.ssh_terminal_enabled:
             raise _TerminalFailure("terminal_disabled_by_policy")
+        if target.console_transport is ConsoleTransport.TELNET:
+            # All three checks run before any socket is opened.
+            if not container.settings.telnet_enabled:
+                raise _TerminalFailure("telnet_disabled_by_policy")
+            if not target.is_lab:
+                raise _TerminalFailure("telnet_requires_lab_device")
+            if not telnet_acknowledged:
+                raise _TerminalFailure("telnet_direct_mode_required")
         try:
             enforce_compatibility_policy(
                 target.compatibility,
@@ -443,11 +484,25 @@ async def terminal(websocket: WebSocket, device_id: UUID) -> None:
         permit = await _acquire_terminal_permit(gate, gate_target)
         audit_decision = "allowed"
         await websocket.send_json({"type": "status", "status": "connecting"})
-        parameters = await asyncio.to_thread(_connection_parameters, container, target)
-        session = await _open_terminal(
-            parameters,
-            pty_timeout_seconds=container.settings.terminal_pty_timeout_seconds,
-        )
+        if target.console_transport is ConsoleTransport.TELNET:
+            # Credentials are deliberately never decrypted or sent for Telnet:
+            # the link is cleartext, so the operator types them into the
+            # session exactly as they would on a console cable.
+            try:
+                session = await open_telnet_session(
+                    target.host,
+                    target.port,
+                    connect_timeout_seconds=container.settings.ssh_connect_timeout_seconds,
+                    close_timeout_seconds=container.settings.terminal_pty_timeout_seconds,
+                )
+            except (OSError, TimeoutError) as exc:
+                raise _TerminalFailure(_telnet_failure_code(exc)) from None
+        else:
+            parameters = await asyncio.to_thread(_connection_parameters, container, target)
+            session = await _open_terminal(
+                parameters,
+                pty_timeout_seconds=container.settings.terminal_pty_timeout_seconds,
+            )
         await asyncio.to_thread(gate.authentication_succeeded, gate_target)
         _record_event(container, device_id, "terminal.opened", "Direct Mode terminal opened")
         opened = True
@@ -528,6 +583,8 @@ def _terminal_target(
             device.port,
             device.credential_profile_id,
             device.ssh_compatibility,
+            device.console_transport,
+            device.is_lab,
         )
 
 
@@ -588,6 +645,7 @@ def _record_connection_audit(
                 "requested_mode": target.compatibility.value,
                 "group1_risk_acknowledged": group1_risk_acknowledged,
                 "very_old_risk_acknowledged": very_old_risk_acknowledged,
+                "console_transport": target.console_transport.value,
                 "compatibility_policy_version": SSH_COMPATIBILITY_POLICY_VERSION,
                 "operation": ConnectionOperation.TERMINAL.value,
                 "phase": phase,

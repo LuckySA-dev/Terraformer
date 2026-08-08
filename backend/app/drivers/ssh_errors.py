@@ -47,6 +47,12 @@ _NEGOTIATION_MARKERS = (
     "no matching host key",
     "no matching cipher",
     "no matching mac",
+    # OpenSSH >= 9.1 rejects undersized RSA host keys before authentication.
+    # Without these markers the failure falls through to the authentication
+    # branch below and tells the operator to check their password, when the
+    # real cause is a 512/768-bit host key on legacy Cisco hardware.
+    "invalid key length",
+    "bad server host key",
 )
 _HOST_KEY_CHANGED_MARKERS = (
     "remote host identification has changed",
@@ -154,7 +160,9 @@ FAILURES = {
         "legacy_ssh_negotiation_failed",
         ConnectionPhase.NEGOTIATION,
         False,
-        "Verify the saved compatibility mode for this device.",
+        "The device and this client share no usable SSH algorithm. Select a"
+        " higher SSH compatibility mode for this device. Older Cisco switches"
+        " and routers often also need a regenerated 2048-bit host key.",
     ),
     "terminal_pty_rejected": SanitizedSSHFailure(
         "terminal_pty_rejected",

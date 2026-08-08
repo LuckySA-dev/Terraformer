@@ -56,6 +56,25 @@ timeouts. Uvicorn rejects WebSocket frames larger than the configured 8192-byte
 configurable limits fail closed where documented, but do not make either SSH or
 USB Direct Mode read-only; both can change hardware.
 
+The Telnet console for lab devices is a third Direct Mode path, and the weakest
+one. It is unencrypted and presents no host key, so the mandatory SSH host-key
+pin does not apply and anyone on the path can read the session, including
+anything the operator types. Because of that, Terraformer never decrypts or
+sends the stored credential profile over Telnet — the operator types
+credentials into the session, as on a console cable.
+
+Three conditions are all required, and are checked before any socket is opened:
+the server sets `TELNET_ENABLED` (default off), the device is explicitly marked
+as a lab device, and the operator confirms the cleartext warning for that
+session. Structured reads always use SSH and fail closed on a Telnet-only node.
+Telnet is intended for isolated GNS3/EVE-NG labs and must not be used on a
+management network that carries real device credentials.
+
+Lab devices may also re-pin their SSH host key in place, because GNS3/EVE-NG
+nodes regenerate it on every restart. That is refused for any device not marked
+as a lab device: on real hardware a changed host key is indistinguishable from a
+man-in-the-middle and still requires delete and re-registration.
+
 Manual USB Console is also a Direct Mode path. On same-machine Chrome or Edge,
 the browser connects directly to an operator-selected USB-to-console adapter;
 serial bytes bypass the backend, audit pipeline, credentials, device locks,
@@ -78,8 +97,8 @@ command, vendor template, bootstrap, recording, or recovery path.
 
 ## Safety levels
 
-Safety Levels A–D classify structured automation capabilities only. Manual SSH
-and USB Direct Mode are outside these levels and can write to or otherwise
+Safety Levels A–D classify structured automation capabilities only. Manual SSH,
+Telnet, and USB Direct Mode are outside these levels and can write to or otherwise
 change hardware without the structured apply pipeline.
 
 | Level | Meaning | Required UI wording |

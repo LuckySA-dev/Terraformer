@@ -74,9 +74,7 @@ class AnalysisBackend(Protocol):
 
     def interface_properties(self, name: str) -> tuple[InterfaceProperty, ...]: ...
 
-    def traceroute(
-        self, name: str, start_hostname: str, destination_ip: str
-    ) -> TraceResult: ...
+    def traceroute(self, name: str, start_hostname: str, destination_ip: str) -> TraceResult: ...
 
     def test_filter(
         self,
@@ -115,8 +113,14 @@ class PyBatfishBackend:
         if self._session is not None:
             return self._session
         try:
-            session = self._session_factory(host=self._settings.batfish_host)
-            session.port_v2 = self._settings.batfish_port
+            # port_v2 must be a constructor argument, not set on the instance
+            # afterwards: Session.__init__ calls self.q.load(), an HTTP
+            # request, before returning, so setting it post-construction would
+            # let that first request go out on the wrong port.
+            session = self._session_factory(
+                host=self._settings.batfish_host,
+                port_v2=self._settings.batfish_port,
+            )
         except Exception:
             raise AnalysisBackendUnavailableError() from None
         self._session = session
@@ -230,12 +234,13 @@ class PyBatfishBackend:
 
     def interface_properties(self, name: str) -> tuple[InterfaceProperty, ...]:
         session = self._connect()
-        rows = self._ask(
-            name,
-            session.q.interfaceProperties(
-                properties="Switchport_Mode|Access_VLAN"
-            ),
-        )
+        # No `properties=` filter: that argument takes Batfish's
+        # kebab-case interfacePropertySpecifier query grammar (confirmed
+        # against a real container -- "Switchport_Mode|Access_VLAN" is
+        # rejected with a parse error), not the PascalCase column names the
+        # answer itself uses. Requesting every column and selecting the ones
+        # needed below avoids depending on that query grammar at all.
+        rows = self._ask(name, session.q.interfaceProperties())
         results: list[InterfaceProperty] = []
         for row in rows:
             interface = _text(row.get("Interface")) or ""
@@ -250,9 +255,7 @@ class PyBatfishBackend:
             )
         return tuple(results)
 
-    def traceroute(
-        self, name: str, start_hostname: str, destination_ip: str
-    ) -> TraceResult:
+    def traceroute(self, name: str, start_hostname: str, destination_ip: str) -> TraceResult:
         session = self._connect()
         rows = self._ask(
             name,
@@ -270,7 +273,12 @@ class PyBatfishBackend:
             hops=tuple(
                 TraceHop(
                     hostname=_text(getattr(hop, "node", None)) or "",
-                    action=_text(getattr(hop, "action", None)) or "",
+                    # A real Hop has no `.action` -- it bundles a `.steps`
+                    # list (ORIGINATED, FORWARDED, PERMITTED, ...), each with
+                    # its own `.action`. The last step is the one that
+                    # decided this hop's outcome (e.g. PERMITTED,
+                    # DELIVERED_TO_SUBNET), so it's the most useful summary.
+                    action=_last_step_action(hop),
                     detail=str(hop),
                 )
                 for hop in getattr(first, "hops", []) or []
@@ -297,11 +305,27 @@ class PyBatfishBackend:
         if not rows:
             return FilterVerdict(permitted=False, matched_line_index=None, matched_line=None)
         row = rows[0]
+        # matched_line_index is always None against the current Batfish
+        # release: its testFilters answer has no Line_Index column at all
+        # (confirmed against a real container -- only Node, Filter_Name,
+        # Flow, Action, Line_Content, Trace are present). matched_line
+        # carries the same information as text, so this is kept as a
+        # forward-compatible field rather than removed.
         return FilterVerdict(
             permitted=_text(row.get("Action")) == "PERMIT",
             matched_line_index=_number(row.get("Line_Index")),
             matched_line=_text(row.get("Line_Content")),
         )
+
+
+def _last_step_action(hop: Any) -> str:
+    # Same no-stubs situation as _first_trace below: `hop` is Any, but `or []`
+    # makes pyright infer a partially-unknown list type for the empty-list arm.
+    steps = getattr(hop, "steps", None) or []  # pyright: ignore[reportUnknownVariableType]
+    if not steps:
+        return ""
+    last = steps[-1]  # pyright: ignore[reportUnknownVariableType]
+    return _text(getattr(last, "action", None)) or ""  # pyright: ignore[reportUnknownArgumentType]
 
 
 def _first_trace(traces: Any) -> Any:

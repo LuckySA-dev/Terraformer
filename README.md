@@ -87,6 +87,20 @@ Invoke-WebRequest http://127.0.0.1:8080/healthz
 Invoke-RestMethod http://127.0.0.1:8080/api/health
 ```
 
+### Optional: read-only configuration analysis
+
+Static configuration analysis (parse hygiene, path checks, ACL checks, topology
+drift) is optional, off by default, and read-only — it never contacts a device,
+only already-sanitized stored configuration. Enable it with an extra Compose
+file and profile:
+
+```powershell
+docker compose --env-file .env -f deploy/compose.yml -f deploy/compose.analysis.yml `
+  --profile analysis up --build --detach --wait
+```
+
+This also requires setting `ANALYSIS_ENABLED=true` in `.env`.
+
 ### Destructive reset
 
 `docker compose --env-file .env -f deploy/compose.yml down --volumes` permanently

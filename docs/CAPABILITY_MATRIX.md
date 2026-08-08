@@ -1,7 +1,7 @@
 # Capability matrix
 
-Last updated: 2026-08-06
-Scope: phases 0–2
+Last updated: 2026-08-08
+Scope: phases 0–2, plus read-only Batfish analysis
 
 ## Status definitions
 
@@ -68,6 +68,33 @@ implementation and fixture evidence do not promote them to Lab verified.
 Cisco ping/traceroute accepts one validated exact IPv4 target and renders one
 bounded vendor command; hostnames, CIDR, special-use targets, and command text
 fail validation.
+
+## Read-only analysis capabilities
+
+Analysis derives conclusions from stored configuration. Results are labelled
+`INFERRED` and are only as complete as the configuration set supplied. It is not
+a device capability: no device is contacted, and "lab" below means validation
+against a real Batfish container, not real network hardware.
+
+| Capability | Cisco IOS/IOS-XE | Juniper Junos | Fortinet FortiOS | Generic/unknown |
+|---|---|---|---|---|
+| Configuration parse and hygiene findings | Implemented, real-Batfish verified | Not Implemented | Not Implemented | Not Implemented |
+| Path check (logical traceroute) | Implemented, real-Batfish verified | Not Implemented | Not Implemented | Not Implemented |
+| Filter/ACL check | Implemented, real-Batfish verified | Not Implemented | Not Implemented | Not Implemented |
+| Topology drift against observed neighbours | Implemented, fake-backend unit tested only | Not Implemented | Not Implemented | Not Implemented |
+
+Analysis requires the optional Compose profile and `ANALYSIS_ENABLED`. Both are
+off by default. The enforced device bound (`ANALYSIS_MAX_DEVICES`, default 200)
+is not a supported capacity; see `docs/IMPLEMENTATION_STATUS.md`.
+Configuration parse and interface-property extraction are covered by an opt-in
+automated test (`backend/tests/analysis/test_real_batfish.py`) that runs this
+application's own sanitized Cisco fixture through a real Batfish container.
+Path check and filter/ACL check were validated once by hand against the same
+container — including a genuine ACL `DENY` result with the correct matched
+line — but do not yet have a committed automated regression test against real
+Batfish. Topology drift's own logic is unit tested only against a fake backend;
+the interface-property data it consumes is the same data already verified
+against a real container above.
 
 ## Direct access paths
 

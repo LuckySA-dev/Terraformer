@@ -93,6 +93,22 @@ A vendor or OS version remains Level D for a structured capability until that
 exact capability has sanitized fixtures and real-lab evidence. Evidence for one
 command family does not imply support for another.
 
+### Read-only configuration analysis
+
+Optional read-only analysis (Batfish) sits outside Safety Levels A–D entirely,
+not at Level D: the scale is different in kind, not just degree. Level D means
+"no device write path yet"; analysis has no device operation of any kind to
+classify — it never opens a connection to a device, so there is nothing for a
+level to gate. Only already-sanitized stored configuration snapshots leave the
+database, over an `internal: true` Compose network with no published port and
+no credentials. Findings text originates from Batfish, which freely quotes
+configuration lines back in its output, so that text is sanitized a second
+time with the same routine applied to driver output before it is stored or
+returned to the API. Every analysis result carries a completeness disclosure
+(which devices were excluded, and why) as a normal field of the result, not as
+optional decoration a caller can ignore — a result that omits some of the
+requested scope must say so in the same response that carries its findings.
+
 ## Future mandatory apply pipeline
 
 No stage may be skipped when structured writes are introduced in a later phase:

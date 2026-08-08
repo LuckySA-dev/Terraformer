@@ -51,6 +51,7 @@ testpaths = ["tests"]
 markers = [
   "integration: database/API integration tests",
   "lab: opt-in tests that require a real network device",
+  "analysis: opt-in tests that require a running Batfish container",
 ]
 
 [tool.ruff]

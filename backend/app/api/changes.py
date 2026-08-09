@@ -6,9 +6,17 @@ from fastapi import APIRouter, Depends, status
 
 from app.api.dependencies import Authenticated, ContainerDependency, SessionDependency
 from app.changes.service import ChangeService
-from app.core.errors import StructuredWritesDisabledError
-from app.schemas.changes import ChangePlanRequest, ChangePlanView
+from app.core.errors import (
+    ChangePlanDeviceLockedError,
+    ChangePlanNotDraftError,
+    StructuredWritesDisabledError,
+)
+from app.models import ChangePlanStatus, JobType
+from app.repositories.jobs import JobRepository
+from app.schemas.changes import ChangeApplyJobInput, ChangePlanRequest, ChangePlanView
+from app.schemas.jobs import JobView
 from app.services.devices import DeviceService
+from app.services.jobs import JobService
 from app.services.snapshots import SnapshotService
 
 
@@ -87,3 +95,34 @@ def list_change_plans(
     container: ContainerDependency,
 ):
     return _service(session, container).list_for_device(device_id)
+
+
+@router.post(
+    "/{change_plan_id}/apply", response_model=JobView, status_code=status.HTTP_202_ACCEPTED
+)
+def apply_change_plan(
+    change_plan_id: UUID,
+    _auth: Authenticated,
+    session: SessionDependency,
+    container: ContainerDependency,
+):
+    plan = _service(session, container).get(change_plan_id)
+    # Both checks must be synchronous, here, not only inside ChangeService.apply():
+    # that method only runs once the job executes, which could be arbitrarily
+    # later (or never observed by this request at all) -- a caller retrying
+    # /apply on an already-applied plan must get 409 immediately, not a 202
+    # for a job that will later discover the problem on its own.
+    if plan.status is not ChangePlanStatus.DRAFT:
+        raise ChangePlanNotDraftError()
+    # The device-scoped lock check lives here, not in JobService: it needs
+    # the typed ChangePlanDeviceLockedError (a changes-domain error), and
+    # JobService is shared across discovery/analysis/diagnostics/refresh/
+    # capture and stays domain-agnostic on purpose.
+    if JobRepository(session).has_active(JobType.APPLY_CHANGE, device_id=plan.device_id):
+        raise ChangePlanDeviceLockedError()
+    job_input = ChangeApplyJobInput(change_plan_id=change_plan_id)
+    return JobService(session, container.queue).enqueue(
+        job_type=JobType.APPLY_CHANGE,
+        device_id=plan.device_id,
+        input_data=job_input.model_dump(mode="json"),
+    )

@@ -14,10 +14,16 @@ from sqlalchemy.orm import Session
 from app.changes.risk import classify_risk
 from app.changes.types import ChangeStepIntent
 from app.core.config import Settings
-from app.core.errors import AppError, ChangeVendorUnsupportedError, NotFoundError
+from app.core.errors import (
+    AppError,
+    ChangePlanNotDraftError,
+    ChangeVendorUnsupportedError,
+    NotFoundError,
+)
 from app.core.logging import sanitize_text
-from app.drivers import DriverRegistry
-from app.models import ChangePlan, ChangeType, SSHCompatibility, Vendor
+from app.core.time import utc_now
+from app.drivers import DeviceDriver, DriverRegistry
+from app.models import ChangePlan, ChangePlanStatus, ChangeType, Device, SSHCompatibility, Vendor
 from app.repositories.changes import ChangeRepository
 from app.repositories.devices import DeviceRepository
 from app.services.connection_gate import ConnectionOperation
@@ -113,3 +119,84 @@ class ChangeService:
 
     def list_for_device(self, device_id: UUID) -> list[ChangePlan]:
         return self._changes.list_by_device(device_id)
+
+    def apply(self, plan_id: UUID) -> dict[str, object]:
+        plan = self._changes.get(plan_id, for_update=True)
+        if plan.status is not ChangePlanStatus.DRAFT:
+            raise ChangePlanNotDraftError()
+        self._changes.set_status(plan, ChangePlanStatus.APPLYING)
+        self._session.commit()
+
+        device = self._devices.get(plan.device_id)
+        driver = self._drivers.get(device.vendor)
+        step = plan.steps[0]
+        rendered_commands = step.rendered_commands.splitlines()
+        inverse_commands = step.inverse_commands.splitlines()
+
+        try:
+            with self._device_service.admitted_connection(
+                device_id=device.id,
+                host=device.management_address,
+                port=device.port,
+                profile_id=device.credential_profile_id,
+                vendor=device.vendor,
+                compatibility=device.ssh_compatibility,
+                group1_risk_acknowledged=(
+                    device.ssh_compatibility is SSHCompatibility.CISCO_LEGACY_GROUP1
+                ),
+                operation=ConnectionOperation.STRUCTURED_WRITE,
+            ) as parameters:
+                driver.apply_configuration(parameters, rendered_commands)
+                interfaces = driver.get_interfaces(parameters)
+            current = next((iface for iface in interfaces if iface.name == step.target), None)
+            post_check_ok = current is not None and (
+                (
+                    step.change_type is ChangeType.INTERFACE_DESCRIPTION
+                    and current.description == step.desired_value
+                )
+                or (
+                    step.change_type is ChangeType.INTERFACE_ADMIN_STATE
+                    and current.admin_up == (step.desired_value == "up")
+                )
+            )
+            if not post_check_ok:
+                raise AppError("Post-check did not confirm the applied change")
+        except AppError as error:
+            return self._attempt_rollback(plan, device, driver, inverse_commands, error.code)
+
+        post_snapshot = self._snapshots.capture(device.id)
+        self._changes.set_snapshots(plan, post_change_snapshot_id=post_snapshot.id)
+        self._changes.set_status(plan, ChangePlanStatus.APPLIED)
+        plan.applied_at = utc_now()
+        self._session.commit()
+        return {"change_plan_id": str(plan.id), "status": plan.status.value}
+
+    def _attempt_rollback(
+        self,
+        plan: ChangePlan,
+        device: Device,
+        driver: DeviceDriver,
+        inverse_commands: list[str],
+        failure_code: str,
+    ) -> dict[str, object]:
+        try:
+            with self._device_service.admitted_connection(
+                device_id=device.id,
+                host=device.management_address,
+                port=device.port,
+                profile_id=device.credential_profile_id,
+                vendor=device.vendor,
+                compatibility=device.ssh_compatibility,
+                group1_risk_acknowledged=(
+                    device.ssh_compatibility is SSHCompatibility.CISCO_LEGACY_GROUP1
+                ),
+                operation=ConnectionOperation.STRUCTURED_WRITE,
+            ) as parameters:
+                driver.rollback(parameters, inverse_commands)
+            self._changes.set_status(plan, ChangePlanStatus.ROLLED_BACK, failure_code=failure_code)
+        except Exception:
+            self._changes.set_status(
+                plan, ChangePlanStatus.ROLLBACK_FAILED, failure_code=failure_code
+            )
+        self._session.commit()
+        return {"change_plan_id": str(plan.id), "status": plan.status.value}

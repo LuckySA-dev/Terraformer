@@ -35,3 +35,7 @@ class ChangePlanView(APIModel):
     steps: list[ChangeStepView]
     created_at: datetime
     updated_at: datetime
+
+
+class ChangeApplyJobInput(APIModel):
+    change_plan_id: UUID

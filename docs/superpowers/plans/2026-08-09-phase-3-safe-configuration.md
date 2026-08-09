@@ -1673,6 +1673,27 @@ def test_successful_apply_reaches_applied_status(
     device_id = _register_cisco(authenticated_client, str(credential_profile["id"]), "192.0.2.10")
     plan = _preview(authenticated_client, device_id)
 
+    # FakeTransport is a static command->output lookup table, not a device
+    # simulator: it cannot reflect a command it was just sent in a later
+    # "show interfaces" read. Patch get_interfaces for the post-check read
+    # only, to the state a real device would show after this exact apply --
+    # preview() already completed its own get_interfaces call against the
+    # unpatched fixture data before this patch is installed. Found by running
+    # this test against the plan's original version, which had no patch and
+    # always landed in "rolled_back": the fake's canned "show interfaces"
+    # text never changes no matter what was just sent to it.
+    from app.drivers import InterfaceFacts
+    from app.drivers.cisco_iosxe import CiscoIOSXEDriver
+
+    def applied_interfaces(self, parameters):
+        return [
+            InterfaceFacts(
+                name="GigabitEthernet1", description="new-description", admin_up=True, oper_up=True
+            )
+        ]
+
+    monkeypatch.setattr(CiscoIOSXEDriver, "get_interfaces", applied_interfaces)
+
     queued = authenticated_client.post(f"/api/change-plans/{plan['id']}/apply")
     assert queued.status_code == 202, queued.text
     monkeypatch.setattr(tasks, "get_default_container", lambda: container)
@@ -1896,8 +1917,12 @@ class ChangeApplyJobInput(APIModel):
 Add to `backend/app/api/changes.py`:
 
 ```python
-from app.core.errors import ChangePlanDeviceLockedError, StructuredWritesDisabledError
-from app.models import JobType
+from app.core.errors import (
+    ChangePlanDeviceLockedError,
+    ChangePlanNotDraftError,
+    StructuredWritesDisabledError,
+)
+from app.models import ChangePlanStatus, JobType
 from app.repositories.jobs import JobRepository
 from app.schemas.changes import ChangeApplyJobInput, ChangePlanRequest, ChangePlanView
 from app.schemas.jobs import JobView
@@ -1912,6 +1937,16 @@ def apply_change_plan(
     container: ContainerDependency,
 ):
     plan = _service(session, container).get(change_plan_id)
+    # Both checks must be synchronous, here, not only inside ChangeService.apply():
+    # that method only runs once the job executes, which could be arbitrarily
+    # later (or never observed by this request at all) -- a caller retrying
+    # /apply on an already-applied plan must get 409 immediately, not a 202
+    # for a job that will later discover the problem on its own. Found by
+    # running the "apply on a non-draft plan" test: the check inside apply()
+    # alone let a second /apply enqueue and 202 cleanly, because nothing
+    # synchronous ever inspected the plan's current status.
+    if plan.status is not ChangePlanStatus.DRAFT:
+        raise ChangePlanNotDraftError()
     # The device-scoped lock check lives here, not in JobService: it needs
     # the typed ChangePlanDeviceLockedError (a changes-domain error), and
     # JobService is shared across discovery/analysis/diagnostics/refresh/

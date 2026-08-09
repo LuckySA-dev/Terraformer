@@ -1599,54 +1599,19 @@ git commit -m "feat: add change plan preview service and API"
 - Modify: `backend/app/jobs/tasks.py`
 - Modify: `backend/app/api/changes.py`
 - Modify: `backend/tests/integration/test_changes_vertical_slice.py`
-- Create: `backend/tests/unit/test_jobs_device_scoped_lock.py`
 
 **Interfaces:**
 - Consumes: `ChangeService.preview` (Task 5), `JobType.APPLY_CHANGE` (Task 1).
 - Produces: `JobRepository.has_active(job_type, *, device_id=None) -> bool`; `ChangeService.apply(plan_id) -> dict`; `POST /api/change-plans/{id}/apply`.
 
-- [ ] **Step 1: Write the failing device-scoped lock test**
+**No standalone test for `has_active`'s device scoping** — same reasoning as
+Task 4: no repository in this codebase has a standalone unit test, and this
+specific behavior (same-device conflicts, different-device doesn't) is
+exactly what Step 3's vertical-slice tests already assert through the real
+API. A separate unit test would just duplicate that coverage with a fixture
+pattern nothing else here uses.
 
-Create `backend/tests/unit/test_jobs_device_scoped_lock.py`. Base the fixture setup on whatever `session`/device-creation helper `test_changes_repository.py` (Task 4) already established — reuse that exact helper rather than writing a third copy:
-
-```python
-from __future__ import annotations
-
-from app.models import JobState, JobType
-from app.repositories.jobs import JobRepository
-from tests.unit.test_changes_repository import _device  # reuse the Task 4 helper
-
-
-def test_has_active_is_global_by_default(session) -> None:
-    device = _device(session)
-    repo = JobRepository(session)
-    repo.add(job_type=JobType.APPLY_CHANGE, device_id=device.id, input_data=None)
-    session.commit()
-
-    assert repo.has_active(JobType.APPLY_CHANGE) is True
-
-
-def test_has_active_can_scope_to_one_device(session) -> None:
-    device_a = _device(session, "192.0.2.10")
-    device_b = _device(session, "192.0.2.11")
-    repo = JobRepository(session)
-    repo.add(job_type=JobType.APPLY_CHANGE, device_id=device_a.id, input_data=None)
-    session.commit()
-
-    assert repo.has_active(JobType.APPLY_CHANGE, device_id=device_a.id) is True
-    assert repo.has_active(JobType.APPLY_CHANGE, device_id=device_b.id) is False
-```
-
-(If `_device` in `test_changes_repository.py` is a module-private helper not meant for cross-file import, move it into `tests/conftest.py` as a shared fixture instead — check which convention this codebase already follows for shared test device-creation helpers before choosing; `test_analysis_vertical_slice.py`'s `_register_cisco` suggests per-file helpers are the norm for API-level tests, but this is a lower-level repository test, so a `conftest.py` fixture may fit better. Match whichever pattern already exists for unit-level device fixtures.)
-
-- [ ] **Step 2: Run to verify it fails**
-
-```bash
-cd backend && .venv/Scripts/python.exe -m pytest tests/unit/test_jobs_device_scoped_lock.py -v
-```
-Expected: FAIL — `TypeError: has_active() got an unexpected keyword argument 'device_id'`.
-
-- [ ] **Step 3: Extend JobRepository.has_active**
+- [ ] **Step 1: Extend JobRepository.has_active**
 
 In `backend/app/repositories/jobs.py`, change:
 
@@ -1665,29 +1630,17 @@ In `backend/app/repositories/jobs.py`, change:
         return self._session.scalar(statement) is not None
 ```
 
-Add `from uuid import UUID` to this file's imports if not already present (check the top of the file first — `JobRepository.get`/`add` almost certainly already import `UUID`).
+Add `from uuid import UUID` to this file's imports if not already present (check the top of the file first — `JobRepository.get`/`add` almost certainly already import `UUID`). This step has no independent test of its own; Step 3 proves it works, the same way Task 5 proved `ChangeRepository`.
 
-- [ ] **Step 4: Run to verify it passes**
+- [ ] **Step 2: (Revised during execution — see note) Do NOT modify JobService**
 
-```bash
-cd backend && .venv/Scripts/python.exe -m pytest tests/unit/test_jobs_device_scoped_lock.py -v
-```
-Expected: both pass.
+Original plan called for a second exclusivity table in `app/services/jobs.py` raising `ConflictError` for a device-lock conflict. Caught during Task 1 while adding `ChangePlanDeviceLockedError`: `ConflictError.code` is a **fixed class attribute** (`"conflict"`), not customizable per raise — reusing it would silently produce `code: "conflict"`, not the `change_plan_device_locked` this plan's own Task 6 test (Step 3) and spec §8.2 both require. Making `JobService` raise a typed changes-domain error would also couple a shared, cross-domain service (already used by discovery/analysis/diagnostics/refresh/capture) to one specific domain's error type, which nothing else in this codebase does.
 
-- [ ] **Step 5: (Revised during execution — see note) Do NOT modify JobService**
+Corrected design: `app/services/jobs.py` is **not modified at all** in this task. The device-lock check moves to `app/api/changes.py` (Step 6 below), which already owns the changes domain and already imports its errors. This also removes the need for a `_DEVICE_EXCLUSIVE_JOB_TYPES` table — with only one device-exclusive job type, a direct check is simpler than a lookup table for one entry. `JobRepository.has_active`'s new `device_id` parameter (Step 1 above) is still required — it's what the API-layer check calls.
 
-Original plan called for a second exclusivity table in `app/services/jobs.py` raising `ConflictError` for a device-lock conflict. Caught during Task 1 while adding `ChangePlanDeviceLockedError`: `ConflictError.code` is a **fixed class attribute** (`"conflict"`), not customizable per raise — reusing it would silently produce `code: "conflict"`, not the `change_plan_device_locked` this plan's own Task 6 test (Step 6) and spec §8.2 both require. Making `JobService` raise a typed changes-domain error would also couple a shared, cross-domain service (already used by discovery/analysis/diagnostics/refresh/capture) to one specific domain's error type, which nothing else in this codebase does.
+Skip this step's original file changes entirely and continue to Step 3.
 
-Corrected design: `app/services/jobs.py` is **not modified at all** in this task. The device-lock check moves to `app/api/changes.py` (Step 9 below), which already owns the changes domain and already imports its errors. This also removes the need for a `_DEVICE_EXCLUSIVE_JOB_TYPES` table — with only one device-exclusive job type, a direct check is simpler than a lookup table for one entry. `JobRepository.has_active`'s new `device_id` parameter (Steps 1–4 above) is still required — it's what the API-layer check calls.
-
-Skip this step's original file changes entirely and continue to Step 6.
-            device_id=device_id,
-            input_data=input_data,
-        )
-        # ... rest of the method unchanged ...
-```
-
-- [ ] **Step 6: Write the failing apply/rollback integration tests**
+- [ ] **Step 3: Write the failing apply/rollback integration tests**
 
 Add to `backend/tests/integration/test_changes_vertical_slice.py`:
 
@@ -1841,14 +1794,14 @@ def test_apply_on_a_non_draft_plan_is_rejected(
 
 Check how `FakeTransportFactory`/`FakeDriverRegistry` (or however this test suite's `container` fixture wires a fake Cisco transport for device connections in integration tests — look at how `test_analysis_vertical_slice.py`'s `_capture` helper connects without a real device) provides interface data for `get_interfaces()` during preview; the fixture container almost certainly already wires a fake transport returning the `sanitized_outputs` fixture text for `"show interfaces"` — confirm this exists and reuse it rather than building a new fake wiring path.
 
-- [ ] **Step 7: Run to verify failure**
+- [ ] **Step 4: Run to verify failure**
 
 ```bash
 cd backend && .venv/Scripts/python.exe -m pytest tests/integration/test_changes_vertical_slice.py -v
 ```
 Expected: FAIL — `/apply` endpoint doesn't exist (404) and `JobType.APPLY_CHANGE` isn't dispatched in `tasks.py` yet.
 
-- [ ] **Step 8: Implement ChangeService.apply**
+- [ ] **Step 5: Implement ChangeService.apply**
 
 Add to `backend/app/changes/service.py` (append to `ChangeService`):
 
@@ -1931,7 +1884,7 @@ Add `from app.core.time import utc_now` to the top-level imports of `service.py`
 
 A plan whose device is unreachable during `admitted_connection` itself (before `apply_configuration` is ever called) still goes through `_attempt_rollback`, which will also fail to connect and correctly land in `ROLLBACK_FAILED` — re-read spec §8.2's table: "Apply fails before any command reaches the device | plan → FAILED, no rollback attempted" describes the *design intent*, but this implementation cannot yet distinguish "never sent anything" from "sent something, then failed" without more granular error typing than `DriverCommandRejectedError`/connection errors currently provide. Accept this as a known simplification for this slice (rollback is attempted in both cases; on an unreachable device, both apply and the rollback attempt fail the same way, so the plan correctly lands in `ROLLBACK_FAILED` rather than `FAILED` even though nothing was actually sent) — note this explicitly in Task 8's documentation update rather than silently shipping a design/implementation mismatch.
 
-- [ ] **Step 9: Wire the apply endpoint and job schema**
+- [ ] **Step 6: Wire the apply endpoint and job schema**
 
 Add to `backend/app/schemas/changes.py`:
 
@@ -1973,7 +1926,7 @@ def apply_change_plan(
     )
 ```
 
-- [ ] **Step 10: Wire the job dispatch**
+- [ ] **Step 7: Wire the job dispatch**
 
 In `backend/app/jobs/tasks.py`, add the branch after the `ANALYZE_NETWORK` branch:
 
@@ -2000,14 +1953,14 @@ In `backend/app/jobs/tasks.py`, add the branch after the `ANALYZE_NETWORK` branc
 
 Move the two inline imports (`ChangeService`, `ChangeApplyJobInput`) to the top-level import block of `tasks.py` instead, matching how `AnalysisService`/`DiagnosticJobInput` are already imported at the top of this file rather than inline — inline imports here would be inconsistent with the rest of the file.
 
-- [ ] **Step 11: Run to verify tests pass**
+- [ ] **Step 8: Run to verify tests pass**
 
 ```bash
 cd backend && .venv/Scripts/python.exe -m pytest tests/integration/test_changes_vertical_slice.py tests/unit/test_jobs_device_scoped_lock.py -v
 ```
 Expected: all pass.
 
-- [ ] **Step 12: Lint and type-check**
+- [ ] **Step 9: Lint and type-check**
 
 ```bash
 cd backend
@@ -2016,14 +1969,14 @@ cd backend
 ```
 Expected: clean. Fix any import-ordering or unused-import issues ruff reports from the moved inline imports.
 
-- [ ] **Step 13: Run the full backend suite**
+- [ ] **Step 10: Run the full backend suite**
 
 ```bash
 cd backend && .venv/Scripts/python.exe -m pytest -q --basetemp=<scratch>
 ```
 Expected: all pass, no regressions in discovery/analysis exclusivity behavior (the global `_EXCLUSIVE_JOB_TYPES` path is unchanged, only a new parallel table was added).
 
-- [ ] **Step 14: Commit**
+- [ ] **Step 11: Commit**
 
 ```bash
 git add backend/app/repositories/jobs.py backend/app/services/jobs.py backend/app/changes/service.py \

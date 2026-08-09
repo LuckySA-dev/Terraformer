@@ -144,7 +144,7 @@ p {
 }
 
 .button--secondary {
-  background: #fff;
+  background: var(--surface);
   border-color: var(--border-strong);
   color: #334248;
 }
@@ -206,7 +206,7 @@ p {
 
 .icon-button--bordered {
   border: 1px solid var(--border);
-  background: #fff;
+  background: var(--surface);
 }
 
 .badge {
@@ -266,6 +266,36 @@ p {
   display: grid;
   grid-template-columns: minmax(440px, 1.05fr) minmax(480px, 0.95fr);
   background: #f4f6f5;
+  /* The right-hand card is a fixed light surface regardless of OS theme --
+     the same deliberate choice .access-brand already makes for its fixed
+     dark hero panel (its own explicit color, below). Without this, the
+     dark-mode :root override still flips --ink/--muted/etc. to their light
+     (near-white) values for every descendant here, rendering light text on
+     this always-light background. Re-pin to the light-mode values so
+     nothing nested -- headings, form fields, buttons, badges -- inherits
+     the wrong palette. */
+  --ink: #172126;
+  --muted: #69777d;
+  --muted-2: #8b979b;
+  --surface: #ffffff;
+  --surface-soft: #f7f8f7;
+  --surface-muted: #eef1ef;
+  --border: #dfe5e2;
+  --border-strong: #ccd5d1;
+  --teal: #0c806e;
+  --teal-dark: #086556;
+  --teal-soft: #e6f4f0;
+  --blue: #2563a9;
+  --blue-soft: #eaf2fb;
+  --green: #148259;
+  --green-soft: #e8f6ef;
+  --red: #bc3d43;
+  --red-soft: #fbecee;
+  --amber: #a96712;
+  --amber-soft: #fff4de;
+  --violet: #7251ad;
+  --violet-soft: #f1ebfa;
+  color: #172126;
 }
 
 .access-brand {
@@ -452,7 +482,7 @@ p {
   padding: 12px 18px;
   border: 1px solid var(--border);
   border-radius: 10px;
-  background: #fff;
+  background: var(--surface);
 }
 
 .service-checks > div {
@@ -527,7 +557,7 @@ p {
   border: 1px solid var(--border-strong);
   border-radius: 8px;
   color: var(--ink);
-  background: #fff;
+  background: var(--surface);
   font-size: 12px;
 }
 
@@ -757,6 +787,32 @@ p {
   background: #fff;
   box-shadow: var(--shadow-lg);
   overflow: hidden;
+  /* Fixed white surface regardless of OS theme, same as .access-page. Pin
+     the variables its descendants read (header h2/p, InlineNotice, Badge,
+     form hints) so dark-mode's flipped --ink/--muted don't render near-
+     white text on this permanently-white card. */
+  --ink: #172126;
+  --muted: #69777d;
+  --muted-2: #8b979b;
+  --surface: #ffffff;
+  --surface-soft: #f7f8f7;
+  --surface-muted: #eef1ef;
+  --border: #dfe5e2;
+  --border-strong: #ccd5d1;
+  --teal: #0c806e;
+  --teal-dark: #086556;
+  --teal-soft: #e6f4f0;
+  --blue: #2563a9;
+  --blue-soft: #eaf2fb;
+  --green: #148259;
+  --green-soft: #e8f6ef;
+  --red: #bc3d43;
+  --red-soft: #fbecee;
+  --amber: #a96712;
+  --amber-soft: #fff4de;
+  --violet: #7251ad;
+  --violet-soft: #f1ebfa;
+  color: #172126;
 }
 
 .modal--small {
@@ -909,7 +965,7 @@ p {
   display: grid;
   grid-template-columns: 228px minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr) 27px;
-  background: #eef1ef;
+  background: var(--surface-muted);
 }
 
 .sidebar {
@@ -1492,7 +1548,7 @@ p {
   display: flex;
   flex-direction: column;
   border-left: 1px solid var(--border);
-  background: #fff;
+  background: var(--surface);
   box-shadow: -7px 0 22px rgb(17 39 33 / 3%);
 }
 
@@ -1768,7 +1824,7 @@ p {
   padding: 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: #fff;
+  background: var(--surface);
 }
 
 .neighbor-row__heading {
@@ -1807,7 +1863,7 @@ p {
   border: 1px solid var(--border);
   border-radius: 8px;
   color: var(--ink);
-  background: #fff;
+  background: var(--surface);
   cursor: pointer;
 }
 
@@ -1895,7 +1951,7 @@ p {
   align-items: center;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: #fff;
+  background: var(--surface);
 }
 
 .terminal-tabs > div.is-active {
@@ -2069,7 +2125,7 @@ p {
   border: 1px solid var(--border);
   border-radius: 7px;
   color: var(--muted);
-  background: #fff;
+  background: var(--surface);
   text-align: left;
   cursor: pointer;
 }
@@ -2151,7 +2207,7 @@ p {
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 11px;
-  background: #fff;
+  background: var(--surface);
   box-shadow: 0 8px 24px rgb(29 51 45 / 5%);
 }
 
@@ -2214,7 +2270,7 @@ p {
   border: 1px solid var(--border);
   border-radius: 6px;
   color: var(--ink);
-  background: #fff;
+  background: var(--surface);
   font-size: 8px;
 }
 
@@ -2281,7 +2337,7 @@ p {
   border: 1px solid var(--border);
   border-radius: 6px;
   color: var(--ink);
-  background: #fff;
+  background: var(--surface);
   font-size: 8px;
 }
 
@@ -2358,7 +2414,7 @@ p {
   border: 1px solid var(--border);
   border-radius: 50%;
   color: #768683;
-  background: #fff;
+  background: var(--surface);
 }
 
 .timeline__item--success .timeline__icon {

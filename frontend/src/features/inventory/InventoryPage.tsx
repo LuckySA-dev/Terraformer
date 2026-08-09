@@ -201,15 +201,18 @@ export function InventoryPage() {
     (device) =>
       device.status === 'unreachable',
   ).length;
+  const applyCapable = (devices.data ?? []).filter((device) =>
+    device.capabilities.some((item) => item.name === 'apply' && item.supported),
+  ).length;
 
   return (
     <div className="workspace-layout">
       <main className="workspace-main">
         <header className="page-header">
           <div>
-            <span className="eyebrow">PHASE 2 · SAFE DISCOVERY</span>
+            <span className="eyebrow">DEVICE INVENTORY</span>
             <h1>Device inventory</h1>
-            <p>Structured connections remain read-only; manual terminals are Direct Mode.</p>
+            <p>Structured writes require explicit preview and apply; manual terminals are Direct Mode.</p>
           </div>
           <div className="page-header__actions">
             <Button onClick={() => setUsbConsoleOpen(true)}>
@@ -237,7 +240,13 @@ export function InventoryPage() {
           />
           <MetricCard icon={CheckCircle2} label="Reachable" value={String(reachable)} detail="last explicit check" tone="green" />
           <MetricCard icon={Unplug} label="Disconnected" value={String(unreachable)} detail="requires attention" tone="red" />
-          <MetricCard icon={ShieldCheck} label="Structured writes" value="Blocked" detail="Manual terminals bypass automation" tone="violet" />
+          <MetricCard
+            icon={ShieldCheck}
+            label="Structured writes"
+            value={String(applyCapable)}
+            detail="devices with apply available"
+            tone="violet"
+          />
         </section>
 
         <section className="inventory-panel" aria-labelledby="inventory-heading">

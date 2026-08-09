@@ -961,122 +961,35 @@ git commit -m "feat: add Cisco interface change render, validate, apply, rollbac
 **Files:**
 - Create: `backend/app/repositories/changes.py`
 - Create: `backend/app/schemas/changes.py`
-- Test: `backend/tests/unit/test_changes_repository.py`
 
 **Interfaces:**
 - Consumes: `ChangePlan`, `ChangeStep`, `ChangePlanStatus`, `ChangeRisk`, `ChangeType`, `SafetyLevel` (Task 1).
-- Produces: `ChangeRepository` (`create`, `get`, `list`, `set_status`, `add_step`, `list_by_device`); Pydantic `ChangePlanRequest`, `ChangeStepView`, `ChangePlanView`, `ApplyResponse`.
+- Produces: `ChangeRepository` (`create`, `get`, `list_by_device`, `set_status`, `set_snapshots`, `add_step`); Pydantic `ChangePlanRequest`, `ChangeStepView`, `ChangePlanView`.
 
-- [ ] **Step 1: Write the failing repository test**
+**No standalone test this task — see the note below.**
 
-Create `backend/tests/unit/test_changes_repository.py`. Check `backend/tests/unit/test_analysis_snapshot_builder.py` or an existing repository unit test for this project's session-fixture convention first (likely a `session` fixture backed by in-memory SQLite from `conftest.py`), then write:
+Checked `tests/conftest.py` and every existing repository (including
+`AnalysisRepository`, this codebase's closest precedent) before writing this
+task: there is no `session` fixture, and no repository in this codebase has
+its own standalone unit-test file with hand-built ORM fixtures. Every
+repository is exercised exclusively through full API vertical-slice tests
+(`test_analysis_vertical_slice.py`, `test_device_vertical_slice.py`, etc.),
+using `container`/`authenticated_client`/`credential_profile` and the real
+`/api/devices` endpoint to create rows, not direct `Device(...)`/
+`CredentialProfile(...)` construction. Writing a repository-only test here
+would introduce a pattern nothing else in this codebase uses, and risks
+getting `CredentialProfile`'s encrypted-field names wrong by guessing rather
+than reusing the established registration flow.
 
-```python
-from __future__ import annotations
+Implement `ChangeRepository` and the schemas now (this step has no failing
+test to watch first — there is no meaningful one to write in isolation).
+Task 5's vertical-slice test is what proves `create`/`add_step`/`get` work,
+by exercising them through `ChangeService.preview()`; that is this task's
+real verification, one task later. Confirm this task's own work compiles
+cleanly via ruff/pyright (Step 4 below) — that is the correctness bar an
+implementation-only task can meet on its own.
 
-from uuid import uuid4
-
-from app.models import ChangePlanStatus, ChangeRisk, ChangeType, Device, SafetyLevel, Vendor
-from app.repositories.changes import ChangeRepository
-
-
-def _device(session, address: str = "192.0.2.10"):
-    from app.models import CredentialProfile, DeviceStatus, SSHCompatibility
-
-    profile = CredentialProfile(
-        name="test",
-        username="user",
-        encrypted_password=b"x",
-        password_nonce=b"y",
-    )
-    session.add(profile)
-    session.flush()
-    device = Device(
-        name=f"sw-{address}",
-        management_address=address,
-        port=22,
-        vendor=Vendor.CISCO_IOSXE,
-        ssh_compatibility=SSHCompatibility.MODERN,
-        credential_profile_id=profile.id,
-        status=DeviceStatus.UNREACHABLE,
-    )
-    session.add(device)
-    session.flush()
-    return device
-
-
-def test_create_and_get_round_trips(session) -> None:
-    device = _device(session)
-    repo = ChangeRepository(session)
-
-    plan = repo.create(
-        device_id=device.id,
-        safety_level=SafetyLevel.BEST_EFFORT,
-        risk=ChangeRisk.LOW,
-    )
-    session.commit()
-
-    fetched = repo.get(plan.id)
-    assert fetched.device_id == device.id
-    assert fetched.status is ChangePlanStatus.DRAFT
-
-
-def test_add_step_and_list_by_device(session) -> None:
-    device = _device(session)
-    repo = ChangeRepository(session)
-    plan = repo.create(device_id=device.id, safety_level=SafetyLevel.BEST_EFFORT, risk=ChangeRisk.LOW)
-    session.flush()
-
-    repo.add_step(
-        plan,
-        change_type=ChangeType.INTERFACE_DESCRIPTION,
-        target="GigabitEthernet1",
-        previous_value="old",
-        desired_value="new",
-        rendered_commands="interface GigabitEthernet1\ndescription new",
-        inverse_commands="interface GigabitEthernet1\ndescription old",
-    )
-    session.commit()
-
-    plans = repo.list_by_device(device.id)
-    assert len(plans) == 1
-    assert len(plans[0].steps) == 1
-    assert plans[0].steps[0].target == "GigabitEthernet1"
-
-
-def test_set_status_updates_failure_code_and_applied_at(session) -> None:
-    device = _device(session)
-    repo = ChangeRepository(session)
-    plan = repo.create(device_id=device.id, safety_level=SafetyLevel.BEST_EFFORT, risk=ChangeRisk.LOW)
-    session.commit()
-
-    repo.set_status(plan, ChangePlanStatus.FAILED, failure_code="change_apply_failed")
-    session.commit()
-
-    fetched = repo.get(plan.id)
-    assert fetched.status is ChangePlanStatus.FAILED
-    assert fetched.failure_code == "change_apply_failed"
-
-
-def test_get_raises_not_found_for_unknown_id(session) -> None:
-    from app.core.errors import NotFoundError
-    import pytest
-
-    repo = ChangeRepository(session)
-    with pytest.raises(NotFoundError):
-        repo.get(uuid4())
-```
-
-Check `conftest.py` for the exact `session` fixture name/shape and the exact `Device`/`CredentialProfile` required-field set before finalizing this file — copy the device-creation helper pattern from an existing repository test (e.g. `test_analysis_snapshot_builder.py` or a device repository test) rather than guessing field names, since `CredentialProfile`'s exact encrypted-field names must match the real model precisely.
-
-- [ ] **Step 2: Run to verify it fails**
-
-```bash
-cd backend && .venv/Scripts/python.exe -m pytest tests/unit/test_changes_repository.py -v
-```
-Expected: FAIL — `ModuleNotFoundError: No module named 'app.repositories.changes'`.
-
-- [ ] **Step 3: Implement ChangeRepository**
+- [ ] **Step 1: Implement ChangeRepository**
 
 Create `backend/app/repositories/changes.py`:
 
@@ -1180,14 +1093,7 @@ class ChangeRepository:
             plan.post_change_snapshot_id = post_change_snapshot_id
 ```
 
-- [ ] **Step 4: Run to verify it passes**
-
-```bash
-cd backend && .venv/Scripts/python.exe -m pytest tests/unit/test_changes_repository.py -v
-```
-Expected: all pass.
-
-- [ ] **Step 5: Write the schemas**
+- [ ] **Step 2: Write the schemas**
 
 Create `backend/app/schemas/changes.py`:
 
@@ -1233,19 +1139,19 @@ class ChangePlanView(APIModel):
 
 `ApplyResponse` is not a separate schema: applying returns a `JobView` (the existing job-status shape already used for `RUN_DIAGNOSTIC`/`ANALYZE_NETWORK`), not a new type — the caller polls `GET /api/jobs/{id}` the same way it already does for every other async device operation.
 
-- [ ] **Step 6: Lint and type-check**
+- [ ] **Step 3: Lint and type-check**
 
 ```bash
 cd backend
-.venv/Scripts/python.exe -m ruff check --no-cache app/repositories/changes.py app/schemas/changes.py tests/unit/test_changes_repository.py
+.venv/Scripts/python.exe -m ruff check --no-cache app/repositories/changes.py app/schemas/changes.py
 .venv/Scripts/pyright.exe app/repositories/changes.py app/schemas/changes.py
 ```
 Expected: clean.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add backend/app/repositories/changes.py backend/app/schemas/changes.py backend/tests/unit/test_changes_repository.py
+git add backend/app/repositories/changes.py backend/app/schemas/changes.py
 git commit -m "feat: add change plan repository and schemas"
 ```
 

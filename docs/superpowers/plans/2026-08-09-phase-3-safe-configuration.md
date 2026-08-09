@@ -1454,12 +1454,23 @@ router = APIRouter(
 
 
 def _service(session: SessionDependency, container: ContainerDependency) -> ChangeService:
+    # connection_gate is required here (unlike app/api/analysis.py's version of
+    # this helper): preview() calls admitted_connection() directly in the
+    # synchronous request path, not only from inside an async job -- omitting
+    # it makes DeviceService.admitted_connection fail closed with
+    # ConnectionGateUnavailableError on every call. Found by running the
+    # vertical-slice test against a real FakeConnectionGate, not by reasoning
+    # about it -- app/api/analysis.py's DeviceService construction looks
+    # identical and is correct there, because AnalysisService never calls
+    # admitted_connection from its synchronous path, only from inside the
+    # async job in app/jobs/tasks.py, which wires connection_gate separately.
     devices = DeviceService(
         session,
         settings=container.settings,
         drivers=container.drivers,
         vault=container.credential_vault,
         host_key_trust=container.host_key_trust,
+        connection_gate=container.connection_gate,
     )
     return ChangeService(
         session,

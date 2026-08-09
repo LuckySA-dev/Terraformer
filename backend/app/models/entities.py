@@ -60,6 +60,7 @@ class ConsoleTransport(StrEnum):
 
 class SafetyLevel(StrEnum):
     READ_ONLY = "D"
+    BEST_EFFORT = "C"
 
 
 class JobType(StrEnum):
@@ -68,6 +69,7 @@ class JobType(StrEnum):
     DISCOVER_SSH = "discover_ssh"
     RUN_DIAGNOSTIC = "run_diagnostic"
     ANALYZE_NETWORK = "analyze_network"
+    APPLY_CHANGE = "apply_change"
 
 
 class AnalysisStatus(StrEnum):
@@ -89,6 +91,25 @@ class FindingCategory(StrEnum):
     UNDEFINED_REFERENCE = "undefined_reference"
     UNUSED_STRUCTURE = "unused_structure"
     TOPOLOGY_DRIFT = "topology_drift"
+
+
+class ChangePlanStatus(StrEnum):
+    DRAFT = "draft"
+    APPLYING = "applying"
+    APPLIED = "applied"
+    FAILED = "failed"
+    ROLLED_BACK = "rolled_back"
+    ROLLBACK_FAILED = "rollback_failed"
+
+
+class ChangeRisk(StrEnum):
+    LOW = "low"
+    HIGH = "high"
+
+
+class ChangeType(StrEnum):
+    INTERFACE_DESCRIPTION = "interface_description"
+    INTERFACE_ADMIN_STATE = "interface_admin_state"
 
 
 class JobState(StrEnum):
@@ -480,3 +501,61 @@ class AnalysisFinding(UUIDPrimaryKeyMixin, Base):
     line_number: Mapped[int | None] = mapped_column(Integer)
 
     analysis_snapshot: Mapped[AnalysisSnapshot] = relationship(back_populates="findings")
+
+
+class ChangePlan(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "change_plans"
+
+    device_id: Mapped[UUID] = mapped_column(
+        ForeignKey("devices.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    status: Mapped[ChangePlanStatus] = mapped_column(
+        enum_type(ChangePlanStatus, "change_plan_status"),
+        nullable=False,
+        default=ChangePlanStatus.DRAFT,
+    )
+    safety_level: Mapped[SafetyLevel] = mapped_column(
+        enum_type(SafetyLevel, "safety_level"),
+        nullable=False,
+    )
+    risk: Mapped[ChangeRisk] = mapped_column(
+        enum_type(ChangeRisk, "change_risk"),
+        nullable=False,
+    )
+    pre_change_snapshot_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("config_snapshots.id", ondelete="RESTRICT"),
+    )
+    post_change_snapshot_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("config_snapshots.id", ondelete="RESTRICT"),
+    )
+    failure_code: Mapped[str | None] = mapped_column(String(100))
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    steps: Mapped[list[ChangeStep]] = relationship(
+        back_populates="change_plan",
+        cascade="all, delete-orphan",
+        order_by="ChangeStep.created_at",
+    )
+
+
+class ChangeStep(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "change_steps"
+
+    change_plan_id: Mapped[UUID] = mapped_column(
+        ForeignKey("change_plans.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    change_type: Mapped[ChangeType] = mapped_column(
+        enum_type(ChangeType, "change_type"),
+        nullable=False,
+    )
+    target: Mapped[str] = mapped_column(String(64), nullable=False)
+    previous_value: Mapped[str | None] = mapped_column(String(255))
+    desired_value: Mapped[str] = mapped_column(String(255), nullable=False)
+    rendered_commands: Mapped[str] = mapped_column(Text, nullable=False)
+    inverse_commands: Mapped[str] = mapped_column(Text, nullable=False)
+
+    change_plan: Mapped[ChangePlan] = relationship(back_populates="steps")

@@ -22,6 +22,7 @@ _T = TypeVar("_T")
 class ConnectionOperation(StrEnum):
     CONNECTION_TEST = "connection_test"
     STRUCTURED_READ = "structured_read"
+    STRUCTURED_WRITE = "structured_write"
     TERMINAL = "terminal"
 
 

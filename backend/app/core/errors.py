@@ -201,3 +201,31 @@ class AnalysisTooManyDevicesError(AppError):
     code = "analysis_too_many_devices"
     status_code = 422
     default_message = "More devices are registered than the analysis device bound allows"
+
+
+class StructuredWritesDisabledError(AppError):
+    code = "structured_writes_disabled_by_policy"
+    status_code = 403
+    default_message = "Structured configuration writes are disabled by server policy"
+
+
+class ChangeVendorUnsupportedError(AppError):
+    code = "change_vendor_unsupported"
+    status_code = 422
+    default_message = "This device's vendor does not support structured changes yet"
+
+
+class ChangeValidationError(AppError):
+    code = "change_validation_failed"
+    status_code = 422
+    default_message = "The requested change failed driver validation"
+
+
+class ChangePlanNotDraftError(ConflictError):
+    code = "change_plan_not_draft"
+    default_message = "This change plan is not in draft status and cannot be applied"
+
+
+class ChangePlanDeviceLockedError(ConflictError):
+    code = "change_plan_device_locked"
+    default_message = "Another change is already being applied to this device"

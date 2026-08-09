@@ -107,6 +107,15 @@ docker compose --env-file .env -f deploy/compose.yml -f deploy/compose.analysis.
 
 This also requires setting `ANALYSIS_ENABLED=true` in `.env`.
 
+### Optional: structured configuration writes
+
+`STRUCTURED_WRITES_ENABLED` (off by default) gates the first structured write
+capability: Cisco IOS/IOS-XE interface description and admin-state changes,
+previewed before anything is sent and applied best-effort (Safety Level C).
+Every other vendor and change type remains read-only. See
+`docs/safety-model.md` and `docs/CAPABILITY_MATRIX.md` for scope and evidence
+status.
+
 ### Destructive reset
 
 `docker compose --env-file .env -f deploy/compose.yml down --volumes` permanently

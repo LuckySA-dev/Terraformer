@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 from typing import Any, Literal, Never, Protocol
 
+from app.changes.types import ChangeStepIntent, RenderedChange
 from app.core.errors import UnsupportedCapabilityError
 from app.models import SafetyLevel, SSHCompatibility, Vendor
 
@@ -153,6 +155,19 @@ class NetworkTransport(Protocol):
     def send_command(self, command: str) -> str: ...
 
 
+class ConfigurableTransport(NetworkTransport, Protocol):
+    """A transport that can push a batch of config-mode commands.
+
+    Deliberately not part of NetworkTransport itself: ScrapliGenericTransport
+    wraps scrapli's GenericDriver, which has no config-mode/privilege-level
+    model at all (confirmed -- 'send_configs' is not in its method list), so
+    it cannot satisfy this even in principle. Only vendor drivers that
+    declare DriverCapability.APPLY need a factory that produces one of these.
+    """
+
+    def send_config(self, commands: Sequence[str]) -> str: ...
+
+
 class TransportFactory(Protocol):
     def __call__(self, parameters: ConnectionParameters) -> NetworkTransport: ...
 
@@ -196,12 +211,20 @@ class DeviceDriver(ABC):
         del parameters, target
         self._unsupported(DIAGNOSTIC_CAPABILITIES[action])
 
+    def render_change(self, step: ChangeStepIntent, current: InterfaceFacts) -> RenderedChange:
+        del step, current
+        self._unsupported(DriverCapability.RENDER)
+
+    def validate_change(self, step: ChangeStepIntent, current: InterfaceFacts) -> list[str]:
+        del step, current
+        self._unsupported(DriverCapability.VALIDATE)
+
     def apply_configuration(self, parameters: ConnectionParameters, commands: list[str]) -> None:
         del parameters, commands
         self._unsupported(DriverCapability.APPLY)
 
-    def rollback(self, parameters: ConnectionParameters) -> None:
-        del parameters
+    def rollback(self, parameters: ConnectionParameters, commands: list[str]) -> None:
+        del parameters, commands
         self._unsupported(DriverCapability.ROLLBACK)
 
     def _unsupported(self, capability: DriverCapability) -> Never:

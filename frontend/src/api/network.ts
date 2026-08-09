@@ -2,6 +2,8 @@ import { apiRequest, apiRequestWithStatus } from './client';
 import type {
   AnalysisFinding,
   AnalysisSnapshot,
+  ChangePlan,
+  ChangeType,
   ConfigSnapshot,
   ConnectionTestResult,
   CredentialProfile,
@@ -181,4 +183,14 @@ export const api = {
       method: 'POST',
       body: json(input),
     }),
+  previewChange: (input: {
+    device_id: string;
+    change_type: ChangeType;
+    target: string;
+    desired_value: string;
+  }) => apiRequest<ChangePlan>('/change-plans', { method: 'POST', body: json(input) }),
+  listChangePlans: (deviceId: string) =>
+    apiRequest<ChangePlan[]>(`/change-plans?device_id=${encodeURIComponent(deviceId)}`),
+  applyChangePlan: (id: string) =>
+    apiRequest<Job>(`/change-plans/${encodeURIComponent(id)}/apply`, { method: 'POST' }),
 };

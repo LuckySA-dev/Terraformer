@@ -5,11 +5,13 @@ from uuid import UUID
 import structlog
 
 from app.analysis.service import AnalysisService
+from app.changes.service import ChangeService
 from app.container import get_default_container
 from app.core.errors import AppError
 from app.models import EventSeverity, JobType
 from app.repositories.events import EventRepository
 from app.repositories.jobs import JobRepository
+from app.schemas.changes import ChangeApplyJobInput
 from app.schemas.diagnostics import DiagnosticJobInput
 from app.schemas.discovery import DiscoveryRequest
 from app.services.devices import DeviceService
@@ -84,6 +86,21 @@ def execute_job(job_id: str) -> dict[str, object]:
                     ),
                 )
                 result = analysis.initialise_new()
+            elif job.type == JobType.APPLY_CHANGE and job.device_id is not None:
+                apply_input = ChangeApplyJobInput.model_validate(job.input)
+                changes = ChangeService(
+                    session,
+                    settings=container.settings,
+                    drivers=container.drivers,
+                    devices=devices,
+                    snapshots=SnapshotService(
+                        session,
+                        store=container.snapshot_store,
+                        devices=devices,
+                        drivers=container.drivers,
+                    ),
+                )
+                result = changes.apply(apply_input.change_plan_id)
             else:
                 raise ValueError("Unsupported or incomplete job")
         with container.session_factory() as session:

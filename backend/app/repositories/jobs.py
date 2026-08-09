@@ -46,7 +46,7 @@ class JobRepository:
             )
         return job
 
-    def has_active(self, job_type: JobType) -> bool:
+    def has_active(self, job_type: JobType, *, device_id: UUID | None = None) -> bool:
         statement = (
             select(Job.id)
             .where(
@@ -55,6 +55,8 @@ class JobRepository:
             )
             .limit(1)
         )
+        if device_id is not None:
+            statement = statement.where(Job.device_id == device_id)
         return self._session.scalar(statement) is not None
 
     def set_rq_id(self, job: Job, rq_job_id: str) -> None:

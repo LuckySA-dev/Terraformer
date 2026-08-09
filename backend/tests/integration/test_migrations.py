@@ -279,6 +279,26 @@ def test_migrations_match_the_orm_models(
         get_settings.cache_clear()
 
 
+def test_change_plan_tables_exist_after_upgrade(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "change_plans.db"
+    url = f"sqlite+pysqlite:///{database.as_posix()}"
+    monkeypatch.setenv("DATABASE_URL", url)
+    get_settings.cache_clear()
+    config = _alembic_config(Path(__file__).parents[2])
+    try:
+        command.upgrade(config, "head")
+    finally:
+        get_settings.cache_clear()
+
+    engine = create_engine(url)
+    table_names = set(inspect(engine).get_table_names())
+    assert "change_plans" in table_names
+    assert "change_steps" in table_names
+
+
 def _assert_every_supported_value_is_writable(url: str) -> None:
     """A migrated database must accept every vendor/compatibility the app writes.
 

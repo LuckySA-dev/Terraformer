@@ -15,6 +15,7 @@ from scrapli.exceptions import (
     ScrapliValueError,
 )
 
+from app.changes.types import ChangeStepIntent
 from app.core import errors as core_errors
 from app.core.errors import (
     ConfigurationError,
@@ -34,6 +35,7 @@ from app.drivers import (
     DiagnosticAction,
     DriverCapability,
     GenericReadOnlyDriver,
+    InterfaceFacts,
 )
 from app.drivers.cisco_iosxe import (
     parse_cdp_neighbors,
@@ -43,7 +45,7 @@ from app.drivers.cisco_iosxe import (
 )
 from app.drivers.ssh_errors import ConnectionPhase, translate_ssh_error
 from app.drivers.transport import ScrapliGenericTransport, ScrapliTransport
-from app.models import SSHCompatibility
+from app.models import ChangeType, SSHCompatibility
 from tests.fakes import FakeTransportFactory
 
 # The fixed, sanitized guidance returned for every negotiation failure. Spelled
@@ -100,13 +102,174 @@ def test_cisco_driver_is_read_only_and_closes_connections(
 
     assert driver.capabilities.supports(DriverCapability.RUNNING_CONFIG)
     assert driver.capabilities.supports(DriverCapability.NEIGHBORS)
-    assert not driver.capabilities.supports(DriverCapability.APPLY)
     assert driver.get_facts(parameters()).hostname == "edge-rtr-01"
     assert len(driver.get_neighbors(parameters())) == 2
     assert driver.get_running_config(parameters()).startswith("version 17.9")
     assert all(transport.closed for transport in factory.transports)
-    with pytest.raises(UnsupportedCapabilityError):
-        driver.apply_configuration(parameters(), ["interface GigabitEthernet1"])
+
+
+def test_cisco_driver_capability_set_now_includes_write_capabilities() -> None:
+    driver = CiscoIOSXEDriver(FakeTransportFactory({}))
+    for capability in (
+        DriverCapability.RENDER,
+        DriverCapability.VALIDATE,
+        DriverCapability.APPLY,
+        DriverCapability.POST_CHECK,
+        DriverCapability.ROLLBACK,
+    ):
+        assert driver.capabilities.supports(capability)
+    assert not driver.capabilities.supports(DriverCapability.COMPARE)
+
+
+def test_cisco_driver_renders_interface_description_change(
+    sanitized_outputs: dict[str, str],
+) -> None:
+    factory = FakeTransportFactory({"show interfaces": sanitized_outputs["show interfaces"]})
+    driver = CiscoIOSXEDriver(factory)
+    current = driver.get_interfaces(parameters())
+    target = next(iface for iface in current if iface.name == "GigabitEthernet1")
+
+    step = ChangeStepIntent(
+        change_type=ChangeType.INTERFACE_DESCRIPTION,
+        target="GigabitEthernet1",
+        desired_value="uplink-to-lab-core-2",
+    )
+    rendered = driver.render_change(step, target)
+
+    assert rendered.commands == (
+        "interface GigabitEthernet1",
+        "description uplink-to-lab-core-2",
+    )
+    assert rendered.inverse_commands == (
+        "interface GigabitEthernet1",
+        f"description {target.description}",
+    )
+
+
+def test_cisco_driver_renders_interface_description_inverse_as_no_description_when_absent(
+    sanitized_outputs: dict[str, str],
+) -> None:
+    factory = FakeTransportFactory({"show interfaces": sanitized_outputs["show interfaces"]})
+    driver = CiscoIOSXEDriver(factory)
+    current = driver.get_interfaces(parameters())
+    target = next(iface for iface in current if iface.name == "GigabitEthernet2")
+    assert target.description is None
+
+    step = ChangeStepIntent(
+        change_type=ChangeType.INTERFACE_DESCRIPTION,
+        target="GigabitEthernet2",
+        desired_value="new description",
+    )
+    rendered = driver.render_change(step, target)
+
+    assert rendered.inverse_commands == ("interface GigabitEthernet2", "no description")
+
+
+def test_cisco_driver_renders_admin_state_change_both_directions() -> None:
+    driver = CiscoIOSXEDriver(FakeTransportFactory({}))
+    current_up = InterfaceFacts(
+        name="GigabitEthernet1", description=None, admin_up=True, oper_up=True
+    )
+
+    down = driver.render_change(
+        ChangeStepIntent(ChangeType.INTERFACE_ADMIN_STATE, "GigabitEthernet1", "down"),
+        current_up,
+    )
+    assert down.commands == ("interface GigabitEthernet1", "shutdown")
+    assert down.inverse_commands == ("interface GigabitEthernet1", "no shutdown")
+
+    current_down = InterfaceFacts(
+        name="GigabitEthernet1", description=None, admin_up=False, oper_up=False
+    )
+    up = driver.render_change(
+        ChangeStepIntent(ChangeType.INTERFACE_ADMIN_STATE, "GigabitEthernet1", "up"),
+        current_down,
+    )
+    assert up.commands == ("interface GigabitEthernet1", "no shutdown")
+    assert up.inverse_commands == ("interface GigabitEthernet1", "shutdown")
+
+
+def test_cisco_driver_validate_change_rejects_a_description_over_240_characters() -> None:
+    driver = CiscoIOSXEDriver(FakeTransportFactory({}))
+    current = InterfaceFacts(name="GigabitEthernet1", description=None, admin_up=True, oper_up=True)
+    step = ChangeStepIntent(ChangeType.INTERFACE_DESCRIPTION, "GigabitEthernet1", "x" * 241)
+
+    issues = driver.validate_change(step, current)
+
+    assert issues == ["description must be 240 characters or fewer"]
+
+
+def test_cisco_driver_validate_change_accepts_a_valid_description() -> None:
+    driver = CiscoIOSXEDriver(FakeTransportFactory({}))
+    current = InterfaceFacts(name="GigabitEthernet1", description=None, admin_up=True, oper_up=True)
+    step = ChangeStepIntent(ChangeType.INTERFACE_DESCRIPTION, "GigabitEthernet1", "fine")
+
+    assert driver.validate_change(step, current) == []
+
+
+def test_cisco_driver_validate_change_rejects_a_description_carrying_extra_commands() -> None:
+    """A newline in the description would become a second config command.
+
+    render_change interpolates the value into one line, the plan stores the
+    batch newline-joined, and apply splits it back into lines -- so an
+    embedded newline smuggles an arbitrary command past the vetted change
+    types the whole Level C pipeline is built on.
+    """
+    driver = CiscoIOSXEDriver(FakeTransportFactory({}))
+    current = InterfaceFacts(name="GigabitEthernet1", description=None, admin_up=True, oper_up=True)
+    step = ChangeStepIntent(ChangeType.INTERFACE_DESCRIPTION, "GigabitEthernet1", "ok\nshutdown")
+
+    assert driver.validate_change(step, current) == [
+        "description must be a single line of printable characters"
+    ]
+
+
+def test_cisco_driver_validate_change_rejects_an_empty_description() -> None:
+    driver = CiscoIOSXEDriver(FakeTransportFactory({}))
+    current = InterfaceFacts(name="GigabitEthernet1", description=None, admin_up=True, oper_up=True)
+    step = ChangeStepIntent(ChangeType.INTERFACE_DESCRIPTION, "GigabitEthernet1", "   ")
+
+    assert driver.validate_change(step, current) == [
+        "description must not be empty; clear it with a separate change instead"
+    ]
+
+
+def test_cisco_driver_apply_configuration_sends_a_config_mode_batch() -> None:
+    factory = FakeTransportFactory({})
+    driver = CiscoIOSXEDriver(factory)
+
+    driver.apply_configuration(
+        parameters(), ["interface GigabitEthernet1", "description new-desc"]
+    )
+
+    assert factory.transports[0].sent_config_batches == [
+        ["interface GigabitEthernet1", "description new-desc"]
+    ]
+    assert factory.transports[0].closed is True
+
+
+def test_cisco_driver_apply_configuration_raises_typed_error_when_a_command_is_rejected() -> None:
+    factory = FakeTransportFactory(
+        {}, command_errors={"description new-desc": DriverCommandRejectedError()}
+    )
+    driver = CiscoIOSXEDriver(factory)
+
+    with pytest.raises(DriverCommandRejectedError):
+        driver.apply_configuration(
+            parameters(), ["interface GigabitEthernet1", "description new-desc"]
+        )
+    assert factory.transports[0].closed is True
+
+
+def test_cisco_driver_rollback_sends_the_inverse_commands() -> None:
+    factory = FakeTransportFactory({})
+    driver = CiscoIOSXEDriver(factory)
+
+    driver.rollback(parameters(), ["interface GigabitEthernet1", "no shutdown"])
+
+    assert factory.transports[0].sent_config_batches == [
+        ["interface GigabitEthernet1", "no shutdown"]
+    ]
 
 
 def test_cisco_driver_closes_transport_when_open_fails() -> None:

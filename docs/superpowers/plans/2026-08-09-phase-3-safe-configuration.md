@@ -961,122 +961,35 @@ git commit -m "feat: add Cisco interface change render, validate, apply, rollbac
 **Files:**
 - Create: `backend/app/repositories/changes.py`
 - Create: `backend/app/schemas/changes.py`
-- Test: `backend/tests/unit/test_changes_repository.py`
 
 **Interfaces:**
 - Consumes: `ChangePlan`, `ChangeStep`, `ChangePlanStatus`, `ChangeRisk`, `ChangeType`, `SafetyLevel` (Task 1).
-- Produces: `ChangeRepository` (`create`, `get`, `list`, `set_status`, `add_step`, `list_by_device`); Pydantic `ChangePlanRequest`, `ChangeStepView`, `ChangePlanView`, `ApplyResponse`.
+- Produces: `ChangeRepository` (`create`, `get`, `list_by_device`, `set_status`, `set_snapshots`, `add_step`); Pydantic `ChangePlanRequest`, `ChangeStepView`, `ChangePlanView`.
 
-- [ ] **Step 1: Write the failing repository test**
+**No standalone test this task — see the note below.**
 
-Create `backend/tests/unit/test_changes_repository.py`. Check `backend/tests/unit/test_analysis_snapshot_builder.py` or an existing repository unit test for this project's session-fixture convention first (likely a `session` fixture backed by in-memory SQLite from `conftest.py`), then write:
+Checked `tests/conftest.py` and every existing repository (including
+`AnalysisRepository`, this codebase's closest precedent) before writing this
+task: there is no `session` fixture, and no repository in this codebase has
+its own standalone unit-test file with hand-built ORM fixtures. Every
+repository is exercised exclusively through full API vertical-slice tests
+(`test_analysis_vertical_slice.py`, `test_device_vertical_slice.py`, etc.),
+using `container`/`authenticated_client`/`credential_profile` and the real
+`/api/devices` endpoint to create rows, not direct `Device(...)`/
+`CredentialProfile(...)` construction. Writing a repository-only test here
+would introduce a pattern nothing else in this codebase uses, and risks
+getting `CredentialProfile`'s encrypted-field names wrong by guessing rather
+than reusing the established registration flow.
 
-```python
-from __future__ import annotations
+Implement `ChangeRepository` and the schemas now (this step has no failing
+test to watch first — there is no meaningful one to write in isolation).
+Task 5's vertical-slice test is what proves `create`/`add_step`/`get` work,
+by exercising them through `ChangeService.preview()`; that is this task's
+real verification, one task later. Confirm this task's own work compiles
+cleanly via ruff/pyright (Step 4 below) — that is the correctness bar an
+implementation-only task can meet on its own.
 
-from uuid import uuid4
-
-from app.models import ChangePlanStatus, ChangeRisk, ChangeType, Device, SafetyLevel, Vendor
-from app.repositories.changes import ChangeRepository
-
-
-def _device(session, address: str = "192.0.2.10"):
-    from app.models import CredentialProfile, DeviceStatus, SSHCompatibility
-
-    profile = CredentialProfile(
-        name="test",
-        username="user",
-        encrypted_password=b"x",
-        password_nonce=b"y",
-    )
-    session.add(profile)
-    session.flush()
-    device = Device(
-        name=f"sw-{address}",
-        management_address=address,
-        port=22,
-        vendor=Vendor.CISCO_IOSXE,
-        ssh_compatibility=SSHCompatibility.MODERN,
-        credential_profile_id=profile.id,
-        status=DeviceStatus.UNREACHABLE,
-    )
-    session.add(device)
-    session.flush()
-    return device
-
-
-def test_create_and_get_round_trips(session) -> None:
-    device = _device(session)
-    repo = ChangeRepository(session)
-
-    plan = repo.create(
-        device_id=device.id,
-        safety_level=SafetyLevel.BEST_EFFORT,
-        risk=ChangeRisk.LOW,
-    )
-    session.commit()
-
-    fetched = repo.get(plan.id)
-    assert fetched.device_id == device.id
-    assert fetched.status is ChangePlanStatus.DRAFT
-
-
-def test_add_step_and_list_by_device(session) -> None:
-    device = _device(session)
-    repo = ChangeRepository(session)
-    plan = repo.create(device_id=device.id, safety_level=SafetyLevel.BEST_EFFORT, risk=ChangeRisk.LOW)
-    session.flush()
-
-    repo.add_step(
-        plan,
-        change_type=ChangeType.INTERFACE_DESCRIPTION,
-        target="GigabitEthernet1",
-        previous_value="old",
-        desired_value="new",
-        rendered_commands="interface GigabitEthernet1\ndescription new",
-        inverse_commands="interface GigabitEthernet1\ndescription old",
-    )
-    session.commit()
-
-    plans = repo.list_by_device(device.id)
-    assert len(plans) == 1
-    assert len(plans[0].steps) == 1
-    assert plans[0].steps[0].target == "GigabitEthernet1"
-
-
-def test_set_status_updates_failure_code_and_applied_at(session) -> None:
-    device = _device(session)
-    repo = ChangeRepository(session)
-    plan = repo.create(device_id=device.id, safety_level=SafetyLevel.BEST_EFFORT, risk=ChangeRisk.LOW)
-    session.commit()
-
-    repo.set_status(plan, ChangePlanStatus.FAILED, failure_code="change_apply_failed")
-    session.commit()
-
-    fetched = repo.get(plan.id)
-    assert fetched.status is ChangePlanStatus.FAILED
-    assert fetched.failure_code == "change_apply_failed"
-
-
-def test_get_raises_not_found_for_unknown_id(session) -> None:
-    from app.core.errors import NotFoundError
-    import pytest
-
-    repo = ChangeRepository(session)
-    with pytest.raises(NotFoundError):
-        repo.get(uuid4())
-```
-
-Check `conftest.py` for the exact `session` fixture name/shape and the exact `Device`/`CredentialProfile` required-field set before finalizing this file — copy the device-creation helper pattern from an existing repository test (e.g. `test_analysis_snapshot_builder.py` or a device repository test) rather than guessing field names, since `CredentialProfile`'s exact encrypted-field names must match the real model precisely.
-
-- [ ] **Step 2: Run to verify it fails**
-
-```bash
-cd backend && .venv/Scripts/python.exe -m pytest tests/unit/test_changes_repository.py -v
-```
-Expected: FAIL — `ModuleNotFoundError: No module named 'app.repositories.changes'`.
-
-- [ ] **Step 3: Implement ChangeRepository**
+- [ ] **Step 1: Implement ChangeRepository**
 
 Create `backend/app/repositories/changes.py`:
 
@@ -1180,14 +1093,7 @@ class ChangeRepository:
             plan.post_change_snapshot_id = post_change_snapshot_id
 ```
 
-- [ ] **Step 4: Run to verify it passes**
-
-```bash
-cd backend && .venv/Scripts/python.exe -m pytest tests/unit/test_changes_repository.py -v
-```
-Expected: all pass.
-
-- [ ] **Step 5: Write the schemas**
+- [ ] **Step 2: Write the schemas**
 
 Create `backend/app/schemas/changes.py`:
 
@@ -1233,19 +1139,19 @@ class ChangePlanView(APIModel):
 
 `ApplyResponse` is not a separate schema: applying returns a `JobView` (the existing job-status shape already used for `RUN_DIAGNOSTIC`/`ANALYZE_NETWORK`), not a new type — the caller polls `GET /api/jobs/{id}` the same way it already does for every other async device operation.
 
-- [ ] **Step 6: Lint and type-check**
+- [ ] **Step 3: Lint and type-check**
 
 ```bash
 cd backend
-.venv/Scripts/python.exe -m ruff check --no-cache app/repositories/changes.py app/schemas/changes.py tests/unit/test_changes_repository.py
+.venv/Scripts/python.exe -m ruff check --no-cache app/repositories/changes.py app/schemas/changes.py
 .venv/Scripts/pyright.exe app/repositories/changes.py app/schemas/changes.py
 ```
 Expected: clean.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add backend/app/repositories/changes.py backend/app/schemas/changes.py backend/tests/unit/test_changes_repository.py
+git add backend/app/repositories/changes.py backend/app/schemas/changes.py
 git commit -m "feat: add change plan repository and schemas"
 ```
 
@@ -1548,12 +1454,23 @@ router = APIRouter(
 
 
 def _service(session: SessionDependency, container: ContainerDependency) -> ChangeService:
+    # connection_gate is required here (unlike app/api/analysis.py's version of
+    # this helper): preview() calls admitted_connection() directly in the
+    # synchronous request path, not only from inside an async job -- omitting
+    # it makes DeviceService.admitted_connection fail closed with
+    # ConnectionGateUnavailableError on every call. Found by running the
+    # vertical-slice test against a real FakeConnectionGate, not by reasoning
+    # about it -- app/api/analysis.py's DeviceService construction looks
+    # identical and is correct there, because AnalysisService never calls
+    # admitted_connection from its synchronous path, only from inside the
+    # async job in app/jobs/tasks.py, which wires connection_gate separately.
     devices = DeviceService(
         session,
         settings=container.settings,
         drivers=container.drivers,
         vault=container.credential_vault,
         host_key_trust=container.host_key_trust,
+        connection_gate=container.connection_gate,
     )
     return ChangeService(
         session,
@@ -1677,59 +1594,24 @@ git commit -m "feat: add change plan preview service and API"
 
 **Files:**
 - Modify: `backend/app/repositories/jobs.py`
-- Modify: `backend/app/services/jobs.py`
 - Modify: `backend/app/changes/service.py`
+- Modify: `backend/app/schemas/changes.py`
 - Modify: `backend/app/jobs/tasks.py`
 - Modify: `backend/app/api/changes.py`
 - Modify: `backend/tests/integration/test_changes_vertical_slice.py`
-- Create: `backend/tests/unit/test_jobs_device_scoped_lock.py`
 
 **Interfaces:**
 - Consumes: `ChangeService.preview` (Task 5), `JobType.APPLY_CHANGE` (Task 1).
 - Produces: `JobRepository.has_active(job_type, *, device_id=None) -> bool`; `ChangeService.apply(plan_id) -> dict`; `POST /api/change-plans/{id}/apply`.
 
-- [ ] **Step 1: Write the failing device-scoped lock test**
+**No standalone test for `has_active`'s device scoping** — same reasoning as
+Task 4: no repository in this codebase has a standalone unit test, and this
+specific behavior (same-device conflicts, different-device doesn't) is
+exactly what Step 3's vertical-slice tests already assert through the real
+API. A separate unit test would just duplicate that coverage with a fixture
+pattern nothing else here uses.
 
-Create `backend/tests/unit/test_jobs_device_scoped_lock.py`. Base the fixture setup on whatever `session`/device-creation helper `test_changes_repository.py` (Task 4) already established — reuse that exact helper rather than writing a third copy:
-
-```python
-from __future__ import annotations
-
-from app.models import JobState, JobType
-from app.repositories.jobs import JobRepository
-from tests.unit.test_changes_repository import _device  # reuse the Task 4 helper
-
-
-def test_has_active_is_global_by_default(session) -> None:
-    device = _device(session)
-    repo = JobRepository(session)
-    repo.add(job_type=JobType.APPLY_CHANGE, device_id=device.id, input_data=None)
-    session.commit()
-
-    assert repo.has_active(JobType.APPLY_CHANGE) is True
-
-
-def test_has_active_can_scope_to_one_device(session) -> None:
-    device_a = _device(session, "192.0.2.10")
-    device_b = _device(session, "192.0.2.11")
-    repo = JobRepository(session)
-    repo.add(job_type=JobType.APPLY_CHANGE, device_id=device_a.id, input_data=None)
-    session.commit()
-
-    assert repo.has_active(JobType.APPLY_CHANGE, device_id=device_a.id) is True
-    assert repo.has_active(JobType.APPLY_CHANGE, device_id=device_b.id) is False
-```
-
-(If `_device` in `test_changes_repository.py` is a module-private helper not meant for cross-file import, move it into `tests/conftest.py` as a shared fixture instead — check which convention this codebase already follows for shared test device-creation helpers before choosing; `test_analysis_vertical_slice.py`'s `_register_cisco` suggests per-file helpers are the norm for API-level tests, but this is a lower-level repository test, so a `conftest.py` fixture may fit better. Match whichever pattern already exists for unit-level device fixtures.)
-
-- [ ] **Step 2: Run to verify it fails**
-
-```bash
-cd backend && .venv/Scripts/python.exe -m pytest tests/unit/test_jobs_device_scoped_lock.py -v
-```
-Expected: FAIL — `TypeError: has_active() got an unexpected keyword argument 'device_id'`.
-
-- [ ] **Step 3: Extend JobRepository.has_active**
+- [ ] **Step 1: Extend JobRepository.has_active**
 
 In `backend/app/repositories/jobs.py`, change:
 
@@ -1748,62 +1630,17 @@ In `backend/app/repositories/jobs.py`, change:
         return self._session.scalar(statement) is not None
 ```
 
-Add `from uuid import UUID` to this file's imports if not already present (check the top of the file first — `JobRepository.get`/`add` almost certainly already import `UUID`).
+Add `from uuid import UUID` to this file's imports if not already present (check the top of the file first — `JobRepository.get`/`add` almost certainly already import `UUID`). This step has no independent test of its own; Step 3 proves it works, the same way Task 5 proved `ChangeRepository`.
 
-- [ ] **Step 4: Run to verify it passes**
+- [ ] **Step 2: (Revised during execution — see note) Do NOT modify JobService**
 
-```bash
-cd backend && .venv/Scripts/python.exe -m pytest tests/unit/test_jobs_device_scoped_lock.py -v
-```
-Expected: both pass.
+Original plan called for a second exclusivity table in `app/services/jobs.py` raising `ConflictError` for a device-lock conflict. Caught during Task 1 while adding `ChangePlanDeviceLockedError`: `ConflictError.code` is a **fixed class attribute** (`"conflict"`), not customizable per raise — reusing it would silently produce `code: "conflict"`, not the `change_plan_device_locked` this plan's own Task 6 test (Step 3) and spec §8.2 both require. Making `JobService` raise a typed changes-domain error would also couple a shared, cross-domain service (already used by discovery/analysis/diagnostics/refresh/capture) to one specific domain's error type, which nothing else in this codebase does.
 
-- [ ] **Step 5: Extend JobService with device-scoped exclusivity**
+Corrected design: `app/services/jobs.py` is **not modified at all** in this task. The device-lock check moves to `app/api/changes.py` (Step 6 below), which already owns the changes domain and already imports its errors. This also removes the need for a `_DEVICE_EXCLUSIVE_JOB_TYPES` table — with only one device-exclusive job type, a direct check is simpler than a lookup table for one entry. `JobRepository.has_active`'s new `device_id` parameter (Step 1 above) is still required — it's what the API-layer check calls.
 
-In `backend/app/services/jobs.py`, add a second exclusivity table alongside the existing one and branch on it in `enqueue`:
+Skip this step's original file changes entirely and continue to Step 3.
 
-```python
-_EXCLUSIVE_JOB_TYPES = {
-    JobType.DISCOVER_SSH: "A discovery job is already active",
-    JobType.ANALYZE_NETWORK: "An analysis job is already active",
-}
-
-# Job types that must not run concurrently with themselves ON THE SAME DEVICE,
-# but may run in parallel across different devices -- unlike the global table
-# above, applying a change to device A must never block device B.
-_DEVICE_EXCLUSIVE_JOB_TYPES = {
-    JobType.APPLY_CHANGE: "A change is already being applied to this device",
-}
-```
-
-Update `enqueue`:
-
-```python
-    def enqueue(
-        self,
-        *,
-        job_type: JobType,
-        device_id: UUID | None = None,
-        input_data: dict[str, object] | None = None,
-    ) -> Job:
-        if job_type in _EXCLUSIVE_JOB_TYPES and self._jobs.has_active(job_type):
-            raise ConflictError(_EXCLUSIVE_JOB_TYPES[job_type])
-        if (
-            job_type in _DEVICE_EXCLUSIVE_JOB_TYPES
-            and device_id is not None
-            and self._jobs.has_active(job_type, device_id=device_id)
-        ):
-            raise ConflictError(_DEVICE_EXCLUSIVE_JOB_TYPES[job_type])
-        if device_id is not None:
-            self._devices.get(device_id)
-        job = self._jobs.add(
-            job_type=job_type,
-            device_id=device_id,
-            input_data=input_data,
-        )
-        # ... rest of the method unchanged ...
-```
-
-- [ ] **Step 6: Write the failing apply/rollback integration tests**
+- [ ] **Step 3: Write the failing apply/rollback integration tests**
 
 Add to `backend/tests/integration/test_changes_vertical_slice.py`:
 
@@ -1835,6 +1672,27 @@ def test_successful_apply_reaches_applied_status(
     container.settings.structured_writes_enabled = True
     device_id = _register_cisco(authenticated_client, str(credential_profile["id"]), "192.0.2.10")
     plan = _preview(authenticated_client, device_id)
+
+    # FakeTransport is a static command->output lookup table, not a device
+    # simulator: it cannot reflect a command it was just sent in a later
+    # "show interfaces" read. Patch get_interfaces for the post-check read
+    # only, to the state a real device would show after this exact apply --
+    # preview() already completed its own get_interfaces call against the
+    # unpatched fixture data before this patch is installed. Found by running
+    # this test against the plan's original version, which had no patch and
+    # always landed in "rolled_back": the fake's canned "show interfaces"
+    # text never changes no matter what was just sent to it.
+    from app.drivers import InterfaceFacts
+    from app.drivers.cisco_iosxe import CiscoIOSXEDriver
+
+    def applied_interfaces(self, parameters):
+        return [
+            InterfaceFacts(
+                name="GigabitEthernet1", description="new-description", admin_up=True, oper_up=True
+            )
+        ]
+
+    monkeypatch.setattr(CiscoIOSXEDriver, "get_interfaces", applied_interfaces)
 
     queued = authenticated_client.post(f"/api/change-plans/{plan['id']}/apply")
     assert queued.status_code == 202, queued.text
@@ -1957,14 +1815,14 @@ def test_apply_on_a_non_draft_plan_is_rejected(
 
 Check how `FakeTransportFactory`/`FakeDriverRegistry` (or however this test suite's `container` fixture wires a fake Cisco transport for device connections in integration tests — look at how `test_analysis_vertical_slice.py`'s `_capture` helper connects without a real device) provides interface data for `get_interfaces()` during preview; the fixture container almost certainly already wires a fake transport returning the `sanitized_outputs` fixture text for `"show interfaces"` — confirm this exists and reuse it rather than building a new fake wiring path.
 
-- [ ] **Step 7: Run to verify failure**
+- [ ] **Step 4: Run to verify failure**
 
 ```bash
 cd backend && .venv/Scripts/python.exe -m pytest tests/integration/test_changes_vertical_slice.py -v
 ```
 Expected: FAIL — `/apply` endpoint doesn't exist (404) and `JobType.APPLY_CHANGE` isn't dispatched in `tasks.py` yet.
 
-- [ ] **Step 8: Implement ChangeService.apply**
+- [ ] **Step 5: Implement ChangeService.apply**
 
 Add to `backend/app/changes/service.py` (append to `ChangeService`):
 
@@ -2047,7 +1905,7 @@ Add `from app.core.time import utc_now` to the top-level imports of `service.py`
 
 A plan whose device is unreachable during `admitted_connection` itself (before `apply_configuration` is ever called) still goes through `_attempt_rollback`, which will also fail to connect and correctly land in `ROLLBACK_FAILED` — re-read spec §8.2's table: "Apply fails before any command reaches the device | plan → FAILED, no rollback attempted" describes the *design intent*, but this implementation cannot yet distinguish "never sent anything" from "sent something, then failed" without more granular error typing than `DriverCommandRejectedError`/connection errors currently provide. Accept this as a known simplification for this slice (rollback is attempted in both cases; on an unreachable device, both apply and the rollback attempt fail the same way, so the plan correctly lands in `ROLLBACK_FAILED` rather than `FAILED` even though nothing was actually sent) — note this explicitly in Task 8's documentation update rather than silently shipping a design/implementation mismatch.
 
-- [ ] **Step 9: Wire the apply endpoint and job schema**
+- [ ] **Step 6: Wire the apply endpoint and job schema**
 
 Add to `backend/app/schemas/changes.py`:
 
@@ -2059,7 +1917,13 @@ class ChangeApplyJobInput(APIModel):
 Add to `backend/app/api/changes.py`:
 
 ```python
-from app.models import JobType
+from app.core.errors import (
+    ChangePlanDeviceLockedError,
+    ChangePlanNotDraftError,
+    StructuredWritesDisabledError,
+)
+from app.models import ChangePlanStatus, JobType
+from app.repositories.jobs import JobRepository
 from app.schemas.changes import ChangeApplyJobInput, ChangePlanRequest, ChangePlanView
 from app.schemas.jobs import JobView
 from app.services.jobs import JobService
@@ -2072,26 +1936,23 @@ def apply_change_plan(
     session: SessionDependency,
     container: ContainerDependency,
 ):
-    _service(session, container).get(change_plan_id)  # 404s early if the plan doesn't exist
-    job_input = ChangeApplyJobInput(change_plan_id=change_plan_id)
-    return JobService(session, container.queue).enqueue(
-        job_type=JobType.APPLY_CHANGE,
-        device_id=_service(session, container).get(change_plan_id).device_id,
-        input_data=job_input.model_dump(mode="json"),
-    )
-```
-
-(Two `_service(...).get(change_plan_id)` calls above are redundant — simplify to fetch the plan once and reuse it: replace the body with)
-
-```python
-@router.post("/{change_plan_id}/apply", response_model=JobView, status_code=status.HTTP_202_ACCEPTED)
-def apply_change_plan(
-    change_plan_id: UUID,
-    _auth: Authenticated,
-    session: SessionDependency,
-    container: ContainerDependency,
-):
     plan = _service(session, container).get(change_plan_id)
+    # Both checks must be synchronous, here, not only inside ChangeService.apply():
+    # that method only runs once the job executes, which could be arbitrarily
+    # later (or never observed by this request at all) -- a caller retrying
+    # /apply on an already-applied plan must get 409 immediately, not a 202
+    # for a job that will later discover the problem on its own. Found by
+    # running the "apply on a non-draft plan" test: the check inside apply()
+    # alone let a second /apply enqueue and 202 cleanly, because nothing
+    # synchronous ever inspected the plan's current status.
+    if plan.status is not ChangePlanStatus.DRAFT:
+        raise ChangePlanNotDraftError()
+    # The device-scoped lock check lives here, not in JobService: it needs
+    # the typed ChangePlanDeviceLockedError (a changes-domain error), and
+    # JobService is shared across discovery/analysis/diagnostics/refresh/
+    # capture and stays domain-agnostic on purpose.
+    if JobRepository(session).has_active(JobType.APPLY_CHANGE, device_id=plan.device_id):
+        raise ChangePlanDeviceLockedError()
     job_input = ChangeApplyJobInput(change_plan_id=change_plan_id)
     return JobService(session, container.queue).enqueue(
         job_type=JobType.APPLY_CHANGE,
@@ -2100,7 +1961,7 @@ def apply_change_plan(
     )
 ```
 
-- [ ] **Step 10: Wire the job dispatch**
+- [ ] **Step 7: Wire the job dispatch**
 
 In `backend/app/jobs/tasks.py`, add the branch after the `ANALYZE_NETWORK` branch:
 
@@ -2127,14 +1988,14 @@ In `backend/app/jobs/tasks.py`, add the branch after the `ANALYZE_NETWORK` branc
 
 Move the two inline imports (`ChangeService`, `ChangeApplyJobInput`) to the top-level import block of `tasks.py` instead, matching how `AnalysisService`/`DiagnosticJobInput` are already imported at the top of this file rather than inline — inline imports here would be inconsistent with the rest of the file.
 
-- [ ] **Step 11: Run to verify tests pass**
+- [ ] **Step 8: Run to verify tests pass**
 
 ```bash
 cd backend && .venv/Scripts/python.exe -m pytest tests/integration/test_changes_vertical_slice.py tests/unit/test_jobs_device_scoped_lock.py -v
 ```
 Expected: all pass.
 
-- [ ] **Step 12: Lint and type-check**
+- [ ] **Step 9: Lint and type-check**
 
 ```bash
 cd backend
@@ -2143,14 +2004,14 @@ cd backend
 ```
 Expected: clean. Fix any import-ordering or unused-import issues ruff reports from the moved inline imports.
 
-- [ ] **Step 13: Run the full backend suite**
+- [ ] **Step 10: Run the full backend suite**
 
 ```bash
 cd backend && .venv/Scripts/python.exe -m pytest -q --basetemp=<scratch>
 ```
 Expected: all pass, no regressions in discovery/analysis exclusivity behavior (the global `_EXCLUSIVE_JOB_TYPES` path is unchanged, only a new parallel table was added).
 
-- [ ] **Step 14: Commit**
+- [ ] **Step 11: Commit**
 
 ```bash
 git add backend/app/repositories/jobs.py backend/app/services/jobs.py backend/app/changes/service.py \
@@ -2708,6 +2569,6 @@ having exercised it against a device."
 
 **Placeholder scan:** an earlier draft of Task 6 Step 8 showed an intermediate stub (`pass` with a comment) before the real `apply()` body — removed during self-review since a worker reading that step in isolation could mistake it for something to keep. Every code step now shows only the complete, final content. No `TBD`/`TODO`/"add appropriate error handling"-style placeholders found elsewhere.
 
-**Type consistency:** `ChangeStepIntent(change_type, target, desired_value)` (Task 2) is used identically in Task 3 (driver methods), Task 5 (`ChangeService.preview`), and Task 8 (lab test). `RenderedChange(commands, inverse_commands)` likewise. `ChangeRepository.get(plan_id, for_update=False)` (Task 4) is called with `for_update=True` in Task 6's `apply()` — verified consistent, since Task 4 declared `for_update` as a keyword parameter apply can pass. `JobRepository.has_active(job_type, *, device_id=None)` (Task 6) matches both call sites in `JobService.enqueue` (global check omits `device_id`, device-scoped check passes it).
+**Type consistency:** `ChangeStepIntent(change_type, target, desired_value)` (Task 2) is used identically in Task 3 (driver methods), Task 5 (`ChangeService.preview`), and Task 8 (lab test). `RenderedChange(commands, inverse_commands)` likewise. `ChangeRepository.get(plan_id, for_update=False)` (Task 4) is called with `for_update=True` in Task 6's `apply()` — verified consistent, since Task 4 declared `for_update` as a keyword parameter apply can pass. `JobRepository.has_active(job_type, *, device_id=None)` (Task 6) matches its call site in `app/api/changes.py`'s `apply_change_plan` (passes `device_id`); `JobService.enqueue`'s own global `_EXCLUSIVE_JOB_TYPES` check (discovery/analysis) is untouched and still calls `has_active` with no `device_id`, which the new optional parameter doesn't break.
 
 **Known limitation surfaced, not hidden:** Task 6 Step 8 explicitly documents that this implementation cannot yet distinguish "apply never reached the device" from "apply reached the device and failed" as cleanly as spec §8.2's table implies — both currently attempt rollback. This is flagged inline in the plan and pointed at Task 8's documentation step rather than silently shipping a spec/implementation mismatch.

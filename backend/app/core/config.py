@@ -73,6 +73,11 @@ class Settings(BaseSettings):
     # Telnet is cleartext with no host identity. Off by default; intended only
     # for virtual labs (GNS3/EVE-NG) whose consoles are Telnet-only.
     telnet_enabled: bool = False
+    # Structured configuration writes. Off by default: this is the first code
+    # path able to change a real device outside the explicitly unguarded
+    # Direct Mode terminal escape hatches. Intentional defense in depth, not
+    # a missing UI shortcut.
+    structured_writes_enabled: bool = False
     terminal_pty_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
     terminal_max_duration_seconds: int = Field(default=3600, ge=60, le=86400)
     max_device_connections: int = Field(

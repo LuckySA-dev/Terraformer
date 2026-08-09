@@ -6,6 +6,10 @@ from pydantic import ValidationError
 from app.core.config import Settings
 
 
+def test_structured_writes_disabled_by_default() -> None:
+    assert Settings.model_fields["structured_writes_enabled"].default is False
+
+
 def test_database_password_file_and_connection_limit_alias(
     tmp_path: Path,
     monkeypatch,

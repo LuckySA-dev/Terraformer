@@ -84,8 +84,13 @@ def test_first_device_refresh_snapshot_and_event_flow(
     assert supported["mac"] is True
     assert supported["ping"] is True
     assert supported["traceroute"] is True
-    assert supported["apply"] is False
-    assert all(item["safety_level"] == "D" for item in device["capabilities"])
+    assert supported["render"] is True
+    assert supported["validate"] is True
+    assert supported["apply"] is True
+    assert supported["post_check"] is True
+    assert supported["rollback"] is True
+    assert supported["compare"] is False
+    assert all(item["safety_level"] == "C" for item in device["capabilities"])
     assert transport_factory.parameters[-1].connect_timeout_seconds == 7
     assert transport_factory.parameters[-1].command_timeout_seconds == 41
 

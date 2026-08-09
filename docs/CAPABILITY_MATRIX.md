@@ -1,7 +1,7 @@
 # Capability matrix
 
-Last updated: 2026-08-08
-Scope: phases 0–2, plus read-only Batfish analysis
+Last updated: 2026-08-09
+Scope: phases 0–3, plus read-only Batfish analysis
 
 ## Status definitions
 
@@ -123,27 +123,34 @@ session content.
 
 ## Structured write capabilities
 
-Every structured write capability is **Not Implemented**. The application must
-not expose an API, worker job, driver fallback, or structured UI control that can
-execute these operations. Manual Direct Mode remains the explicit path outside
-this table and outside Safety Levels A–D.
+Structured writes are optional (`STRUCTURED_WRITES_ENABLED`, off by default) and
+cover exactly two Cisco IOS/IOS-XE capabilities: interface description and
+admin-state changes. Every other capability and platform remains **Not
+Implemented**, and the application must not expose an API, worker job, driver
+fallback, or structured UI control that can execute them. Manual Direct Mode
+remains the explicit path outside this table and outside Safety Levels A–D.
 
 | Capability | Cisco IOS/IOS-XE | Juniper Junos | Fortinet FortiOS | Generic/unknown |
 |---|---|---|---|---|
-| Render interface description/admin state | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
+| Render interface description/admin state | **Implemented, lab unverified** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
 | Render access/trunk VLAN | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
 | Render SVI/IP address | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
 | Render static route | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
-| Validate rendered commands | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
+| Validate rendered commands | **Implemented, lab unverified** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
 | Candidate/compare | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
-| Pre-change snapshot pipeline | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
-| Apply configuration | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
-| Post-change checks | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
+| Pre-change snapshot pipeline | **Implemented, lab unverified** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
+| Apply configuration | **Implemented, lab unverified** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
+| Post-change checks | **Implemented, lab unverified** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
 | Confirmed commit | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
-| Rollback/assisted recovery | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
+| Rollback/assisted recovery | **Implemented, lab unverified** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
 
-Current structured-write safety classification for every platform:
-**Level D — Read-only**.
+Current structured-write safety classification: Cisco IOS/IOS-XE interface
+description and admin-state changes are **Level C, lab unverified** ("Best
+effort; never 'auto-rollback'"). Every other platform and capability remains
+**Level D — Read-only**. The opt-in real-lab test
+(`backend/tests/lab/test_structured_writes_lab.py`) exists but has not been run
+against a real device — see the verification record in
+`docs/IMPLEMENTATION_STATUS.md`.
 
 ## Real-lab evidence log
 

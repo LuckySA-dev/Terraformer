@@ -2912,3 +2912,69 @@ p {
     color: #0d1416;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Configure tab (structured interface changes)
+   --------------------------------------------------------------------------- */
+
+.configure-form {
+  display: grid;
+  gap: 9px;
+  max-width: 360px;
+}
+
+.configure-form .button {
+  width: 100%;
+}
+
+.configure-preview {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.configure-preview__step p {
+  margin: 0 0 6px;
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.configure-preview__step pre {
+  margin: 0;
+  padding: 10px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #10191b;
+  color: #b8cbc6;
+  font: 11px/1.6 "DM Mono", monospace;
+  white-space: pre;
+}
+
+.configure-history__item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+
+.configure-history__item span {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.configure-history__item small {
+  color: var(--muted-2);
+  font-family: "DM Mono", monospace;
+}
+
+/* Only the trailing timestamp is pushed right; a failure code, when present,
+   stays next to the status it explains. */
+.configure-history__item small:last-child {
+  margin-left: auto;
+}

@@ -98,7 +98,7 @@ export interface DeviceFacts {
 export interface DeviceCapability {
   name: string;
   supported: boolean;
-  safety_level: 'D';
+  safety_level: SafetyLevel;
 }
 
 export interface Device {
@@ -241,7 +241,8 @@ export interface Job {
     | 'capture_config'
     | 'discover_ssh'
     | 'run_diagnostic'
-    | 'analyze_network';
+    | 'analyze_network'
+    | 'apply_change';
   state: JobState;
   device_id: string | null;
   result: Record<string, unknown> | null;
@@ -329,4 +330,38 @@ export interface FilterCheckResult {
   matched_line: string | null;
   evidence: 'INFERRED';
   completeness: AnalysisCompleteness;
+}
+
+export type ChangePlanStatus =
+  | 'draft'
+  | 'applying'
+  | 'applied'
+  | 'failed'
+  | 'rolled_back'
+  | 'rollback_failed';
+export type ChangeRisk = 'low' | 'high';
+export type ChangeType = 'interface_description' | 'interface_admin_state';
+export type SafetyLevel = 'D' | 'C';
+
+export interface ChangeStep {
+  id: string;
+  change_type: ChangeType;
+  target: string;
+  previous_value: string | null;
+  desired_value: string;
+  rendered_commands: string;
+  inverse_commands: string;
+}
+
+export interface ChangePlan {
+  id: string;
+  device_id: string;
+  status: ChangePlanStatus;
+  safety_level: SafetyLevel;
+  risk: ChangeRisk;
+  failure_code: string | null;
+  applied_at: string | null;
+  steps: ChangeStep[];
+  created_at: string;
+  updated_at: string;
 }

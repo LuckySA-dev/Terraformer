@@ -5,10 +5,13 @@ capabilities and evidence, not on a vendor name or optimistic fallback.
 
 ## Current enforcement boundary
 
-Structured automation in phases 0–2 is read-only. Every structured write
-capability in the capability matrix is **Not Implemented**, and every driver is
-treated as Safety Level D for writes. An absent structured write route is
-intentional defense in depth, not a missing UI shortcut.
+Structured automation is read-only by default. `STRUCTURED_WRITES_ENABLED`
+(off by default) gates the one implemented exception: Cisco IOS/IOS-XE
+interface description and admin-state changes, Level C and lab unverified (see
+`docs/CAPABILITY_MATRIX.md`). Every other structured write capability remains
+**Not Implemented**, and every other driver is treated as Safety Level D for
+writes. An absent structured write route is intentional defense in depth for
+everything else, not a missing UI shortcut.
 
 Read operations still have side effects on fragile devices. The operator must
 provide the exact target or bounded IPv4 range, authorize the operation, and use
@@ -109,8 +112,12 @@ change hardware without the structured apply pipeline.
 | D | Structured write path absent or not lab-verified | Read-only |
 
 A vendor or OS version remains Level D for a structured capability until that
-exact capability has sanitized fixtures and real-lab evidence. Evidence for one
-command family does not imply support for another.
+exact capability has sanitized fixtures covering render, validate, apply,
+post-check, and rollback. It stays annotated **lab unverified** at its achieved
+level until real-lab evidence exists — the level describes the mechanism the
+code implements, not a claim that the mechanism has been exercised against a
+real device. Evidence for one command family does not imply support for
+another.
 
 ### Read-only configuration analysis
 
@@ -128,9 +135,9 @@ returned to the API. Every analysis result carries a completeness disclosure
 optional decoration a caller can ignore — a result that omits some of the
 requested scope must say so in the same response that carries its findings.
 
-## Future mandatory apply pipeline
+## Apply pipeline
 
-No stage may be skipped when structured writes are introduced in a later phase:
+No stage may be skipped when structured writes are introduced for a capability:
 
 ```text
 Intent -> Structured Change Plan -> Vendor Render -> Validation -> Snapshot
@@ -138,9 +145,18 @@ Intent -> Structured Change Plan -> Vendor Render -> Validation -> Snapshot
        -> Apply -> Post-check -> Confirm/Rollback/Assisted Recovery -> Audit
 ```
 
-Model output or wizard input can create intent only. Backend validation and a
-human confirmation remain mandatory. Dangerous actions such as erase, reload,
-format, and factory reset are outside the guided write path.
+This is implemented, not merely planned, for Cisco IOS/IOS-XE interface
+description and admin-state changes as of Phase 3 — see
+`docs/CAPABILITY_MATRIX.md`'s "Structured write capabilities" table for the
+current, precise scope. Rollback is surgical (inverse commands rendered
+alongside the change), never a full running-config replay, so
+`ROLLBACK_FAILED` is a real, expected Level C outcome that requires manual
+device verification, not a bug class this phase eliminates. Every other
+vendor and capability still only has this diagram as the required shape for a
+later phase. Model output or wizard input can create intent only. Backend
+validation and a human confirmation remain mandatory. Dangerous actions such
+as erase, reload, format, and factory reset are outside the guided write
+path.
 
 ## Exposure rules
 

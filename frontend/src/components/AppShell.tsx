@@ -174,7 +174,7 @@ export function AppShell({ health, onLogout }: AppShellProps) {
         </div>
         <div className="status-bar__group">
           <span>
-            <ShieldCheck size={12} /> Structured writes blocked
+            <ShieldCheck size={12} /> Structured writes require explicit preview and apply
           </span>
           <span className="status-separator" />
           <span>v{health.version}</span>

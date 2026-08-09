@@ -18,6 +18,7 @@ import {
   RefreshCw,
   Router,
   Server,
+  Settings2,
   ShieldCheck,
   SquareTerminal,
   Trash2,
@@ -28,6 +29,8 @@ import {
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { api } from '../../api/network';
 import type {
+  ChangePlan,
+  ChangeType,
   ConfigSnapshot,
   Device,
   DiagnosticAction,
@@ -56,6 +59,7 @@ type InspectorTab =
   | 'diagnostics'
   | 'terminal'
   | 'snapshots'
+  | 'configure'
   | 'activity';
 
 interface DeviceInspectorProps {
@@ -143,12 +147,14 @@ function OverviewTab({ device }: { device: Device }) {
   });
   const test = useMutation({ mutationFn: () => api.testDeviceConnection(device.id) });
   const capabilities = device.capabilities;
+  const canApply = capabilities.some((item) => item.name === 'apply' && item.supported);
 
   return (
     <div className="inspector-section-stack">
-      <InlineNotice tone="safe" title="Observed state only">
-        This inspector can read and snapshot device state. Configuration writes are not available in this
-        phase.
+      <InlineNotice tone="safe" title={canApply ? 'Structured writes require explicit apply' : 'Observed state only'}>
+        {canApply
+          ? 'This driver supports a small set of vetted structured changes, on the Configure tab. Every change is previewed before anything is sent, and applying can change the device.'
+          : 'This inspector can read and snapshot device state. Configuration writes are not available for this driver.'}
       </InlineNotice>
       <section className="inspector-section">
         <div className="inspector-section__heading">
@@ -212,12 +218,14 @@ function OverviewTab({ device }: { device: Device }) {
             ))}
           </div>
         )}
-        <AppState
-          kind="unsupported"
-          title="Configuration is unavailable"
-          message="Device write capabilities are intentionally not implemented."
-          compact
-        />
+        {canApply ? null : (
+          <AppState
+            kind="unsupported"
+            title="Configuration is unavailable"
+            message="This driver has no verified write capability yet."
+            compact
+          />
+        )}
       </section>
     </div>
   );
@@ -489,6 +497,208 @@ function SnapshotsTab({ device, onCapture, capturing }: { device: Device; onCapt
   );
 }
 
+const changePlanStatusTone: Record<ChangePlan['status'], 'neutral' | 'success' | 'warning' | 'danger'> = {
+  draft: 'neutral',
+  applying: 'warning',
+  applied: 'success',
+  failed: 'danger',
+  rolled_back: 'warning',
+  rollback_failed: 'danger',
+};
+
+function ConfigureTab({ device }: { device: Device }) {
+  const queryClient = useQueryClient();
+  const [changeType, setChangeType] = useState<ChangeType>('interface_description');
+  const [target, setTarget] = useState('');
+  const [desiredValue, setDesiredValue] = useState('');
+  const [plan, setPlan] = useState<ChangePlan | null>(null);
+
+  const interfaces = useQuery({
+    queryKey: ['devices', device.id, 'interfaces'],
+    queryFn: () => api.interfaces(device.id),
+    retry: false,
+  });
+  const history = useQuery({
+    queryKey: ['change-plans', device.id],
+    queryFn: () => api.listChangePlans(device.id),
+    retry: false,
+    // Apply runs in the background worker, so the status a plan lands on
+    // arrives after the request that queued it. Poll only while one is
+    // actually in flight.
+    refetchInterval: (query) =>
+      query.state.data?.some((item) => item.status === 'applying') === true ? 1_000 : false,
+  });
+  const preview = useMutation({
+    mutationFn: () =>
+      api.previewChange({
+        device_id: device.id,
+        change_type: changeType,
+        target,
+        desired_value: desiredValue,
+      }),
+    onSuccess: (result) => setPlan(result),
+  });
+  const apply = useMutation({
+    mutationFn: (planId: string) => api.applyChangePlan(planId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['change-plans', device.id] });
+    },
+  });
+
+  const canApply = device.capabilities.some((item) => item.name === 'apply' && item.supported);
+  if (!canApply) {
+    return (
+      <AppState
+        kind="empty"
+        title="Structured configuration unavailable"
+        message="This driver has no verified apply capability for this vendor yet."
+      />
+    );
+  }
+
+  const resetPlan = () => setPlan(null);
+
+  return (
+    <div className="inspector-section-stack">
+      <InlineNotice tone="warning" title="Best effort, not auto-rollback">
+        Preview shows the exact commands and risk before anything is sent. Applying can change the
+        device; recovery on failure requires connectivity.
+      </InlineNotice>
+      <div className="configure-form">
+        <SelectField
+          label="Change type"
+          value={changeType}
+          onChange={(event) => {
+            setChangeType(event.target.value as ChangeType);
+            resetPlan();
+          }}
+        >
+          <option value="interface_description">Interface description</option>
+          <option value="interface_admin_state">Interface admin state</option>
+        </SelectField>
+        <SelectField
+          label="Interface"
+          value={target}
+          onChange={(event) => {
+            setTarget(event.target.value);
+            resetPlan();
+          }}
+        >
+          <option value="">Select an interface</option>
+          {(interfaces.data ?? []).map((iface) => (
+            <option key={iface.id} value={iface.name}>
+              {iface.name}
+            </option>
+          ))}
+        </SelectField>
+        {changeType === 'interface_admin_state' ? (
+          <SelectField
+            label="Desired admin state"
+            value={desiredValue}
+            onChange={(event) => {
+              setDesiredValue(event.target.value);
+              resetPlan();
+            }}
+          >
+            <option value="">Select</option>
+            <option value="up">up</option>
+            <option value="down">down</option>
+          </SelectField>
+        ) : (
+          <InputField
+            label="New description"
+            value={desiredValue}
+            onChange={(event) => {
+              setDesiredValue(event.target.value);
+              resetPlan();
+            }}
+            placeholder="uplink-to-lab-core"
+          />
+        )}
+        <Button
+          size="small"
+          onClick={() => preview.mutate()}
+          busy={preview.isPending}
+          disabled={target === '' || desiredValue === ''}
+        >
+          <Settings2 size={14} /> Preview
+        </Button>
+      </div>
+      {preview.error === null ? null : (
+        <div className="form-error" role="alert">
+          {preview.error.message}
+        </div>
+      )}
+      {plan === null ? null : (
+        <div className="configure-preview">
+          <div>
+            <Badge tone={plan.risk === 'high' ? 'danger' : 'success'}>{plan.risk} risk</Badge>
+            <Badge tone="neutral">Safety level {plan.safety_level} · best effort</Badge>
+          </div>
+          {plan.steps.map((step) => (
+            <div key={step.id} className="configure-preview__step">
+              <p>
+                {step.target}: <span className="mono">{step.previous_value ?? '(none)'}</span> →{' '}
+                <span className="mono">{step.desired_value}</span>
+              </p>
+              <pre>{step.rendered_commands}</pre>
+            </div>
+          ))}
+          <Button
+            variant="primary"
+            size="small"
+            onClick={() => apply.mutate(plan.id)}
+            busy={apply.isPending}
+            disabled={plan.status !== 'draft'}
+          >
+            <ShieldCheck size={14} /> Apply
+          </Button>
+          {apply.error === null ? null : (
+            <div className="form-error" role="alert">
+              {apply.error.message}
+            </div>
+          )}
+          {apply.isSuccess ? (
+            <div className="mini-result mini-result--success" role="status">
+              <Check size={14} />
+              <span>Apply queued. The status below updates when the worker finishes.</span>
+            </div>
+          ) : null}
+        </div>
+      )}
+      {history.data?.some((item) => item.status === 'rollback_failed') === true ? (
+        <InlineNotice tone="danger" title="A rollback did not complete">
+          One of the changes below applied, failed its post-check, and could not be reversed. The
+          device is in an unknown state for that interface — verify it directly before making
+          another change.
+        </InlineNotice>
+      ) : null}
+      <div>
+        <strong>Past changes</strong>
+        {history.data === undefined || history.data.length === 0 ? (
+          <AppState
+            kind="empty"
+            title="No changes yet"
+            message="Preview and apply a change to see its history here."
+            compact
+          />
+        ) : (
+          <div className="snapshot-list">
+            {history.data.map((item) => (
+              <div key={item.id} className="configure-history__item">
+                <Badge tone={changePlanStatusTone[item.status]}>{item.status}</Badge>
+                <span>{item.steps[0]?.target}</span>
+                {item.failure_code === null ? null : <small className="mono">{item.failure_code}</small>}
+                <small>{formatDateTime(item.created_at)}</small>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ActivityTab({ device }: { device: Device }) {
   const events = useQuery({
     queryKey: ['events', { deviceId: device.id }],
@@ -576,6 +786,7 @@ export function DeviceInspector({ device, onClose, onEdit, onDelete }: DeviceIns
       { id: 'diagnostics' as const, label: 'Diagnostics', icon: ListTree },
       { id: 'terminal' as const, label: 'Terminal', icon: SquareTerminal },
       { id: 'snapshots' as const, label: 'Snapshots', icon: FileLock2 },
+      { id: 'configure' as const, label: 'Configure', icon: Settings2 },
       { id: 'activity' as const, label: 'Activity', icon: Activity },
     ],
     [],
@@ -723,10 +934,11 @@ export function DeviceInspector({ device, onClose, onEdit, onDelete }: DeviceIns
             capturing={capture.isPending || jobRunning}
           />
         ) : null}
+        {tab === 'configure' ? <ConfigureTab device={device} /> : null}
         {tab === 'activity' ? <ActivityTab device={device} /> : null}
       </div>
       <footer className="inspector__footer">
-        <ShieldCheck size={14} /> Structured writes blocked · Terminal is Direct Mode
+        <ShieldCheck size={14} /> Structured writes require explicit preview and apply · Terminal is Direct Mode
       </footer>
     </aside>
   );

@@ -1,7 +1,7 @@
 # Implementation status
 
-Last updated: 2026-08-08
-Current delivery target: phases 0–2
+Last updated: 2026-08-09
+Current delivery target: phases 0–3
 
 This is the status ledger, not a roadmap. Product intent and future scope remain
 in `network-automation-final-plan.md`.
@@ -29,7 +29,7 @@ that policy does and does not cover.
 | 0 — Repository and safety foundation | Implemented | Local Compose stack, file-secret bootstrap, PostgreSQL/Redis/RQ, migrations, health, authentication, encrypted credentials, sanitized logging, tests and operator docs | Passed automated and local-runtime acceptance |
 | 1 — First real device | Implemented; exit unblocked | Exact-target manual add, capability-gated Cisco IOS/IOS-XE structured read-only connection/facts/interfaces/running-config snapshots, generic authenticated connection test, jobs/events and operator UI | Automated acceptance passed. Exit no longer gated on physical hardware; record a GNS3/EVE-NG read-only run as the acceptance evidence |
 | 2 — Topology and terminal | Implemented; exit unblocked | Bounded multi-port SSH-aware discovery/approval; CDP/LLDP topology with saved layouts and unverified manual links; allowlisted show/ping/traceroute diagnostics; guarded Web PTY Direct Mode; Telnet console for lab devices | Automated acceptance passed. Exit no longer gated on physical hardware; record a GNS3/EVE-NG topology plus terminal/diagnostic run |
-| 3 — Safe configuration MVP | Not Implemented | None; all structured writes remain Level D | May now start; no longer held behind a physical-lab prerequisite |
+| 3 — Safe configuration MVP | Implemented; lab unverified | Cisco IOS/IOS-XE interface description and admin-state changes only, gated by `STRUCTURED_WRITES_ENABLED` (off by default); Change Plan preview with risk classification, per-device apply lock, apply, post-check, and assisted (inverse-command) rollback at Safety Level C | Automated acceptance passed (backend and frontend). Exit no longer gated on physical hardware, but no GNS3/EVE-NG or physical apply-and-rollback run has been recorded yet — see the verification record below |
 | 4–8 | Not Implemented | None | Future phases |
 
 ## Phase 0 checklist
@@ -60,7 +60,7 @@ that policy does and does not cover.
 | Read-only device inspector and event timeline | Implemented | React component and API tests; visual QA against running Compose stack |
 | Generic/unknown platform | Implemented; lab unverified | Authenticated SSH connection test only; other capabilities fail closed |
 | Fortinet FortiOS connection test and terminal | Implemented; lab unverified | Authenticated SSH connection test and Direct Mode terminal only; structured reads and writes fail closed |
-| Every structured device write capability | **Not Implemented** | Required current safety boundary; manual Direct Mode is outside structured Safety Levels A–D and can write/change hardware |
+| Every structured device write capability beyond Phase 3's scope | **Not Implemented** | Phase 3 (below) adds exactly two Cisco IOS/IOS-XE capabilities at Safety Level C; every other vendor and capability stays Not Implemented; manual Direct Mode is outside structured Safety Levels A–D and can write/change hardware |
 
 ## Phase 2 checklist
 
@@ -116,6 +116,9 @@ that policy does and does not cover.
 | 2026-08-08 | Migration chain on real PostgreSQL 17 | `postgres:17.10-alpine3.23` container; `pytest tests/integration/test_migrations.py` with `TEST_POSTGRES_URL`; complete backend suite with the same variable | **Verified on the dialect that actually failed.** 8 migration tests and 312 backend tests passed. The pre-fix migration was re-run against the same server and reproduced the reported failure exactly — `psycopg.errors.InFailedSqlTransaction: current transaction is aborted`, caused by dropping the non-existent `ck_devices_vendor` — confirming both the diagnosis and the fix. Downgrade past `20260806_0005` with a stored `fortinet_fortios` device correctly raises instead of truncating the column, and the device is left intact. |
 | 2026-08-08 | Compose runtime | `docker compose --env-file .env -f deploy/compose.yml up --build --detach --wait`; container `alembic current`/`check`; `ssh -V`; health routes | **Runtime verified.** Images built; `migrate` exited 0; PostgreSQL, Redis, API, worker and web all reported healthy; `GET /healthz` returned 200 and `GET /api/health` reported database, Redis and worker `ok`. The previously pending backend-image `ssh -V` smoke test now passes: **OpenSSH_9.2p1 Debian-2+deb12u10**, which both supports `RequiredRSASize` (OpenSSH 9.1+) and is the version that enforces the 1024-bit RSA host-key floor the legacy modes exist to lower. |
 | 2026-08-08 | Existing-database repair (`20260808_0007`) | The running Compose database, which was already stamped at head with the un-widened column; `alembic upgrade head`; `alembic check`; direct insert | **A defect only a real deployment revealed.** That database sat at head with `devices.vendor` still `VARCHAR(11)`, because it had been stamped past the failing `20260806_0005` rather than re-running it — so registering a Fortinet device would still have failed. `20260808_0007` reconciles both enum columns idempotently: `vendor` widened 11 → 16, exactly one canonical CHECK per column, `alembic check` clean, and an insert of `fortinet_fortios` / `very_old_ssh` (previously rejected) now succeeds. |
+| 2026-08-09 | Phase 3 safe configuration slice (backend/frontend) | `.venv/Scripts/python.exe -m ruff check --no-cache .`; `.venv/Scripts/pyright.exe`; `.venv/Scripts/python.exe -m pytest -q`; frontend `npm run typecheck`; `npm run lint`; `npm test -- --run`; `npm run build`; `docker compose --env-file .env.example -f deploy/compose.yml config --quiet` | **Automated verification passed.** Ruff and Pyright clean (0 errors/0 warnings). Backend 377 passed / 6 skipped (all opt-in: Batfish, lab Cisco read, lab structured-write apply/rollback, 3× `TEST_POSTGRES_URL`-gated migration tests). Frontend: TypeScript, ESLint, 153 tests (14 files), and the Vite production build all passed. Compose config valid. No device connection or external network operation was performed. |
+| 2026-08-09 | Phase 3 migration chain on real PostgreSQL 17 | `postgres:17.10-alpine3.23` throwaway container; `TEST_POSTGRES_URL=... pytest tests/integration/test_migrations.py -v`; same variable for the complete backend suite; `alembic upgrade head`; `alembic check` | **Deferred obligation from Task 1, now discharged.** All 9 migration tests passed, including the new `test_change_plan_tables_exist_after_upgrade`; complete backend suite 380 passed / 3 skipped (only the two opt-in real-device/Batfish tests remained gated). `alembic upgrade head` reached `20260809_0009` and `alembic check` reported no model drift. Container and its anonymous volume were removed after the run. |
+| 2026-08-09 | Phase 3 real-lab apply/rollback: **not run** | Opt-in test written at `backend/tests/lab/test_structured_writes_lab.py` (`RUN_LAB_TESTS=1` plus `LAB_DEVICE_*` and `LAB_TARGET_INTERFACE`); confirmed to skip cleanly with a clear reason when unset | **Not executed — no GNS3/EVE-NG or physical Cisco IOS/IOS-XE device was available in this environment.** Per this plan's Global Constraints (Approved Decision 3), this is recorded honestly rather than omitted: the apply-and-rollback pipeline has sanitized fixture/unit/integration coverage (including a fake-transport vertical slice exercising preview → apply → post-check → device-scoped lock) but has never been exercised against a real or virtual device. Cisco IOS/IOS-XE interface changes stay **Level C, lab unverified** — see `docs/CAPABILITY_MATRIX.md`. Running this test against a real lab device remains the outstanding acceptance step for Phase 3. |
 
 ## Known defects found and fixed on 2026-08-08
 
@@ -184,13 +187,26 @@ and an opt-in `TEST_POSTGRES_URL` test runs the chain against real PostgreSQL.
   from browser, fake-stream, serving-policy, or local Compose evidence. Manual
   Direct Mode is outside structured Safety Levels A–D and can write/change
   hardware.
-- No structured write capability is implemented.
-- Backup/restore acceptance is not implemented in phases 0–2.
+- Structured configuration writes are optional (`STRUCTURED_WRITES_ENABLED`,
+  off by default) and cover exactly two change types on Cisco IOS/IOS-XE
+  only: interface description and admin state. VLAN, static route, other
+  vendors, and any Safety Level above C remain Not Implemented. Rollback is
+  surgical (inverse commands from the rendered change), never a full
+  running-config replay. `ROLLBACK_FAILED` is a real, expected outcome of
+  Level C and requires manual device verification when it occurs — it is
+  not a bug class this phase attempts to eliminate. No re-validation is
+  performed immediately before push; a plan applies exactly what it showed
+  the operator at preview time, and post-check is the only safety net
+  against device state that drifted since then.
+- Backup/restore acceptance is not implemented in phases 0–3.
 - Broader LAN exposure has not been hardened or tested; normal deployment stays
   loopback-only.
 - Phase 2 automated implementation is complete. Its exit now needs a recorded
   GNS3/EVE-NG topology plus terminal/diagnostic run rather than physical
-  hardware. Phase 3 is no longer held behind that evidence.
+  hardware. Phase 3's own apply-and-rollback acceptance run is separately
+  outstanding (see the verification record above) — its opt-in test exists
+  and has automated fixture coverage, but has never been run against a real
+  or virtual device.
 - The Telnet console for lab devices has automated coverage only. It is
   cleartext with no host identity, is off unless `TELNET_ENABLED` is set, and is
   refused for any device not marked as a lab device. Credentials are never sent

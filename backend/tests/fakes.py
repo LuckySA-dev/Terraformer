@@ -48,6 +48,7 @@ class FakeTransport(NetworkTransport):
         self.closed = False
         self.close_calls = 0
         self.sent_commands: list[str] = []
+        self.sent_config_batches: list[list[str]] = []
 
     def open(self) -> None:
         if self.open_error is not None:
@@ -65,6 +66,17 @@ class FakeTransport(NetworkTransport):
         if command in self.command_errors:
             raise self.command_errors[command]
         return self.commands[command]
+
+    def send_config(self, commands: Sequence[str]) -> str:
+        batch = list(commands)
+        self.sent_config_batches.append(batch)
+        for command in batch:
+            self.sent_commands.append(command)
+            if self.command_error is not None:
+                raise self.command_error
+            if command in self.command_errors:
+                raise self.command_errors[command]
+        return "\n".join(self.commands.get(command, "") for command in batch)
 
 
 class FakeTransportFactory:

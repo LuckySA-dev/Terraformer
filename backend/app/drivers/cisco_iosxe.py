@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from ipaddress import ip_address
 from time import monotonic
+from typing import cast
 
+from app.changes.types import ChangeStepIntent, RenderedChange
 from app.core.errors import DriverCommandRejectedError
 from app.drivers.base import (
+    ConfigurableTransport,
     ConnectionParameters,
     ConnectionTestResult,
     DeviceDriver,
@@ -23,7 +26,7 @@ from app.drivers.base import (
 )
 from app.drivers.generic_readonly import translate_transport_error
 from app.drivers.ssh_errors import ConnectionPhase
-from app.models import SafetyLevel, Vendor
+from app.models import ChangeType, SafetyLevel, Vendor
 
 _INTERFACE_HEADER = re.compile(
     r"^(?P<name>\S+) is (?P<admin>administratively down|up|down), "
@@ -59,9 +62,14 @@ class CiscoIOSXEDriver(DeviceDriver):
                     DriverCapability.MAC,
                     DriverCapability.PING,
                     DriverCapability.TRACEROUTE,
+                    DriverCapability.RENDER,
+                    DriverCapability.VALIDATE,
+                    DriverCapability.APPLY,
+                    DriverCapability.POST_CHECK,
+                    DriverCapability.ROLLBACK,
                 }
             ),
-            safety_level=SafetyLevel.READ_ONLY,
+            safety_level=SafetyLevel.BEST_EFFORT,
         )
 
     @property
@@ -128,6 +136,64 @@ class CiscoIOSXEDriver(DeviceDriver):
         if not output.strip():
             raise ValueError("The device returned an empty running configuration")
         return output.replace("\r\n", "\n")
+
+    _DESCRIPTION_MAX_LENGTH = 240
+
+    def render_change(self, step: ChangeStepIntent, current: InterfaceFacts) -> RenderedChange:
+        if step.change_type is ChangeType.INTERFACE_DESCRIPTION:
+            inverse_value = current.description
+            inverse = (
+                (f"interface {step.target}", f"description {inverse_value}")
+                if inverse_value
+                else (f"interface {step.target}", "no description")
+            )
+            return RenderedChange(
+                commands=(f"interface {step.target}", f"description {step.desired_value}"),
+                inverse_commands=inverse,
+            )
+        if step.change_type is ChangeType.INTERFACE_ADMIN_STATE:
+            desired_up = step.desired_value == "up"
+            current_up = bool(current.admin_up)
+            return RenderedChange(
+                commands=(
+                    f"interface {step.target}",
+                    "no shutdown" if desired_up else "shutdown",
+                ),
+                inverse_commands=(
+                    f"interface {step.target}",
+                    "no shutdown" if current_up else "shutdown",
+                ),
+            )
+        self._unsupported(DriverCapability.RENDER)
+
+    def validate_change(self, step: ChangeStepIntent, current: InterfaceFacts) -> list[str]:
+        del current
+        issues: list[str] = []
+        if step.change_type is ChangeType.INTERFACE_DESCRIPTION:
+            if len(step.desired_value) > self._DESCRIPTION_MAX_LENGTH:
+                issues.append(
+                    f"description must be {self._DESCRIPTION_MAX_LENGTH} characters or fewer"
+                )
+        elif step.change_type is ChangeType.INTERFACE_ADMIN_STATE:
+            if step.desired_value not in ("up", "down"):
+                issues.append("admin state must be 'up' or 'down'")
+        return issues
+
+    def apply_configuration(self, parameters: ConnectionParameters, commands: list[str]) -> None:
+        self._config(parameters, commands)
+
+    def rollback(self, parameters: ConnectionParameters, commands: list[str]) -> None:
+        self._config(parameters, commands)
+
+    def _config(self, parameters: ConnectionParameters, commands: Sequence[str]) -> None:
+        with self._session(parameters) as transport:
+            # _session()'s transport is typed as the shared NetworkTransport
+            # (no send_config -- see ConfigurableTransport's docstring), but
+            # this driver's own transport_factory always produces one that
+            # supports it: this method is only reachable through apply_
+            # configuration/rollback, gated by this driver's own APPLY/
+            # ROLLBACK capability declaration, which only Cisco advertises.
+            cast(ConfigurableTransport, transport).send_config(commands)
 
     def run_diagnostic(
         self,

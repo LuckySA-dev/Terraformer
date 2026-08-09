@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Sequence
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any
@@ -62,6 +63,17 @@ class ScrapliTransport:
 
     def send_command(self, command: str) -> str:
         response = self._connection.send_command(command)
+        if response.failed:
+            raise DriverCommandRejectedError()
+        return str(response.result)
+
+    def send_config(self, commands: Sequence[str]) -> str:
+        # send_configs (not send_command) enters/exits config mode itself and
+        # reports per-line failure; stop_on_failed=True halts the batch on
+        # the first rejected line rather than pushing the rest of a partial
+        # change (confirmed against installed scrapli's IOSXEDriver.send_configs
+        # signature: stop_on_failed defaults to False, so this must be explicit).
+        response = self._connection.send_configs(list(commands), stop_on_failed=True)
         if response.failed:
             raise DriverCommandRejectedError()
         return str(response.result)

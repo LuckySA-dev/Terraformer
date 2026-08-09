@@ -1677,7 +1677,6 @@ git commit -m "feat: add change plan preview service and API"
 
 **Files:**
 - Modify: `backend/app/repositories/jobs.py`
-- Modify: `backend/app/services/jobs.py`
 - Modify: `backend/app/changes/service.py`
 - Modify: `backend/app/schemas/changes.py`
 - Modify: `backend/app/jobs/tasks.py`
@@ -1758,46 +1757,13 @@ cd backend && .venv/Scripts/python.exe -m pytest tests/unit/test_jobs_device_sco
 ```
 Expected: both pass.
 
-- [ ] **Step 5: Extend JobService with device-scoped exclusivity**
+- [ ] **Step 5: (Revised during execution — see note) Do NOT modify JobService**
 
-In `backend/app/services/jobs.py`, add a second exclusivity table alongside the existing one and branch on it in `enqueue`:
+Original plan called for a second exclusivity table in `app/services/jobs.py` raising `ConflictError` for a device-lock conflict. Caught during Task 1 while adding `ChangePlanDeviceLockedError`: `ConflictError.code` is a **fixed class attribute** (`"conflict"`), not customizable per raise — reusing it would silently produce `code: "conflict"`, not the `change_plan_device_locked` this plan's own Task 6 test (Step 6) and spec §8.2 both require. Making `JobService` raise a typed changes-domain error would also couple a shared, cross-domain service (already used by discovery/analysis/diagnostics/refresh/capture) to one specific domain's error type, which nothing else in this codebase does.
 
-```python
-_EXCLUSIVE_JOB_TYPES = {
-    JobType.DISCOVER_SSH: "A discovery job is already active",
-    JobType.ANALYZE_NETWORK: "An analysis job is already active",
-}
+Corrected design: `app/services/jobs.py` is **not modified at all** in this task. The device-lock check moves to `app/api/changes.py` (Step 9 below), which already owns the changes domain and already imports its errors. This also removes the need for a `_DEVICE_EXCLUSIVE_JOB_TYPES` table — with only one device-exclusive job type, a direct check is simpler than a lookup table for one entry. `JobRepository.has_active`'s new `device_id` parameter (Steps 1–4 above) is still required — it's what the API-layer check calls.
 
-# Job types that must not run concurrently with themselves ON THE SAME DEVICE,
-# but may run in parallel across different devices -- unlike the global table
-# above, applying a change to device A must never block device B.
-_DEVICE_EXCLUSIVE_JOB_TYPES = {
-    JobType.APPLY_CHANGE: "A change is already being applied to this device",
-}
-```
-
-Update `enqueue`:
-
-```python
-    def enqueue(
-        self,
-        *,
-        job_type: JobType,
-        device_id: UUID | None = None,
-        input_data: dict[str, object] | None = None,
-    ) -> Job:
-        if job_type in _EXCLUSIVE_JOB_TYPES and self._jobs.has_active(job_type):
-            raise ConflictError(_EXCLUSIVE_JOB_TYPES[job_type])
-        if (
-            job_type in _DEVICE_EXCLUSIVE_JOB_TYPES
-            and device_id is not None
-            and self._jobs.has_active(job_type, device_id=device_id)
-        ):
-            raise ConflictError(_DEVICE_EXCLUSIVE_JOB_TYPES[job_type])
-        if device_id is not None:
-            self._devices.get(device_id)
-        job = self._jobs.add(
-            job_type=job_type,
+Skip this step's original file changes entirely and continue to Step 6.
             device_id=device_id,
             input_data=input_data,
         )
@@ -2060,7 +2026,9 @@ class ChangeApplyJobInput(APIModel):
 Add to `backend/app/api/changes.py`:
 
 ```python
+from app.core.errors import ChangePlanDeviceLockedError, StructuredWritesDisabledError
 from app.models import JobType
+from app.repositories.jobs import JobRepository
 from app.schemas.changes import ChangeApplyJobInput, ChangePlanRequest, ChangePlanView
 from app.schemas.jobs import JobView
 from app.services.jobs import JobService
@@ -2073,26 +2041,13 @@ def apply_change_plan(
     session: SessionDependency,
     container: ContainerDependency,
 ):
-    _service(session, container).get(change_plan_id)  # 404s early if the plan doesn't exist
-    job_input = ChangeApplyJobInput(change_plan_id=change_plan_id)
-    return JobService(session, container.queue).enqueue(
-        job_type=JobType.APPLY_CHANGE,
-        device_id=_service(session, container).get(change_plan_id).device_id,
-        input_data=job_input.model_dump(mode="json"),
-    )
-```
-
-(Two `_service(...).get(change_plan_id)` calls above are redundant — simplify to fetch the plan once and reuse it: replace the body with)
-
-```python
-@router.post("/{change_plan_id}/apply", response_model=JobView, status_code=status.HTTP_202_ACCEPTED)
-def apply_change_plan(
-    change_plan_id: UUID,
-    _auth: Authenticated,
-    session: SessionDependency,
-    container: ContainerDependency,
-):
     plan = _service(session, container).get(change_plan_id)
+    # The device-scoped lock check lives here, not in JobService: it needs
+    # the typed ChangePlanDeviceLockedError (a changes-domain error), and
+    # JobService is shared across discovery/analysis/diagnostics/refresh/
+    # capture and stays domain-agnostic on purpose.
+    if JobRepository(session).has_active(JobType.APPLY_CHANGE, device_id=plan.device_id):
+        raise ChangePlanDeviceLockedError()
     job_input = ChangeApplyJobInput(change_plan_id=change_plan_id)
     return JobService(session, container.queue).enqueue(
         job_type=JobType.APPLY_CHANGE,
@@ -2709,6 +2664,6 @@ having exercised it against a device."
 
 **Placeholder scan:** an earlier draft of Task 6 Step 8 showed an intermediate stub (`pass` with a comment) before the real `apply()` body — removed during self-review since a worker reading that step in isolation could mistake it for something to keep. Every code step now shows only the complete, final content. No `TBD`/`TODO`/"add appropriate error handling"-style placeholders found elsewhere.
 
-**Type consistency:** `ChangeStepIntent(change_type, target, desired_value)` (Task 2) is used identically in Task 3 (driver methods), Task 5 (`ChangeService.preview`), and Task 8 (lab test). `RenderedChange(commands, inverse_commands)` likewise. `ChangeRepository.get(plan_id, for_update=False)` (Task 4) is called with `for_update=True` in Task 6's `apply()` — verified consistent, since Task 4 declared `for_update` as a keyword parameter apply can pass. `JobRepository.has_active(job_type, *, device_id=None)` (Task 6) matches both call sites in `JobService.enqueue` (global check omits `device_id`, device-scoped check passes it).
+**Type consistency:** `ChangeStepIntent(change_type, target, desired_value)` (Task 2) is used identically in Task 3 (driver methods), Task 5 (`ChangeService.preview`), and Task 8 (lab test). `RenderedChange(commands, inverse_commands)` likewise. `ChangeRepository.get(plan_id, for_update=False)` (Task 4) is called with `for_update=True` in Task 6's `apply()` — verified consistent, since Task 4 declared `for_update` as a keyword parameter apply can pass. `JobRepository.has_active(job_type, *, device_id=None)` (Task 6) matches its call site in `app/api/changes.py`'s `apply_change_plan` (passes `device_id`); `JobService.enqueue`'s own global `_EXCLUSIVE_JOB_TYPES` check (discovery/analysis) is untouched and still calls `has_active` with no `device_id`, which the new optional parameter doesn't break.
 
 **Known limitation surfaced, not hidden:** Task 6 Step 8 explicitly documents that this implementation cannot yet distinguish "apply never reached the device" from "apply reached the device and failed" as cleanly as spec §8.2's table implies — both currently attempt rollback. This is flagged inline in the plan and pointed at Task 8's documentation step rather than silently shipping a spec/implementation mismatch.

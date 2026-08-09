@@ -521,6 +521,12 @@ function ConfigureTab({ device }: { device: Device }) {
   const history = useQuery({
     queryKey: ['change-plans', device.id],
     queryFn: () => api.listChangePlans(device.id),
+    retry: false,
+    // Apply runs in the background worker, so the status a plan lands on
+    // arrives after the request that queued it. Poll only while one is
+    // actually in flight.
+    refetchInterval: (query) =>
+      query.state.data?.some((item) => item.status === 'applying') === true ? 1_000 : false,
   });
   const preview = useMutation({
     mutationFn: () =>
@@ -647,8 +653,26 @@ function ConfigureTab({ device }: { device: Device }) {
           >
             <ShieldCheck size={14} /> Apply
           </Button>
+          {apply.error === null ? null : (
+            <div className="form-error" role="alert">
+              {apply.error.message}
+            </div>
+          )}
+          {apply.isSuccess ? (
+            <div className="mini-result mini-result--success" role="status">
+              <Check size={14} />
+              <span>Apply queued. The status below updates when the worker finishes.</span>
+            </div>
+          ) : null}
         </div>
       )}
+      {history.data?.some((item) => item.status === 'rollback_failed') === true ? (
+        <InlineNotice tone="danger" title="A rollback did not complete">
+          One of the changes below applied, failed its post-check, and could not be reversed. The
+          device is in an unknown state for that interface — verify it directly before making
+          another change.
+        </InlineNotice>
+      ) : null}
       <div>
         <strong>Past changes</strong>
         {history.data === undefined || history.data.length === 0 ? (
@@ -664,6 +688,7 @@ function ConfigureTab({ device }: { device: Device }) {
               <div key={item.id} className="configure-history__item">
                 <Badge tone={changePlanStatusTone[item.status]}>{item.status}</Badge>
                 <span>{item.steps[0]?.target}</span>
+                {item.failure_code === null ? null : <small className="mono">{item.failure_code}</small>}
                 <small>{formatDateTime(item.created_at)}</small>
               </div>
             ))}

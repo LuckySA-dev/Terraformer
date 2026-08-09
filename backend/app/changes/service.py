@@ -17,6 +17,7 @@ from app.core.config import Settings
 from app.core.errors import (
     AppError,
     ChangePlanNotDraftError,
+    ChangeValidationError,
     ChangeVendorUnsupportedError,
     NotFoundError,
 )
@@ -80,7 +81,9 @@ class ChangeService:
         rendered = driver.render_change(step, current)
         issues = driver.validate_change(step, current)
         if issues:
-            raise AppError("The rendered change failed validation", details={"issues": issues})
+            # 422, not the bare AppError's 500: these are all rejections of
+            # what the operator typed, not a server fault.
+            raise ChangeValidationError(details={"issues": issues})
 
         pre_snapshot = self._snapshots.capture(device.id)
 

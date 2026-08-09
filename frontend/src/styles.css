@@ -2969,7 +2969,12 @@ p {
 }
 
 .configure-history__item small {
-  margin-left: auto;
   color: var(--muted-2);
   font-family: "DM Mono", monospace;
+}
+
+/* Only the trailing timestamp is pushed right; a failure code, when present,
+   stays next to the status it explains. */
+.configure-history__item small:last-child {
+  margin-left: auto;
 }

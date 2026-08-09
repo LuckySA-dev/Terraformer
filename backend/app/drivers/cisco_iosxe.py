@@ -174,6 +174,18 @@ class CiscoIOSXEDriver(DeviceDriver):
                 issues.append(
                     f"description must be {self._DESCRIPTION_MAX_LENGTH} characters or fewer"
                 )
+            # A description is interpolated into one config line, stored
+            # newline-joined with the rest of the batch, and split back into
+            # lines at apply time. Any control character therefore smuggles an
+            # extra command into a batch the operator vetted at preview -- the
+            # one input on this path that is free-form text, so the one that
+            # has to be constrained to a single printable line.
+            if not step.desired_value.isprintable():
+                issues.append("description must be a single line of printable characters")
+            elif not step.desired_value.strip():
+                issues.append(
+                    "description must not be empty; clear it with a separate change instead"
+                )
         elif step.change_type is ChangeType.INTERFACE_ADMIN_STATE:
             if step.desired_value not in ("up", "down"):
                 issues.append("admin state must be 'up' or 'down'")

@@ -207,6 +207,33 @@ def test_cisco_driver_validate_change_accepts_a_valid_description() -> None:
     assert driver.validate_change(step, current) == []
 
 
+def test_cisco_driver_validate_change_rejects_a_description_carrying_extra_commands() -> None:
+    """A newline in the description would become a second config command.
+
+    render_change interpolates the value into one line, the plan stores the
+    batch newline-joined, and apply splits it back into lines -- so an
+    embedded newline smuggles an arbitrary command past the vetted change
+    types the whole Level C pipeline is built on.
+    """
+    driver = CiscoIOSXEDriver(FakeTransportFactory({}))
+    current = InterfaceFacts(name="GigabitEthernet1", description=None, admin_up=True, oper_up=True)
+    step = ChangeStepIntent(ChangeType.INTERFACE_DESCRIPTION, "GigabitEthernet1", "ok\nshutdown")
+
+    assert driver.validate_change(step, current) == [
+        "description must be a single line of printable characters"
+    ]
+
+
+def test_cisco_driver_validate_change_rejects_an_empty_description() -> None:
+    driver = CiscoIOSXEDriver(FakeTransportFactory({}))
+    current = InterfaceFacts(name="GigabitEthernet1", description=None, admin_up=True, oper_up=True)
+    step = ChangeStepIntent(ChangeType.INTERFACE_DESCRIPTION, "GigabitEthernet1", "   ")
+
+    assert driver.validate_change(step, current) == [
+        "description must not be empty; clear it with a separate change instead"
+    ]
+
+
 def test_cisco_driver_apply_configuration_sends_a_config_mode_batch() -> None:
     factory = FakeTransportFactory({})
     driver = CiscoIOSXEDriver(factory)

@@ -93,6 +93,33 @@ def test_preview_rejects_non_cisco_vendor(
     assert response.json()["error"]["code"] == "change_vendor_unsupported"
 
 
+def test_preview_refuses_a_description_that_smuggles_a_second_command(
+    authenticated_client: TestClient,
+    credential_profile: dict[str, object],
+    container: ApplicationContainer,
+) -> None:
+    """The whole Level C promise is that only vetted change types reach a
+    device. A newline in the free-form description would ride through render,
+    persist newline-joined, and split back into an extra config command at
+    apply -- so it has to be refused before any plan exists."""
+    container.settings.structured_writes_enabled = True
+    device_id = _register_cisco(authenticated_client, str(credential_profile["id"]), "192.0.2.17")
+
+    response = authenticated_client.post(
+        "/api/change-plans",
+        json={
+            "device_id": device_id,
+            "change_type": "interface_description",
+            "target": "GigabitEthernet1",
+            "desired_value": "looks-fine\nshutdown",
+        },
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["code"] == "change_validation_failed"
+    assert authenticated_client.get(f"/api/change-plans?device_id={device_id}").json() == []
+
+
 def test_every_endpoint_fails_closed_when_structured_writes_disabled(
     authenticated_client: TestClient,
     container: ApplicationContainer,

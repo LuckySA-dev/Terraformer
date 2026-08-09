@@ -421,4 +421,107 @@ describe('DeviceInspector API contract and safety states', () => {
 
     expect(api.applyChangePlan).toHaveBeenCalledWith(plan.id);
   });
+
+  it('surfaces a rejected apply instead of failing silently', async () => {
+    const user = userEvent.setup();
+    const ciscoDevice: Device = {
+      ...device,
+      vendor: 'cisco_iosxe',
+      capabilities: [{ name: 'apply', supported: true, safety_level: 'C' }],
+    };
+    vi.mocked(api.interfaces).mockResolvedValue([
+      {
+        id: '1ddbdac3-5c7d-44db-8173-a2d61491bb34',
+        device_id: ciscoDevice.id,
+        name: 'GigabitEthernet1',
+        description: null,
+        admin_up: true,
+        oper_up: true,
+        mac_address: null,
+        ipv4_addresses: [],
+        speed_mbps: 1000,
+        created_at: '2026-07-11T09:00:00Z',
+        updated_at: '2026-07-11T09:00:00Z',
+      },
+    ]);
+    vi.mocked(api.previewChange).mockResolvedValue({
+      id: 'b6f2b1f0-df32-4a9e-9df0-6e6f8a2b6a11',
+      device_id: ciscoDevice.id,
+      status: 'draft',
+      safety_level: 'C',
+      risk: 'low',
+      failure_code: null,
+      applied_at: null,
+      steps: [
+        {
+          id: 'b0e6a1ab-df19-4a34-9a5f-df6a9c0e6a10',
+          change_type: 'interface_description',
+          target: 'GigabitEthernet1',
+          previous_value: null,
+          desired_value: 'x',
+          rendered_commands: 'interface GigabitEthernet1\n description x',
+          inverse_commands: 'interface GigabitEthernet1\n no description',
+        },
+      ],
+      created_at: '2026-07-12T03:00:00Z',
+      updated_at: '2026-07-12T03:00:00Z',
+    });
+    vi.mocked(api.applyChangePlan).mockRejectedValue(
+      new Error('Another change is already being applied to this device'),
+    );
+    renderInspector(ciscoDevice);
+
+    await user.click(screen.getByRole('button', { name: 'Configure' }));
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Interface' }),
+      'GigabitEthernet1',
+    );
+    await user.type(screen.getByRole('textbox', { name: 'New description' }), 'x');
+    await user.click(screen.getByRole('button', { name: 'Preview' }));
+    await user.click(await screen.findByRole('button', { name: 'Apply' }));
+
+    expect(
+      await screen.findByText('Another change is already being applied to this device'),
+    ).toBeVisible();
+  });
+
+  it('warns loudly when a past change could not be rolled back', async () => {
+    const user = userEvent.setup();
+    const ciscoDevice: Device = {
+      ...device,
+      vendor: 'cisco_iosxe',
+      capabilities: [{ name: 'apply', supported: true, safety_level: 'C' }],
+    };
+    vi.mocked(api.listChangePlans).mockResolvedValue([
+      {
+        id: 'c1a2b3c4-df32-4a9e-9df0-6e6f8a2b6a99',
+        device_id: ciscoDevice.id,
+        status: 'rollback_failed',
+        safety_level: 'C',
+        risk: 'high',
+        failure_code: 'device_command_rejected',
+        applied_at: null,
+        steps: [
+          {
+            id: 'd0e6a1ab-df19-4a34-9a5f-df6a9c0e6a77',
+            change_type: 'interface_admin_state',
+            target: 'GigabitEthernet2',
+            previous_value: 'up',
+            desired_value: 'down',
+            rendered_commands: 'interface GigabitEthernet2\n shutdown',
+            inverse_commands: 'interface GigabitEthernet2\n no shutdown',
+          },
+        ],
+        created_at: '2026-07-12T03:00:00Z',
+        updated_at: '2026-07-12T03:05:00Z',
+      },
+    ]);
+    renderInspector(ciscoDevice);
+
+    await user.click(screen.getByRole('button', { name: 'Configure' }));
+
+    expect(await screen.findByText('A rollback did not complete')).toBeVisible();
+    expect(screen.getByText(/verify it directly before making another change/)).toBeVisible();
+    expect(screen.getByText('device_command_rejected')).toBeVisible();
+  });
 });

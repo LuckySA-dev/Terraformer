@@ -215,6 +215,12 @@ class ChangeVendorUnsupportedError(AppError):
     default_message = "This device's vendor does not support structured changes yet"
 
 
+class ChangeValidationError(AppError):
+    code = "change_validation_failed"
+    status_code = 422
+    default_message = "The requested change failed driver validation"
+
+
 class ChangePlanNotDraftError(ConflictError):
     code = "change_plan_not_draft"
     default_message = "This change plan is not in draft status and cannot be applied"

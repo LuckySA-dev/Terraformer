@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { api } from '../src/api/network';
 import { DeviceInspector } from '../src/features/inventory/DeviceInspector';
-import type { ConfigSnapshot, Device, Job } from '../src/types/api';
+import type { ChangePlan, ConfigSnapshot, Device, Job } from '../src/types/api';
 
 vi.mock('../src/api/network', () => ({
   api: {
@@ -19,6 +19,9 @@ vi.mock('../src/api/network', () => ({
     captureSnapshot: vi.fn(),
     runDiagnostic: vi.fn(),
     job: vi.fn(),
+    previewChange: vi.fn(),
+    listChangePlans: vi.fn(),
+    applyChangePlan: vi.fn(),
   },
 }));
 
@@ -93,6 +96,7 @@ describe('DeviceInspector API contract and safety states', () => {
     vi.mocked(api.neighbors).mockResolvedValue([]);
     vi.mocked(api.snapshots).mockResolvedValue([]);
     vi.mocked(api.events).mockResolvedValue([]);
+    vi.mocked(api.listChangePlans).mockResolvedValue([]);
   });
 
   it('renders raw observed uptime, capability arrays, and honest Generic driver scope', async () => {
@@ -319,5 +323,102 @@ describe('DeviceInspector API contract and safety states', () => {
     await user.click(run);
 
     expect(api.runDiagnostic).toHaveBeenCalledWith(device.id, 'ping', '198.51.100.10');
+  });
+
+  it('hides structured configuration for drivers without apply capability', async () => {
+    const user = userEvent.setup();
+    renderInspector();
+
+    await user.click(screen.getByRole('button', { name: 'Configure' }));
+
+    expect(
+      await screen.findByRole('heading', { name: 'Structured configuration unavailable' }),
+    ).toBeVisible();
+    expect(api.previewChange).not.toHaveBeenCalled();
+  });
+
+  it('previews and applies a structured change for a capable driver', async () => {
+    const user = userEvent.setup();
+    const ciscoDevice: Device = {
+      ...device,
+      vendor: 'cisco_iosxe',
+      capabilities: [{ name: 'apply', supported: true, safety_level: 'C' }],
+    };
+    vi.mocked(api.interfaces).mockResolvedValue([
+      {
+        id: '1ddbdac3-5c7d-44db-8173-a2d61491bb34',
+        device_id: ciscoDevice.id,
+        name: 'GigabitEthernet1',
+        description: null,
+        admin_up: true,
+        oper_up: true,
+        mac_address: null,
+        ipv4_addresses: [],
+        speed_mbps: 1000,
+        created_at: '2026-07-11T09:00:00Z',
+        updated_at: '2026-07-11T09:00:00Z',
+      },
+    ]);
+    const plan: ChangePlan = {
+      id: 'b6f2b1f0-df32-4a9e-9df0-6e6f8a2b6a11',
+      device_id: ciscoDevice.id,
+      status: 'draft',
+      safety_level: 'C',
+      risk: 'low',
+      failure_code: null,
+      applied_at: null,
+      steps: [
+        {
+          id: 'b0e6a1ab-df19-4a34-9a5f-df6a9c0e6a10',
+          change_type: 'interface_description',
+          target: 'GigabitEthernet1',
+          previous_value: null,
+          desired_value: 'uplink-to-lab-core',
+          rendered_commands: 'interface GigabitEthernet1\n description uplink-to-lab-core',
+          inverse_commands: 'interface GigabitEthernet1\n no description',
+        },
+      ],
+      created_at: '2026-07-12T03:00:00Z',
+      updated_at: '2026-07-12T03:00:00Z',
+    };
+    vi.mocked(api.previewChange).mockResolvedValue(plan);
+    vi.mocked(api.applyChangePlan).mockResolvedValue({
+      id: 'ea7c9a1f-df6b-4c9e-9f3e-df6a9c0e6a12',
+      type: 'apply_change',
+      state: 'queued',
+      device_id: ciscoDevice.id,
+      result: null,
+      error_code: null,
+      error_message: null,
+      created_at: '2026-07-12T03:00:00Z',
+      updated_at: '2026-07-12T03:00:00Z',
+      started_at: null,
+      finished_at: null,
+    });
+    renderInspector(ciscoDevice);
+
+    await user.click(screen.getByRole('button', { name: 'Configure' }));
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Interface' }),
+      'GigabitEthernet1',
+    );
+    await user.type(
+      screen.getByRole('textbox', { name: 'New description' }),
+      'uplink-to-lab-core',
+    );
+    await user.click(screen.getByRole('button', { name: 'Preview' }));
+
+    expect(api.previewChange).toHaveBeenCalledWith({
+      device_id: ciscoDevice.id,
+      change_type: 'interface_description',
+      target: 'GigabitEthernet1',
+      desired_value: 'uplink-to-lab-core',
+    });
+    expect(await screen.findByText('low risk')).toBeVisible();
+    expect(screen.getByText(/description uplink-to-lab-core/)).toBeVisible();
+
+    await user.click(screen.getByRole('button', { name: 'Apply' }));
+
+    expect(api.applyChangePlan).toHaveBeenCalledWith(plan.id);
   });
 });

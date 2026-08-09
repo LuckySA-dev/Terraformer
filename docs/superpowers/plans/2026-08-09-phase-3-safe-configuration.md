@@ -1679,6 +1679,7 @@ git commit -m "feat: add change plan preview service and API"
 - Modify: `backend/app/repositories/jobs.py`
 - Modify: `backend/app/services/jobs.py`
 - Modify: `backend/app/changes/service.py`
+- Modify: `backend/app/schemas/changes.py`
 - Modify: `backend/app/jobs/tasks.py`
 - Modify: `backend/app/api/changes.py`
 - Modify: `backend/tests/integration/test_changes_vertical_slice.py`

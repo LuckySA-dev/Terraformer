@@ -1,6 +1,6 @@
 # Capability matrix
 
-Last updated: 2026-08-08
+Last updated: 2026-08-11
 Scope: phases 0–2, plus read-only Batfish analysis
 
 ## Status definitions
@@ -105,21 +105,27 @@ from writing to or changing hardware.
 
 | Access path | Status | Vendor scope | Safety and evidence boundary |
 |---|---|---|---|
-| Web SSH terminal Direct Mode | **Implemented, lab unverified** | Registered devices with an available SSH transport | **Automated verification passed; hardware validation pending.** Can write or otherwise change hardware; separate from drivers and structured Safety Levels A–D. Authenticated, same-origin, warning-gated, and resource-bounded; commands/output are never audit payloads. |
+| Web SSH terminal Direct Mode | **Implemented; lab verified for Cisco Catalyst 2960/2960X/3650 and ISR 2911 under Cisco Legacy mode, otherwise lab unverified** | Registered devices with an available SSH transport | **Automated verification passed; physical lab verified for the four device categories above (2026-08-11), hardware validation pending for all other vendors/models/modes.** Can write or otherwise change hardware; separate from drivers and structured Safety Levels A–D. Authenticated, same-origin, warning-gated, and resource-bounded; commands/output are never audit payloads. |
 | Manual USB Console / USB Direct Mode | **Implemented, lab unverified** | Vendor-neutral manual serial access | **Automated verification passed; hardware validation pending.** Can write, modify, restart, or erase hardware; bypasses backend and structured safety controls. Automated fake-stream, privacy, lifecycle, serving-policy, type, lint, and build checks passed on 2026-07-20; no vendor/device support claim. |
 
-Cisco and Fortinet legacy/very-old SSH terminal and topology claims remain **Implemented, lab
-unverified** until separately authorized hardware validation is recorded. Very Old SSH mode (`very_old_ssh`) requires all three compatibility kill switches (`SSH_LEGACY_ENABLED`, `SSH_GROUP1_ENABLED`, `SSH_VERY_OLD_ENABLED`) to be enabled simultaneously.
+Cisco Legacy SSH terminal is **Physical lab verified** for Catalyst 2960,
+2960X, 3650, and ISR 2911 (see the record below). Fortinet legacy/very-old SSH
+terminal, Cisco very-old SSH terminal, and topology claims remain **Implemented,
+lab unverified** until separately authorized hardware validation is recorded.
+Very Old SSH mode (`very_old_ssh`) requires all three compatibility kill
+switches (`SSH_LEGACY_ENABLED`, `SSH_GROUP1_ENABLED`, `SSH_VERY_OLD_ENABLED`)
+to be enabled simultaneously.
 
 ### Direct Mode hardware evidence
 
-No authorized hardware validation has been recorded. This table must remain
-empty until an explicitly approved real-adapter session is completed. Entries
-may contain only the metadata allowed by `lab-test-guide.md`; never serial-
-session content.
+USB Direct Mode has no authorized hardware validation recorded; that portion of
+this table must remain empty until an explicitly approved real-adapter session
+is completed. Entries may contain only the metadata allowed by
+`lab-test-guide.md`; never serial-session content.
 
 | Date | Approver | Browser/version | Adapter/transport type | Device category | Application commit | Requested compatibility mode | Non-command validation-step descriptions | Pass/fail outcome |
 |---|---|---|---|---|---|---|---|---|
+| 2026-08-11 | LuckySA (Owner) | Chrome 151.0.0.0 | SSH | Cisco Catalyst 2960, 2960X, 3650; Cisco ISR 2911 | 48b776d | Cisco Legacy | Connection test, structured facts/interface/neighbor read, and Direct Mode terminal open, connect, and disconnect lifecycle completed via the UI for each device category | Pass |
 
 ## Structured write capabilities
 

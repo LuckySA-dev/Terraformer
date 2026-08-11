@@ -17,6 +17,16 @@ export interface PreparedTerminalInput {
 
 const outputNewline = { cr: '\r', lf: '\n', crlf: '\r\n' } as const;
 
+// A control byte alone only means "not printable text" for a genuine single
+// keystroke (Backspace, a Ctrl+letter chord, or an escape-prefixed arrow/function
+// key). The longest standard xterm CSI encoding — a modified function key like
+// Shift+F5 (`\x1b[15;2~`) — is 8 characters. A short input that's entirely a
+// control/escape sequence is indistinguishable from a real keystroke, since
+// there's no surrounding text for a byte to hide in; the danger this guards
+// against is a control byte embedded inside longer pasted text, which this
+// length gate still catches.
+const MAX_SINGLE_KEYSTROKE_CHARACTERS = 8;
+
 export function prepareTerminalInput(
   input: string,
   policy: TerminalInputPolicy,
@@ -42,7 +52,11 @@ export function prepareTerminalInput(
     byteCount,
     containsUnsafeControl,
     requiresConfirmation: policy.confirmMultiline
-      && (lineCount > 1 || characterCount > 1_024 || containsUnsafeControl),
+      && (
+        lineCount > 1
+        || characterCount > 1_024
+        || (containsUnsafeControl && characterCount > MAX_SINGLE_KEYSTROKE_CHARACTERS)
+      ),
   };
 }
 

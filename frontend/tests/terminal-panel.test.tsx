@@ -185,6 +185,27 @@ describe('Direct Mode terminal', () => {
     ]);
   });
 
+  it('sends a standalone Backspace keystroke immediately without a confirmation banner', async () => {
+    const user = userEvent.setup();
+    render(<TerminalPanel deviceId="2ad0db14-5a87-4147-a4e7-c98f88322464" />);
+    await user.click(screen.getByRole('button', { name: 'I understand — open Direct Mode' }));
+    const socket = FakeWebSocket.instances[0];
+    if (socket === undefined) throw new Error('Expected an SSH WebSocket.');
+    socket.readyState = FakeWebSocket.OPEN;
+    socket.onopen?.();
+    act(() => socket.onmessage?.({
+      data: JSON.stringify({ type: 'status', status: 'connected' }),
+    }));
+
+    act(() => terminalMocks.instances[0]?.emitInput(String.fromCodePoint(0x7f)));
+
+    expect(screen.queryByText(/Review before sending/)).not.toBeInTheDocument();
+    expect(socket.sent).toEqual([
+      JSON.stringify({ type: 'accept_direct_mode', group1_risk_acknowledged: false, very_old_risk_acknowledged: false, telnet_cleartext_acknowledged: false }),
+      JSON.stringify({ type: 'input', data: String.fromCodePoint(0x7f) }),
+    ]);
+  });
+
   it('requires a fresh Group1 risk acknowledgment and sends it only on open', async () => {
     const user = userEvent.setup();
     render(

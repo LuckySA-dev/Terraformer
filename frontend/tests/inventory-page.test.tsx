@@ -152,11 +152,36 @@ describe('InventoryPage device inspector collapse', () => {
     expect(await screen.findByRole('complementary', { name: 'Edge router inspector' })).toBeVisible();
 
     await user.click(screen.getByRole('button', { name: 'Collapse inspector' }));
-    expect(screen.queryByRole('complementary', { name: 'Edge router inspector' })).not.toBeInTheDocument();
+    // Hidden via CSS, not unmounted -- see the state-preservation test below
+    // for why. jsdom doesn't compute an external stylesheet's display: none,
+    // so assert the collapsed class directly instead of DOM absence.
+    const inspector = screen.getByRole('complementary', { name: 'Edge router inspector' });
+    expect(inspector.closest('.inspector-slot')).toHaveClass('inspector-slot--collapsed');
     expect(localStorage.getItem('terraformer.inspector.collapsed')).toBe('1');
 
-    await user.click(screen.getByText('Edge router'));
+    // getByText would now match both the table row and the still-mounted
+    // (CSS-hidden) inspector's own heading; the table row is the only match
+    // with an actual button role.
+    await user.click(screen.getByRole('button', { name: 'Inspect Edge router' }));
     expect(await screen.findByRole('complementary', { name: 'Edge router inspector' })).toBeVisible();
+    expect(inspector.closest('.inspector-slot')).not.toHaveClass('inspector-slot--collapsed');
     expect(localStorage.getItem('terraformer.inspector.collapsed')).toBe('0');
+  });
+
+  it('preserves inspector tab state across collapse and re-expand', async () => {
+    const user = userEvent.setup();
+    renderInventory();
+
+    await user.click(await screen.findByText('Edge router'));
+    await user.click(screen.getByRole('button', { name: 'Interfaces' }));
+    expect(screen.getByRole('button', { name: 'Interfaces' })).toHaveClass('is-active');
+
+    await user.click(screen.getByRole('button', { name: 'Collapse inspector' }));
+    await user.click(screen.getByRole('button', { name: 'Inspect Edge router' }));
+
+    // If collapsing had unmounted the inspector, re-expanding would create a
+    // fresh instance and reset to the Overview tab -- and for a device with
+    // an in-progress Configure preview, would silently discard it too.
+    expect(await screen.findByRole('button', { name: 'Interfaces' })).toHaveClass('is-active');
   });
 });

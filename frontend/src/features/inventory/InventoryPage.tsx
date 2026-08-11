@@ -341,7 +341,10 @@ export function InventoryPage({ focusDeviceId }: InventoryPageProps) {
         </section>
       </main>
 
-      {inspectorCollapsed ? null : (
+      {/* Hidden via CSS, not unmounted: an unmount would reset every tab's
+          local state (e.g. an in-progress Configure preview) even though
+          the selected device never changed and collapsing looks reversible. */}
+      <div className={inspectorCollapsed ? 'inspector-slot inspector-slot--collapsed' : 'inspector-slot'}>
         <DeviceInspector
           key={selectedDevice?.id ?? 'empty'}
           device={selectedDevice}
@@ -353,7 +356,7 @@ export function InventoryPage({ focusDeviceId }: InventoryPageProps) {
           }}
           onDelete={setDeleteTarget}
         />
-      )}
+      </div>
 
       <Modal
         open={usbConsoleOpen}

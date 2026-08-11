@@ -1254,6 +1254,10 @@ p {
   grid-template-columns: minmax(0, 1fr);
 }
 
+.inspector-slot--collapsed {
+  display: none;
+}
+
 .workspace-layout:has(> .inspector--terminal) {
   grid-template-columns: minmax(0, 1fr) min(680px, 48vw);
 }

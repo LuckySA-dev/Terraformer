@@ -115,8 +115,27 @@ function TopologyCanvas({
     onNodeTapRef.current = onNodeTap;
   }, [onNodeTap]);
 
+  // elements is a freshly built array on every parent render (it's derived,
+  // unmemoized, and filter-dependent), so comparing it by reference below
+  // would tear down and recreate the graph -- resetting the operator's pan
+  // and zoom via this layout's fit: true -- on every unrelated re-render,
+  // including just tapping a node to open the inspector. Track content via
+  // state, adjusted during render on a signature mismatch (the pattern
+  // React's own docs recommend for this -- see "Adjusting state when a prop
+  // changes" in "You Might Not Need an Effect"), so identical content keeps
+  // the same reference across renders instead of comparing content in a ref,
+  // which this codebase's stricter hooks lint forbids during render.
+  const elementsSignature = JSON.stringify(elements);
+  const [stableElements, setStableElements] = useState(elements);
+  const [lastSignature, setLastSignature] = useState(elementsSignature);
+  if (elementsSignature !== lastSignature) {
+    setLastSignature(elementsSignature);
+    setStableElements(elements);
+  }
+
   useEffect(() => {
     if (container.current === null) return undefined;
+    const elements = stableElements;
     const hasSavedPositions = elements.every(
       (element) => element.group === 'edges' || element.position !== undefined,
     );
@@ -147,17 +166,24 @@ function TopologyCanvas({
       maxZoom: 2.5,
     });
     graph.on('dragfree', 'node', () => {
-      const positions = Object.fromEntries(
+      // graph.nodes() is only whatever the active protocol/registered-only
+      // filter currently shows -- writing that alone would silently drop the
+      // saved position of every node the filter is hiding right now. Merge
+      // onto the full stored set instead of replacing it.
+      const current = Object.fromEntries(
         graph.nodes().map((node) => [node.id(), node.position()]),
       );
-      localStorage.setItem(TOPOLOGY_POSITIONS_KEY, JSON.stringify(positions));
+      localStorage.setItem(
+        TOPOLOGY_POSITIONS_KEY,
+        JSON.stringify({ ...loadTopologyPositions(localStorage), ...current }),
+      );
     });
     graph.on('tap', 'node', (event: cytoscape.EventObjectNode) => {
       const id = event.target.id();
       if (id.startsWith('device:')) onNodeTapRef.current?.(id.slice('device:'.length));
     });
     return () => graph.destroy();
-  }, [elements]);
+  }, [stableElements]);
 
   return (
     <div

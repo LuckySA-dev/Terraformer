@@ -102,6 +102,12 @@ describe('TopologyPage read-only projection', () => {
     act(() => handler?.({ target: { id: () => nodeId } }));
   };
 
+  const dragNode = () => {
+    const call = graph.on.mock.calls.find((entry) => entry[0] === 'dragfree' && entry[1] === 'node');
+    const handler = call?.[2] as (() => void) | undefined;
+    act(() => handler?.());
+  };
+
   it('projects registered devices and observed neighbors without adding inventory', () => {
     const elements = buildTopologyElements(
       [device],
@@ -231,6 +237,45 @@ describe('TopologyPage read-only projection', () => {
     expect(await screen.findByRole('heading', { name: 'No topology yet' })).toBeVisible();
     expect(api.neighbors).not.toHaveBeenCalled();
     expect(graph.create).not.toHaveBeenCalled();
+  });
+
+  it('does not rebuild the graph -- and reset pan/zoom -- just from tapping a node', async () => {
+    vi.mocked(api.devices).mockResolvedValue([device]);
+    vi.mocked(api.neighbors).mockResolvedValue([neighbor]);
+    render(<TopologyPage onFocusDevice={vi.fn()} />, { wrapper: TestProviders });
+    await screen.findByText('2 nodes / 1 links');
+    expect(graph.create).toHaveBeenCalledOnce();
+
+    tapNode(`device:${device.id}`);
+    await screen.findByRole('complementary', { name: 'Edge router inspector' });
+
+    // A second call means the effect keyed on the elements array reference
+    // and rebuilt cytoscape from scratch for an unrelated state change --
+    // which resets the operator's pan/zoom because this layout always fits.
+    expect(graph.create).toHaveBeenCalledOnce();
+  });
+
+  it('merges a dragged position instead of overwriting positions of nodes hidden by the current filter', async () => {
+    const second = { ...device, id: '5f7837b9-4bf2-49ab-8205-c9acbf15a31d', name: 'Core' };
+    localStorage.setItem(
+      TOPOLOGY_POSITIONS_KEY,
+      JSON.stringify({ [`device:${second.id}`]: { x: 5, y: 5 } }),
+    );
+    vi.mocked(api.devices).mockResolvedValue([device, second]);
+    vi.mocked(api.neighbors).mockResolvedValue([]);
+    render(<TopologyPage />, { wrapper: TestProviders });
+    await screen.findByText('2 nodes / 0 links');
+
+    // Simulate the graph currently only rendering `device` -- as it would
+    // once a filter hides `second` -- then drag the visible node.
+    graph.nodes.mockReturnValue([
+      { id: () => `device:${device.id}`, position: () => ({ x: 40, y: 60 }) },
+    ] as never);
+    dragNode();
+
+    const stored = JSON.parse(localStorage.getItem(TOPOLOGY_POSITIONS_KEY) ?? '{}') as Record<string, unknown>;
+    expect(stored[`device:${second.id}`]).toEqual({ x: 5, y: 5 });
+    expect(stored[`device:${device.id}`]).toEqual({ x: 40, y: 60 });
   });
 
   it('loads only finite saved node positions', () => {

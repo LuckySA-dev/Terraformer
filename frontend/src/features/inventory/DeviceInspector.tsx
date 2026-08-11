@@ -795,13 +795,12 @@ export function DeviceInspector({ device, onClose, onEdit, onDelete, onCollapse 
   );
 
   if (device === null) {
+    // No collapse control here: collapsing this placeholder reclaims no
+    // useful space, and with nothing selected the only way back is
+    // selectDevice() in InventoryPage -- picking a device. An empty
+    // inventory would make that dead-end unrecoverable.
     return (
       <aside className="inspector inspector--empty" aria-label="Device inspector">
-        {onCollapse === undefined ? null : (
-          <button type="button" className="icon-button inspector__collapse" onClick={onCollapse} aria-label="Collapse inspector">
-            <PanelRightClose size={16} />
-          </button>
-        )}
         <AppState
           kind="empty"
           title="Select a device"

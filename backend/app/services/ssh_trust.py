@@ -5,13 +5,21 @@ import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from socket import gaierror
 from typing import Protocol, cast
 from uuid import UUID, uuid4
 
 import asyncssh
 
 from app.core.errors import (
+    AppError,
+    DriverConnectionError,
+    DriverConnectionLostError,
+    DriverConnectionRefusedError,
     DriverHostKeyUnknownError,
+    DriverNameResolutionError,
+    DriverSSHNegotiationError,
+    DriverTimeoutError,
     HostKeyCandidateExpiredError,
     HostKeyCandidateMismatchError,
 )
@@ -159,7 +167,10 @@ async def probe_host_key(host: str, port: int, mode: SSHCompatibility) -> HostKe
         if value is not None
     }
     options = asyncssh.SSHClientConnectionOptions(config=None, **values)
-    key = await asyncssh.get_server_host_key(host, port, options=options)
+    try:
+        key = await asyncssh.get_server_host_key(host, port, options=options)
+    except (asyncssh.Error, OSError) as exc:
+        raise _probe_failure(exc) from None
     if key is None:
         raise DriverHostKeyUnknownError(details={"phase": "host_key_verification"})
     return HostKeyMaterial(
@@ -167,6 +178,20 @@ async def probe_host_key(host: str, port: int, mode: SSHCompatibility) -> HostKe
         public_key=key.export_public_key("openssh").decode("ascii").strip(),
         fingerprint=key.get_fingerprint("sha256"),
     )
+
+
+def _probe_failure(exc: asyncssh.Error | OSError) -> AppError:
+    if isinstance(exc, TimeoutError):
+        return DriverTimeoutError()
+    if isinstance(exc, asyncssh.KeyExchangeFailed | asyncssh.ProtocolError):
+        return DriverSSHNegotiationError()
+    if isinstance(exc, asyncssh.ConnectionLost):
+        return DriverConnectionLostError()
+    if isinstance(exc, gaierror):
+        return DriverNameResolutionError()
+    if isinstance(exc, ConnectionRefusedError):
+        return DriverConnectionRefusedError()
+    return DriverConnectionError()
 
 
 def _binding_digest(request: DeviceConnectionFields) -> str:

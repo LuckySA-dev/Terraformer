@@ -1100,6 +1100,19 @@ def test_terminal_returns_typed_missing_device_error(
     assert message["code"] == "not_found"
 
 
+def test_terminal_returns_typed_error_for_malformed_device_id(
+    authenticated_client: TestClient,
+) -> None:
+    """A non-UUID path segment must close cleanly, not crash the ASGI connection."""
+    with authenticated_client.websocket_connect(
+        "/ws/terminal/not-a-uuid",
+        headers={"origin": "http://testserver"},
+    ) as websocket:
+        _acknowledge(websocket)
+        message = websocket.receive_json()
+    assert message["code"] == "not_found"
+
+
 @pytest.mark.parametrize(
     ("client_fixture", "headers", "expected_code"),
     [

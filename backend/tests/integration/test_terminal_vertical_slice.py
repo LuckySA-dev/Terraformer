@@ -7,7 +7,6 @@ from socket import gaierror
 from threading import Event as ThreadEvent
 from types import SimpleNamespace
 from typing import Any
-from uuid import UUID
 
 import asyncssh
 import pytest
@@ -488,7 +487,7 @@ def test_terminal_holds_permit_until_cancelled_pty_connection_closes(
         monkeypatch.setattr(terminal_api.asyncssh, "connect", fake_connect)
         websocket = FakeDirectWebSocket(container)
         task = asyncio.create_task(
-            terminal_api.terminal(websocket, UUID(device_id))  # type: ignore[arg-type]
+            terminal_api.terminal(websocket, device_id)
         )
         await create_started.wait()
         task.cancel()
@@ -551,7 +550,7 @@ def test_terminal_cancellation_rolls_back_a_blocked_gate_acquire(
     async def exercise() -> BaseException:
         websocket = FakeDirectWebSocket(container)
         task = asyncio.create_task(
-            terminal_api.terminal(websocket, UUID(device_id))  # type: ignore[arg-type]
+            terminal_api.terminal(websocket, device_id)
         )
         assert await asyncio.to_thread(acquire_started.wait, 1)
         task.cancel()
@@ -1071,7 +1070,7 @@ def test_terminal_shutdown_cleanup_is_idempotent(
     async def exercise() -> FakeWebSocket:
         websocket = FakeWebSocket()
         task = asyncio.create_task(
-            terminal_api.terminal(websocket, UUID(device_id))  # type: ignore[arg-type]
+            terminal_api.terminal(websocket, device_id)
         )
         await asyncio.wait_for(websocket.connected.wait(), timeout=1)
         if shutdown == "client_disconnect":

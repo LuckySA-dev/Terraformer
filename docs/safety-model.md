@@ -33,7 +33,7 @@ no command parser or rollback guarantee; the warning is an operator boundary,
 not a claim that the terminal is read-only.
 
 Legacy and Very Old SSH compatibility is device-scoped under
-`compatibility_policy_version = 2`. `modern` remains the default and has no
+`compatibility_policy_version = 3`. `modern` remains the default and has no
 legacy override or automatic fallback. `cisco_legacy` may append only
 `diffie-hellman-group14-sha1`, `diffie-hellman-group-exchange-sha1`, `ssh-rsa`,
 `aes256-cbc`, `aes192-cbc`, `aes128-cbc`, `hmac-sha1`, and `hmac-sha1-96` after

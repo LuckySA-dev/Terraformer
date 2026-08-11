@@ -46,6 +46,7 @@ export interface CredentialProfileInput {
   username: string;
   password: string;
   enable_password?: string;
+  clear_enable_password?: boolean;
 }
 
 export type DeviceStatus = 'reachable' | 'unreachable' | 'unknown';

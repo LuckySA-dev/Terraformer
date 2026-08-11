@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { api } from '../src/api/network';
@@ -20,11 +20,15 @@ const graph = vi.hoisted(() => ({
   on: vi.fn(),
 }));
 
-vi.mock('cytoscape', () => ({ default: graph.create }));
+vi.mock('cytoscape', () => ({ default: Object.assign(graph.create, { use: vi.fn() }) }));
 vi.mock('../src/api/network', () => ({
   api: {
     devices: vi.fn(),
     neighbors: vi.fn(),
+    facts: vi.fn(),
+    interfaces: vi.fn(),
+    snapshots: vi.fn(),
+    events: vi.fn(),
   },
 }));
 
@@ -59,6 +63,19 @@ const neighbor: DeviceNeighbor = {
   updated_at: '2026-07-12T01:00:00Z',
 };
 
+const lldpNeighbor: DeviceNeighbor = {
+  id: '9a1f2a3b-4c5d-6e7f-8091-a2b3c4d5e6f7',
+  device_id: device.id,
+  protocol: 'lldp',
+  local_interface: 'GigabitEthernet2',
+  remote_device_name: 'core-sw-01.example.test',
+  remote_interface: 'GigabitEthernet0/2',
+  management_address: '198.51.100.3',
+  platform: 'cisco C9300-24T',
+  created_at: '2026-07-12T01:00:00Z',
+  updated_at: '2026-07-12T01:00:00Z',
+};
+
 function TestProviders({ children }: { children: ReactNode }) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
@@ -73,7 +90,17 @@ describe('TopologyPage read-only projection', () => {
       nodes: graph.nodes,
       on: graph.on,
     });
+    vi.mocked(api.facts).mockResolvedValue({ device_id: device.id, facts: device.facts, last_seen_at: null });
+    vi.mocked(api.interfaces).mockResolvedValue([]);
+    vi.mocked(api.snapshots).mockResolvedValue([]);
+    vi.mocked(api.events).mockResolvedValue([]);
   });
+
+  const tapNode = (nodeId: string) => {
+    const call = graph.on.mock.calls.find((entry) => entry[0] === 'tap' && entry[1] === 'node');
+    const handler = call?.[2] as ((event: { target: { id: () => string } }) => void) | undefined;
+    act(() => handler?.({ target: { id: () => nodeId } }));
+  };
 
   it('projects registered devices and observed neighbors without adding inventory', () => {
     const elements = buildTopologyElements(
@@ -101,6 +128,75 @@ describe('TopologyPage read-only projection', () => {
     expect(screen.getByText(/Observed nodes remain evidence, not inventory records/)).toBeVisible();
     expect(api.neighbors).toHaveBeenCalledWith(device.id);
     expect(graph.create).toHaveBeenCalledOnce();
+    const call = graph.create.mock.calls[0]?.[0] as {
+      layout?: { name?: string; nodeDimensionsIncludeLabels?: boolean };
+    } | undefined;
+    expect(call?.layout?.name).toBe('fcose');
+    expect(call?.layout?.nodeDimensionsIncludeLabels).toBe(true);
+  });
+
+  it('filters out a protocol and its now-orphaned observed node when unchecked', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.devices).mockResolvedValue([device]);
+    vi.mocked(api.neighbors).mockResolvedValue([neighbor, lldpNeighbor]);
+    render(<TopologyPage />, { wrapper: TestProviders });
+
+    expect(await screen.findByText('3 nodes / 2 links')).toBeVisible();
+
+    await user.click(screen.getByLabelText('LLDP'));
+
+    expect(screen.getByText('2 nodes / 1 links')).toBeVisible();
+  });
+
+  it('hides links and nodes touching an unregistered device when Registered only is checked', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.devices).mockResolvedValue([device]);
+    vi.mocked(api.neighbors).mockResolvedValue([neighbor, lldpNeighbor]);
+    render(<TopologyPage />, { wrapper: TestProviders });
+
+    expect(await screen.findByText('3 nodes / 2 links')).toBeVisible();
+
+    await user.click(screen.getByLabelText('Registered only'));
+
+    expect(screen.getByText('1 nodes / 0 links')).toBeVisible();
+  });
+
+  it('opens the Device Inspector for a registered node on tap', async () => {
+    vi.mocked(api.devices).mockResolvedValue([device]);
+    vi.mocked(api.neighbors).mockResolvedValue([neighbor]);
+    render(<TopologyPage onFocusDevice={vi.fn()} />, { wrapper: TestProviders });
+    await screen.findByText('2 nodes / 1 links');
+
+    tapNode(`device:${device.id}`);
+
+    expect(await screen.findByRole('complementary', { name: 'Edge router inspector' })).toBeVisible();
+  });
+
+  it('does not open the inspector for an observed-only node', async () => {
+    vi.mocked(api.devices).mockResolvedValue([device]);
+    vi.mocked(api.neighbors).mockResolvedValue([neighbor]);
+    render(<TopologyPage onFocusDevice={vi.fn()} />, { wrapper: TestProviders });
+    await screen.findByText('2 nodes / 1 links');
+
+    tapNode(`observed:${neighbor.id}`);
+
+    expect(screen.queryByRole('complementary', { name: 'Edge router inspector' })).not.toBeInTheDocument();
+    expect(screen.getByRole('complementary', { name: 'Device inspector' })).toBeVisible();
+  });
+
+  it('hands editing and deleting off to Inventory instead of doing it inline', async () => {
+    const user = userEvent.setup();
+    const onFocusDevice = vi.fn();
+    vi.mocked(api.devices).mockResolvedValue([device]);
+    vi.mocked(api.neighbors).mockResolvedValue([neighbor]);
+    render(<TopologyPage onFocusDevice={onFocusDevice} />, { wrapper: TestProviders });
+    await screen.findByText('2 nodes / 1 links');
+
+    tapNode(`device:${device.id}`);
+    await screen.findByRole('complementary', { name: 'Edge router inspector' });
+    await user.click(screen.getByRole('button', { name: 'Delete device' }));
+
+    expect(onFocusDevice).toHaveBeenCalledWith(device.id);
   });
 
   it('renders a retryable neighbor API error', async () => {

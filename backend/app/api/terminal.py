@@ -337,7 +337,7 @@ async def _open_terminal(
 
 
 @router.websocket("/ws/terminal/{device_id}")
-async def terminal(websocket: WebSocket, device_id: UUID) -> None:
+async def terminal(websocket: WebSocket, device_id: str) -> None:
     container: ApplicationContainer = websocket.app.state.container
     token = websocket.cookies.get(container.settings.session_cookie_name)
     if token is None or container.session_tokens.verify(token) is None:
@@ -351,6 +351,7 @@ async def terminal(websocket: WebSocket, device_id: UUID) -> None:
     await websocket.accept()
     gate = container.connection_gate
     target: _TerminalTarget | None = None
+    device_uuid: UUID | None = None
     gate_target: ConnectionTarget | None = None
     permit: ConnectionPermit | None = None
     parameters: ConnectionParameters | None = None
@@ -396,12 +397,12 @@ async def terminal(websocket: WebSocket, device_id: UUID) -> None:
                 )
             except (Exception, asyncio.CancelledError):  # noqa: S110
                 pass  # Cleanup errors must not expose raw terminal or transport details.
-        if opened:
+        if opened and device_uuid is not None:
             try:
                 await asyncio.to_thread(
                     _record_event,
                     container,
-                    device_id,
+                    device_uuid,
                     "terminal.closed",
                     "Direct Mode terminal closed",
                 )
@@ -443,7 +444,12 @@ async def terminal(websocket: WebSocket, device_id: UUID) -> None:
             raise _TerminalFailure("direct_mode_required")
         telnet_acknowledged = telnet_value
 
-        target = await asyncio.to_thread(_terminal_target, container, device_id)
+        try:
+            device_uuid = UUID(device_id)
+        except ValueError:
+            raise _TerminalFailure("not_found") from None
+
+        target = await asyncio.to_thread(_terminal_target, container, device_uuid)
         if not container.settings.ssh_terminal_enabled:
             raise _TerminalFailure("terminal_disabled_by_policy")
         if target.console_transport is ConsoleTransport.TELNET:
@@ -504,7 +510,7 @@ async def terminal(websocket: WebSocket, device_id: UUID) -> None:
                 pty_timeout_seconds=container.settings.terminal_pty_timeout_seconds,
             )
         await asyncio.to_thread(gate.authentication_succeeded, gate_target)
-        _record_event(container, device_id, "terminal.opened", "Direct Mode terminal opened")
+        _record_event(container, device_uuid, "terminal.opened", "Direct Mode terminal opened")
         opened = True
         await websocket.send_json({"type": "status", "status": "connected"})
         try:

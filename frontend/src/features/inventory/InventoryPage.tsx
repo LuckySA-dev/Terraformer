@@ -15,13 +15,20 @@ import {
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { api } from '../../api/network';
-import type { CredentialProfileInput, Device, DeviceInput, DiscoveryCandidate } from '../../types/api';
+import type {
+  CredentialProfile,
+  CredentialProfileInput,
+  Device,
+  DeviceInput,
+  DiscoveryCandidate,
+} from '../../types/api';
 import { AppState, QueryErrorState } from '../../components/ui/AppState';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
 import { formatRelativeTime } from '../../lib/format';
 import { CredentialForm } from './CredentialForm';
+import { CredentialList } from './CredentialList';
 import { DeviceForm } from './DeviceForm';
 import { DeviceInspector } from './DeviceInspector';
 import { DiscoveryDialog } from './DiscoveryDialog';
@@ -31,6 +38,12 @@ type DeviceDialog =
   | { mode: 'create' }
   | { mode: 'edit'; device: Device }
   | { mode: 'approve'; jobId: string; candidate: DiscoveryCandidate }
+  | null;
+
+type CredentialDialog =
+  | { mode: 'list' }
+  | { mode: 'create' }
+  | { mode: 'edit'; credential: CredentialProfile }
   | null;
 
 function deviceTone(status: string): 'success' | 'danger' | 'warning' | 'neutral' {
@@ -137,15 +150,32 @@ function InventoryTable({
   );
 }
 
-export function InventoryPage() {
+interface InventoryPageProps {
+  focusDeviceId?: string | undefined;
+}
+
+export function InventoryPage({ focusDeviceId }: InventoryPageProps) {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
-  const [selectedId, setSelectedId] = useState<string>();
+  const [selectedId, setSelectedId] = useState<string | undefined>(focusDeviceId);
+  // A device focused from Topology must be visible even if a previous
+  // session left the inspector collapsed — otherwise the click appears to do
+  // nothing.
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(
+    () => focusDeviceId === undefined && localStorage.getItem('terraformer.inspector.collapsed') === '1',
+  );
   const [deviceDialog, setDeviceDialog] = useState<DeviceDialog>(null);
-  const [credentialOpen, setCredentialOpen] = useState(false);
+  const [credentialDialog, setCredentialDialog] = useState<CredentialDialog>(null);
+  const [credentialDeleteTarget, setCredentialDeleteTarget] = useState<CredentialProfile>();
   const [discoveryOpen, setDiscoveryOpen] = useState(false);
   const [usbConsoleOpen, setUsbConsoleOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Device>();
+
+  const selectDevice = (deviceId: string) => {
+    setSelectedId(deviceId);
+    setInspectorCollapsed(false);
+    localStorage.setItem('terraformer.inspector.collapsed', '0');
+  };
 
   const devices = useQuery({ queryKey: ['devices'], queryFn: api.devices, retry: false });
   const credentials = useQuery({
@@ -162,15 +192,34 @@ export function InventoryPage() {
           : api.createDevice(input),
     onSuccess: async (saved) => {
       await queryClient.invalidateQueries({ queryKey: ['devices'] });
-      setSelectedId(saved.id);
+      selectDevice(saved.id);
       setDeviceDialog(null);
     },
   });
-  const createCredential = useMutation({
-    mutationFn: (input: CredentialProfileInput) => api.createCredentialProfile(input),
+  const saveCredential = useMutation({
+    mutationFn: (
+      { input, current }: { input: Partial<CredentialProfileInput>; current?: CredentialProfile },
+    ) =>
+      current !== undefined
+        ? api.updateCredentialProfile(current.id, input)
+        // Create requires the full shape; a blank field here can only mean the
+        // create-mode form validation already rejected the submission.
+        : api.createCredentialProfile({
+            name: input.name ?? '',
+            username: input.username ?? '',
+            password: input.password ?? '',
+            ...(input.enable_password !== undefined ? { enable_password: input.enable_password } : {}),
+          }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['credential-profiles'] });
-      setCredentialOpen(false);
+      setCredentialDialog(null);
+    },
+  });
+  const deleteCredential = useMutation({
+    mutationFn: (credential: CredentialProfile) => api.deleteCredentialProfile(credential.id),
+    onSuccess: async () => {
+      setCredentialDeleteTarget(undefined);
+      await queryClient.invalidateQueries({ queryKey: ['credential-profiles'] });
     },
   });
   const deleteDevice = useMutation({
@@ -206,7 +255,7 @@ export function InventoryPage() {
   ).length;
 
   return (
-    <div className="workspace-layout">
+    <div className={inspectorCollapsed ? 'workspace-layout workspace-layout--inspector-collapsed' : 'workspace-layout'}>
       <main className="workspace-main">
         <header className="page-header">
           <div>
@@ -221,7 +270,7 @@ export function InventoryPage() {
             <Button onClick={() => setDiscoveryOpen(true)}>
               <Radar size={16} /> Discover
             </Button>
-            <Button onClick={() => setCredentialOpen(true)}>
+            <Button onClick={() => setCredentialDialog({ mode: 'list' })}>
               <KeyRound size={16} /> Credential profile
             </Button>
             <Button variant="primary" onClick={() => setDeviceDialog({ mode: 'create' })}>
@@ -287,18 +336,24 @@ export function InventoryPage() {
           ) : filtered.length === 0 ? (
             <AppState kind="empty" title="No matching devices" message="Try a different name, IP address, hostname, or model." />
           ) : (
-            <InventoryTable devices={filtered} selectedId={selectedId} onSelect={(device) => setSelectedId(device.id)} />
+            <InventoryTable devices={filtered} selectedId={selectedId} onSelect={(device) => selectDevice(device.id)} />
           )}
         </section>
       </main>
 
-      <DeviceInspector
-        key={selectedDevice?.id ?? 'empty'}
-        device={selectedDevice}
-        onClose={() => setSelectedId(undefined)}
-        onEdit={(device) => setDeviceDialog({ mode: 'edit', device })}
-        onDelete={setDeleteTarget}
-      />
+      {inspectorCollapsed ? null : (
+        <DeviceInspector
+          key={selectedDevice?.id ?? 'empty'}
+          device={selectedDevice}
+          onClose={() => setSelectedId(undefined)}
+          onEdit={(device) => setDeviceDialog({ mode: 'edit', device })}
+          onCollapse={() => {
+            setInspectorCollapsed(true);
+            localStorage.setItem('terraformer.inspector.collapsed', '1');
+          }}
+          onDelete={setDeleteTarget}
+        />
+      )}
 
       <Modal
         open={usbConsoleOpen}
@@ -334,7 +389,7 @@ export function InventoryPage() {
               : {})}
             credentials={credentials.data}
             onCancel={() => setDeviceDialog(null)}
-            onCreateCredential={() => setCredentialOpen(true)}
+            onCreateCredential={() => setCredentialDialog({ mode: 'create' })}
             onSubmit={async (input) => {
               await saveDevice.mutateAsync({
                 input,
@@ -363,16 +418,85 @@ export function InventoryPage() {
       </Modal>
 
       <Modal
-        open={credentialOpen}
-        title="New credential profile"
-        description="Create an encrypted, reusable profile without attaching secrets to a device record."
-        onClose={() => setCredentialOpen(false)}
+        open={credentialDialog !== null}
+        title={
+          credentialDialog?.mode === 'edit'
+            ? 'Edit credential profile'
+            : credentialDialog?.mode === 'create'
+              ? 'New credential profile'
+              : 'Credential profiles'
+        }
+        description={
+          credentialDialog?.mode === 'list'
+            ? 'Reusable, encrypted credentials that devices reference without storing secrets themselves.'
+            : 'Create an encrypted, reusable profile without attaching secrets to a device record.'
+        }
+        onClose={() => setCredentialDialog(null)}
       >
-        <CredentialForm
-          onCancel={() => setCredentialOpen(false)}
-          onSubmit={(input) => createCredential.mutateAsync(input).then(() => undefined)}
-          error={createCredential.error?.message}
-        />
+        {credentialDialog?.mode === 'list' ? (
+          credentials.isPending ? (
+            <AppState kind="loading" title="Loading credentials" message="Reading credential profile metadata…" compact />
+          ) : credentials.isError ? (
+            <QueryErrorState error={credentials.error} onRetry={() => void credentials.refetch()} compact />
+          ) : (
+            <CredentialList
+              credentials={credentials.data}
+              onCreate={() => setCredentialDialog({ mode: 'create' })}
+              onEdit={(credential) => setCredentialDialog({ mode: 'edit', credential })}
+              onDelete={setCredentialDeleteTarget}
+            />
+          )
+        ) : credentialDialog?.mode === 'create' || credentialDialog?.mode === 'edit' ? (
+          <CredentialForm
+            {...(credentialDialog.mode === 'edit' ? { credential: credentialDialog.credential } : {})}
+            onCancel={() => setCredentialDialog(null)}
+            onSubmit={(input) =>
+              saveCredential
+                .mutateAsync({
+                  input,
+                  ...(credentialDialog.mode === 'edit' ? { current: credentialDialog.credential } : {}),
+                })
+                .then(() => undefined)
+            }
+            error={saveCredential.error?.message}
+          />
+        ) : null}
+      </Modal>
+
+      <Modal
+        open={credentialDeleteTarget !== undefined}
+        title="Remove credential profile?"
+        description="Devices using this profile will need a different one before they can connect again."
+        onClose={() => setCredentialDeleteTarget(undefined)}
+        size="small"
+        footer={
+          <>
+            <Button onClick={() => setCredentialDeleteTarget(undefined)}>Cancel</Button>
+            <Button
+              variant="danger"
+              busy={deleteCredential.isPending}
+              onClick={() => {
+                if (credentialDeleteTarget !== undefined) deleteCredential.mutate(credentialDeleteTarget);
+              }}
+            >
+              Remove profile
+            </Button>
+          </>
+        }
+      >
+        <div className="delete-summary">
+          <div className="device-avatar">
+            <KeyRound size={20} />
+          </div>
+          <div>
+            <strong>{credentialDeleteTarget?.name}</strong>
+          </div>
+        </div>
+        {deleteCredential.error === null ? null : (
+          <div className="form-error" role="alert">
+            {deleteCredential.error.message}
+          </div>
+        )}
       </Modal>
 
       <Modal

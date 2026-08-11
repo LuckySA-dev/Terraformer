@@ -60,6 +60,20 @@ describe('terminal input policy', () => {
     expect(prepared.requiresConfirmation).toBe(true);
   });
 
+  it.each([
+    ['Backspace', String.fromCodePoint(0x7f)],
+    ['Ctrl+C', String.fromCodePoint(0x03)],
+    ['Up arrow', `${String.fromCodePoint(0x1b)}[A`],
+    ['Delete', `${String.fromCodePoint(0x1b)}[3~`],
+    ['Shift+F5 (modified function key)', `${String.fromCodePoint(0x1b)}[15;2~`],
+  ])('does not require confirmation for a standalone %s keystroke', (_label, keystroke) => {
+    const prepared = prepareTerminalInput(keystroke, {
+      lineEnding: 'raw', localEcho: false, confirmMultiline: true,
+    });
+    expect(prepared.containsUnsafeControl).toBe(true);
+    expect(prepared.requiresConfirmation).toBe(false);
+  });
+
   it('allows tab, carriage return, and line feed controls', () => {
     expect(prepareTerminalInput('\t\r\n', {
       lineEnding: 'raw', localEcho: false, confirmMultiline: true,

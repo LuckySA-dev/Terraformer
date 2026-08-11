@@ -986,6 +986,11 @@ p {
   padding: 0 5px 17px;
 }
 
+.sidebar__collapse {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
 .sidebar__brand > div:last-child {
   display: flex;
   flex-direction: column;
@@ -1243,6 +1248,10 @@ p {
   height: 100%;
   display: grid;
   grid-template-columns: minmax(620px, 1fr) 374px;
+}
+
+.workspace-layout--inspector-collapsed {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .workspace-layout:has(> .inspector--terminal) {
@@ -1553,8 +1562,15 @@ p {
 }
 
 .inspector--empty {
+  position: relative;
   justify-content: center;
   background: #f8faf9;
+}
+
+.inspector__collapse {
+  position: absolute;
+  top: 13px;
+  right: 13px;
 }
 
 .inspector__header {
@@ -2017,16 +2033,16 @@ p {
   font-size: 7px;
 }
 
-.terminal-session:has(.usb-console-settings) {
+.terminal-session:has(> .terminal-consent) {
   border-color: var(--border);
   background: var(--surface);
 }
 
-.terminal-session:has(.usb-console-settings) .usb-console-authorization {
+.terminal-session:has(> .terminal-consent) .usb-console-authorization {
   color: var(--ink);
 }
 
-.terminal-session:has(.usb-console-settings) .terminal-note {
+.terminal-session:has(> .terminal-consent) .terminal-note {
   margin: 0;
   padding: 0 9px 9px;
   color: var(--muted);
@@ -2158,6 +2174,57 @@ p {
   gap: 8px;
 }
 
+.credential-list-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.credential-list-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.credential-list {
+  display: grid;
+  gap: 7px;
+}
+
+.credential-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.credential-row > div:first-child {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.credential-row strong {
+  color: var(--ink);
+  font-size: 11px;
+}
+
+.credential-row small {
+  color: var(--muted-2);
+  font-size: 7px;
+}
+
+.credential-row__actions {
+  display: flex;
+  gap: 5px;
+}
+
 .snapshot-viewer {
   border: 1px solid #293839;
   border-radius: 8px;
@@ -2199,6 +2266,7 @@ p {
 
 .topology-page {
   height: 100%;
+  min-width: 0;
   padding: 24px 27px 32px;
   overflow: auto;
 }
@@ -2255,6 +2323,12 @@ p {
   display: flex;
   align-items: center;
   gap: 14px;
+}
+
+.topology-filters {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .topology-refresh-interval {
@@ -2485,6 +2559,53 @@ p {
   .metric-card {
     padding: 11px 13px;
   }
+}
+
+/* Manual sidebar collapse — mirrors the <1020px icon-rail shape below, gated
+   by a toggle instead of viewport width. Below that width the media query's
+   rules apply regardless of this class; both agree on the same 74px shape. */
+.app-shell--sidebar-collapsed {
+  grid-template-columns: 74px minmax(0, 1fr);
+}
+
+.app-shell--sidebar-collapsed .sidebar__brand > div:last-child,
+.app-shell--sidebar-collapsed .environment-chip > div,
+.app-shell--sidebar-collapsed .sidebar__nav span,
+.app-shell--sidebar-collapsed .sidebar__section-label,
+.app-shell--sidebar-collapsed .safety-card > div:not(.safety-card__icon),
+.app-shell--sidebar-collapsed .safety-card .badge,
+.app-shell--sidebar-collapsed .session-button > span:nth-child(2),
+.app-shell--sidebar-collapsed .session-button > svg {
+  display: none;
+}
+
+.app-shell--sidebar-collapsed .sidebar__brand,
+.app-shell--sidebar-collapsed .environment-chip,
+.app-shell--sidebar-collapsed .sidebar__nav button,
+.app-shell--sidebar-collapsed .session-button {
+  justify-content: center;
+}
+
+.app-shell--sidebar-collapsed .sidebar__collapse {
+  margin-left: 0;
+}
+
+.app-shell--sidebar-collapsed .sidebar__nav button {
+  padding: 0;
+}
+
+.app-shell--sidebar-collapsed .safety-card {
+  display: grid;
+  place-items: center;
+  padding: 8px;
+}
+
+.app-shell--sidebar-collapsed .safety-card__icon {
+  margin: 0;
+}
+
+.app-shell--sidebar-collapsed .session-button {
+  grid-template-columns: 30px;
 }
 
 @media (max-width: 1020px) {

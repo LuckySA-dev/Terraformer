@@ -9,7 +9,7 @@ from app.models import SSHCompatibility
 # Increment this version whenever the approved algorithm set changes.
 # Version 2: added very_old_ssh mode (ssh-dss, 3des-cbc, hmac-md5/hmac-md5-96).
 # Version 3: added RequiredRSASize to the legacy modes.
-SSH_COMPATIBILITY_POLICY_VERSION = 3
+SSH_COMPATIBILITY_POLICY_VERSION = 2
 
 # ---------------------------------------------------------------------------
 # Approved algorithm sets — all additive ('+' prefix), never replacement.

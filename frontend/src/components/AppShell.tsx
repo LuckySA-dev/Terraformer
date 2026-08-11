@@ -5,6 +5,8 @@ import {
   KeyRound,
   LockKeyhole,
   Network,
+  PanelLeftClose,
+  PanelLeftOpen,
   Router,
   ScanSearch,
   Server,
@@ -31,9 +33,33 @@ interface AppShellProps {
 
 const healthy = (status: HealthResponse['status']) => status === 'ok';
 
+const SIDEBAR_COLLAPSED_KEY = 'terraformer.sidebar.collapsed';
+
 export function AppShell({ health, onLogout }: AppShellProps) {
   const [view, setView] = useState<ViewId>('inventory');
   const [loggingOut, setLoggingOut] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    () => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1',
+  );
+  const [focusDeviceId, setFocusDeviceId] = useState<string>();
+
+  const toggleSidebar = () => {
+    const next = !sidebarCollapsed;
+    setSidebarCollapsed(next);
+    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, next ? '1' : '0');
+  };
+
+  // Two distinct entry points, not one: a plain nav click must clear any
+  // device carried over from Topology, or reopening Inventory later would
+  // silently re-select a stale device the operator never asked for.
+  const goToInventory = () => {
+    setFocusDeviceId(undefined);
+    setView('inventory');
+  };
+  const focusDeviceInInventory = (deviceId: string) => {
+    setFocusDeviceId(deviceId);
+    setView('inventory');
+  };
 
   const logout = async () => {
     setLoggingOut(true);
@@ -45,7 +71,7 @@ export function AppShell({ health, onLogout }: AppShellProps) {
   };
 
   return (
-    <div className="app-shell">
+    <div className={sidebarCollapsed ? 'app-shell app-shell--sidebar-collapsed' : 'app-shell'}>
       <aside className="sidebar">
         <header className="sidebar__brand">
           <div className="brand-mark" aria-hidden="true">
@@ -55,6 +81,14 @@ export function AppShell({ health, onLogout }: AppShellProps) {
             <strong>Terraformer</strong>
             <span>Network playground</span>
           </div>
+          <button
+            type="button"
+            className="icon-button sidebar__collapse"
+            onClick={toggleSidebar}
+            aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+          </button>
         </header>
         <div className="environment-chip">
           <span className="environment-chip__dot" />
@@ -68,7 +102,7 @@ export function AppShell({ health, onLogout }: AppShellProps) {
           <button
             type="button"
             className={view === 'inventory' ? 'is-active' : ''}
-            onClick={() => setView('inventory')}
+            onClick={goToInventory}
             aria-current={view === 'inventory' ? 'page' : undefined}
           >
             <Router size={18} />
@@ -127,7 +161,7 @@ export function AppShell({ health, onLogout }: AppShellProps) {
 
       <div className="app-shell__content">
         {view === 'inventory' ? (
-          <InventoryPage />
+          <InventoryPage focusDeviceId={focusDeviceId} />
         ) : view === 'topology' ? (
           <Suspense
             fallback={
@@ -138,7 +172,7 @@ export function AppShell({ health, onLogout }: AppShellProps) {
               />
             }
           >
-            <TopologyPage />
+            <TopologyPage onFocusDevice={focusDeviceInInventory} />
           </Suspense>
         ) : view === 'analysis' ? (
           <Suspense

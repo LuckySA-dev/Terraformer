@@ -1,12 +1,15 @@
 import { useQueries, useQuery } from '@tanstack/react-query';
 import cytoscape from 'cytoscape';
-import type { StylesheetJson } from 'cytoscape';
+import type { LayoutOptions, PresetLayoutOptions, StylesheetJson } from 'cytoscape';
+import fcose from 'cytoscape-fcose';
+import type { FcoseLayoutOptions } from 'cytoscape-fcose';
 import { Network, RefreshCw, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../../api/network';
 import { AppState, QueryErrorState } from '../../components/ui/AppState';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
+import { DeviceInspector } from '../inventory/DeviceInspector';
 import {
   buildTopologyElements,
   loadManualTopologyLinks,
@@ -15,6 +18,8 @@ import {
   TOPOLOGY_POSITIONS_KEY,
 } from './topology';
 import type { TopologyElement } from './topology';
+
+cytoscape.use(fcose);
 
 const topologyStyle: StylesheetJson = [
   {
@@ -32,6 +37,8 @@ const topologyStyle: StylesheetJson = [
       'text-background-padding': '3px',
       'text-margin-y': 10,
       'text-valign': 'bottom',
+      'text-wrap': 'wrap',
+      'text-max-width': '80px',
       height: 34,
       width: 34,
     },
@@ -71,6 +78,7 @@ const topologyStyle: StylesheetJson = [
       'text-background-color': '#f7faf9',
       'text-background-opacity': 1,
       'text-background-padding': '2px',
+      'text-rotation': 'autorotate',
     },
   },
   {
@@ -90,25 +98,50 @@ const topologyStyle: StylesheetJson = [
   },
 ];
 
-function TopologyCanvas({ elements }: { elements: TopologyElement[] }) {
+function TopologyCanvas({
+  elements,
+  onNodeTap,
+}: {
+  elements: TopologyElement[];
+  onNodeTap?: (deviceId: string) => void;
+}) {
   const container = useRef<HTMLDivElement>(null);
+  // A ref, not an effect dependency: onNodeTap is a fresh closure on every
+  // parent render (e.g. the refresh-interval poll), and rebuilding the whole
+  // cytoscape instance for that would lose in-progress drag state and
+  // re-trigger the layout for no reason.
+  const onNodeTapRef = useRef(onNodeTap);
+  useEffect(() => {
+    onNodeTapRef.current = onNodeTap;
+  }, [onNodeTap]);
 
   useEffect(() => {
     if (container.current === null) return undefined;
+    const hasSavedPositions = elements.every(
+      (element) => element.group === 'edges' || element.position !== undefined,
+    );
+    const layout: FcoseLayoutOptions | PresetLayoutOptions = hasSavedPositions
+      ? { name: 'preset', animate: false, fit: true, padding: 35 }
+      : {
+          name: 'fcose',
+          animate: false,
+          fit: true,
+          padding: 35,
+          // "proof" quality is required for nodeDimensionsIncludeLabels to take
+          // effect — it's what actually keeps labels from overlapping.
+          quality: 'proof',
+          nodeDimensionsIncludeLabels: true,
+          nodeSeparation: 90,
+          idealEdgeLength: 100,
+        };
     const graph = cytoscape({
       container: container.current,
       elements,
       style: topologyStyle,
-      layout: {
-        name: elements.every(
-          (element) => element.group === 'edges' || element.position !== undefined,
-        )
-          ? 'preset'
-          : 'cose',
-        animate: false,
-        fit: true,
-        padding: 35,
-      },
+      // cytoscape-fcose's own option type doesn't line up byte-for-byte with
+      // cytoscape core's LayoutOptions union under exactOptionalPropertyTypes,
+      // even though the shape fcose actually expects at runtime is correct.
+      layout: layout as LayoutOptions,
       boxSelectionEnabled: false,
       minZoom: 0.35,
       maxZoom: 2.5,
@@ -118,6 +151,10 @@ function TopologyCanvas({ elements }: { elements: TopologyElement[] }) {
         graph.nodes().map((node) => [node.id(), node.position()]),
       );
       localStorage.setItem(TOPOLOGY_POSITIONS_KEY, JSON.stringify(positions));
+    });
+    graph.on('tap', 'node', (event: cytoscape.EventObjectNode) => {
+      const id = event.target.id();
+      if (id.startsWith('device:')) onNodeTapRef.current?.(id.slice('device:'.length));
     });
     return () => graph.destroy();
   }, [elements]);
@@ -132,12 +169,20 @@ function TopologyCanvas({ elements }: { elements: TopologyElement[] }) {
   );
 }
 
-export function TopologyPage() {
+interface TopologyPageProps {
+  onFocusDevice?: (deviceId: string) => void;
+}
+
+export function TopologyPage({ onFocusDevice }: TopologyPageProps) {
   const [layoutRevision, setLayoutRevision] = useState(0);
   const [refreshSeconds, setRefreshSeconds] = useState(0);
   const [manualLinks, setManualLinks] = useState(() => loadManualTopologyLinks(localStorage));
   const [manualSource, setManualSource] = useState('');
   const [manualTarget, setManualTarget] = useState('');
+  const [showCdp, setShowCdp] = useState(true);
+  const [showLldp, setShowLldp] = useState(true);
+  const [registeredOnly, setRegisteredOnly] = useState(false);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>();
   const refreshInterval = refreshSeconds === 0 ? false : refreshSeconds * 1_000;
   const devices = useQuery({
     queryKey: ['devices'],
@@ -197,124 +242,169 @@ export function TopologyPage() {
   }));
   const positions = loadTopologyPositions(localStorage);
   const elements = buildTopologyElements(devices.data, neighborGroups, positions, manualLinks);
-  const nodeCount = elements.filter((element) => element.group === 'nodes').length;
-  const linkCount = elements.filter((element) => element.group === 'edges').length;
+  const filteredEdges = elements.filter(
+    (element): element is Extract<TopologyElement, { group: 'edges' }> =>
+      element.group === 'edges'
+      && (element.data.protocol === 'manual' ? true : element.data.protocol === 'cdp' ? showCdp : showLldp)
+      && (!registeredOnly
+        || (!element.data.source.startsWith('observed:') && !element.data.target.startsWith('observed:'))),
+  );
+  const connectedIds = new Set(filteredEdges.flatMap((edge) => [edge.data.source, edge.data.target]));
+  const filteredNodes = elements.filter(
+    (element): element is Extract<TopologyElement, { group: 'nodes' }> =>
+      element.group === 'nodes'
+      && (element.data.kind === 'registered' || (!registeredOnly && connectedIds.has(element.data.id))),
+  );
+  const filteredElements: TopologyElement[] = [...filteredNodes, ...filteredEdges];
+  const nodeCount = filteredElements.filter((element) => element.group === 'nodes').length;
+  const linkCount = filteredElements.filter((element) => element.group === 'edges').length;
   const saveManualLinks = (links: typeof manualLinks) => {
     setManualLinks(links);
     localStorage.setItem(TOPOLOGY_MANUAL_LINKS_KEY, JSON.stringify(links));
   };
+  const selectedDevice = devices.data.find((device) => device.id === selectedDeviceId) ?? null;
+  // Editing or deleting isn't built for this page — hand off to Inventory,
+  // which already owns the device mutation and safety-gate wiring, rather
+  // than duplicating it here for a second entry point.
+  const focusInInventory = (device: { id: string }) => onFocusDevice?.(device.id);
 
   return (
-    <main className="topology-page">
-      <header className="page-header">
-        <div>
-          <span className="eyebrow">PHASE 2 / OBSERVED TOPOLOGY</span>
-          <h1>Network topology</h1>
-          <p>Read-only projection from registered inventory and saved CDP/LLDP evidence.</p>
-        </div>
-        <Badge tone="success">NO DEVICE WRITES</Badge>
-      </header>
-      <section className="topology-panel" aria-labelledby="topology-heading">
-        {staleError ? (
-          <div className="topology-stale-alert" role="alert">
-            <span>Refresh failed. Showing last observed topology.</span>
-            <Button
-              size="small"
-              onClick={() => {
-                void devices.refetch();
-                void Promise.all(neighborQueries.map((query) => query.refetch()));
-              }}
-            >
-              Retry
-            </Button>
-          </div>
-        ) : null}
-        <div className="topology-toolbar">
+    <div className="workspace-layout">
+      <main className="topology-page">
+        <header className="page-header">
           <div>
-            <h2 id="topology-heading">Observed graph</h2>
-            <span>{nodeCount} nodes / {linkCount} links</span>
+            <span className="eyebrow">PHASE 2 / OBSERVED TOPOLOGY</span>
+            <h1>Network topology</h1>
+            <p>Read-only projection from registered inventory and saved CDP/LLDP evidence.</p>
           </div>
-          <div className="topology-tools">
-            <div className="topology-legend" aria-label="Topology legend">
-              <span><i className="topology-dot topology-dot--registered" /> Registered</span>
-              <span><i className="topology-dot topology-dot--observed" /> Observed only</span>
-              <span><i className="topology-line topology-line--manual" /> Unverified link</span>
-            </div>
-            <label className="topology-refresh-interval">
-              Refresh
-              <select
-                value={refreshSeconds}
-                onChange={(event) => setRefreshSeconds(Number(event.target.value))}
+          <Badge tone="success">NO DEVICE WRITES</Badge>
+        </header>
+        <section className="topology-panel" aria-labelledby="topology-heading">
+          {staleError ? (
+            <div className="topology-stale-alert" role="alert">
+              <span>Refresh failed. Showing last observed topology.</span>
+              <Button
+                size="small"
+                onClick={() => {
+                  void devices.refetch();
+                  void Promise.all(neighborQueries.map((query) => query.refetch()));
+                }}
               >
-                <option value={0}>Manual</option>
-                <option value={30}>30 sec</option>
-                <option value={60}>60 sec</option>
-              </select>
-            </label>
-            <Button
-              size="small"
-              busy={refreshing}
-              onClick={() => {
-                void devices.refetch();
-                void Promise.all(neighborQueries.map((query) => query.refetch()));
-              }}
-            >
-              <RefreshCw size={13} /> Refresh view
-            </Button>
-            <Button
-              size="small"
-              onClick={() => {
-                localStorage.removeItem(TOPOLOGY_POSITIONS_KEY);
-                setLayoutRevision(layoutRevision + 1);
-              }}
-            >
-              Reset layout
-            </Button>
+                Retry
+              </Button>
+            </div>
+          ) : null}
+          <div className="topology-toolbar">
+            <div>
+              <h2 id="topology-heading">Observed graph</h2>
+              <span>{nodeCount} nodes / {linkCount} links</span>
+            </div>
+            <div className="topology-tools">
+              <div className="topology-legend" aria-label="Topology legend">
+                <span><i className="topology-dot topology-dot--registered" /> Registered</span>
+                <span><i className="topology-dot topology-dot--observed" /> Observed only</span>
+                <span><i className="topology-line topology-line--manual" /> Unverified link</span>
+              </div>
+              <div className="topology-filters">
+                <label className="usb-console-echo">
+                  <input type="checkbox" checked={showCdp} onChange={(event) => setShowCdp(event.target.checked)} />
+                  CDP
+                </label>
+                <label className="usb-console-echo">
+                  <input type="checkbox" checked={showLldp} onChange={(event) => setShowLldp(event.target.checked)} />
+                  LLDP
+                </label>
+                <label className="usb-console-echo">
+                  <input
+                    type="checkbox"
+                    checked={registeredOnly}
+                    onChange={(event) => setRegisteredOnly(event.target.checked)}
+                  />
+                  Registered only
+                </label>
+              </div>
+              <label className="topology-refresh-interval">
+                Refresh
+                <select
+                  value={refreshSeconds}
+                  onChange={(event) => setRefreshSeconds(Number(event.target.value))}
+                >
+                  <option value={0}>Manual</option>
+                  <option value={30}>30 sec</option>
+                  <option value={60}>60 sec</option>
+                </select>
+              </label>
+              <Button
+                size="small"
+                busy={refreshing}
+                onClick={() => {
+                  void devices.refetch();
+                  void Promise.all(neighborQueries.map((query) => query.refetch()));
+                }}
+              >
+                <RefreshCw size={13} /> Refresh view
+              </Button>
+              <Button
+                size="small"
+                onClick={() => {
+                  localStorage.removeItem(TOPOLOGY_POSITIONS_KEY);
+                  setLayoutRevision(layoutRevision + 1);
+                }}
+              >
+                Reset layout
+              </Button>
+            </div>
           </div>
-        </div>
-        <div className="topology-manual-links">
-          <strong>Manual evidence</strong>
-          <select aria-label="Manual link source" value={manualSource} onChange={(event) => setManualSource(event.target.value)}>
-            <option value="">Source device</option>
-            {devices.data.map((device) => <option key={device.id} value={device.id}>{device.name}</option>)}
-          </select>
-          <select aria-label="Manual link target" value={manualTarget} onChange={(event) => setManualTarget(event.target.value)}>
-            <option value="">Target device</option>
-            {devices.data.map((device) => <option key={device.id} value={device.id}>{device.name}</option>)}
-          </select>
-          <Button
-            size="small"
-            disabled={!manualSource || !manualTarget || manualSource === manualTarget}
-            onClick={() => {
-              saveManualLinks([
-                ...manualLinks,
-                { id: crypto.randomUUID(), sourceDeviceId: manualSource, targetDeviceId: manualTarget },
-              ]);
-              setManualSource('');
-              setManualTarget('');
-            }}
-          >
-            Add unverified link
-          </Button>
-          {manualLinks.map((link) => (
+          <div className="topology-manual-links">
+            <strong>Manual evidence</strong>
+            <select aria-label="Manual link source" value={manualSource} onChange={(event) => setManualSource(event.target.value)}>
+              <option value="">Source device</option>
+              {devices.data.map((device) => <option key={device.id} value={device.id}>{device.name}</option>)}
+            </select>
+            <select aria-label="Manual link target" value={manualTarget} onChange={(event) => setManualTarget(event.target.value)}>
+              <option value="">Target device</option>
+              {devices.data.map((device) => <option key={device.id} value={device.id}>{device.name}</option>)}
+            </select>
             <Button
-              key={link.id}
               size="small"
-              variant="ghost"
-              aria-label="Remove unverified link"
-              onClick={() => saveManualLinks(manualLinks.filter((item) => item.id !== link.id))}
+              disabled={!manualSource || !manualTarget || manualSource === manualTarget}
+              onClick={() => {
+                saveManualLinks([
+                  ...manualLinks,
+                  { id: crypto.randomUUID(), sourceDeviceId: manualSource, targetDeviceId: manualTarget },
+                ]);
+                setManualSource('');
+                setManualTarget('');
+              }}
             >
-              <Trash2 size={12} /> UNVERIFIED
+              Add unverified link
             </Button>
-          ))}
-        </div>
-        <TopologyCanvas elements={elements} />
-        <p className="topology-note">
-          Drag nodes to save positions in this browser. Observed nodes remain evidence, not inventory records.
-          Manual links stay local and are always labeled UNVERIFIED.
-        </p>
-      </section>
-    </main>
+            {manualLinks.map((link) => (
+              <Button
+                key={link.id}
+                size="small"
+                variant="ghost"
+                aria-label="Remove unverified link"
+                onClick={() => saveManualLinks(manualLinks.filter((item) => item.id !== link.id))}
+              >
+                <Trash2 size={12} /> UNVERIFIED
+              </Button>
+            ))}
+          </div>
+          <TopologyCanvas elements={filteredElements} onNodeTap={setSelectedDeviceId} />
+          <p className="topology-note">
+            Drag nodes to save positions in this browser. Observed nodes remain evidence, not inventory records.
+            Manual links stay local and are always labeled UNVERIFIED.
+          </p>
+        </section>
+      </main>
+      <DeviceInspector
+        device={selectedDevice}
+        onClose={() => setSelectedDeviceId(undefined)}
+        onEdit={focusInInventory}
+        onDelete={focusInInventory}
+      />
+    </div>
   );
 }
 

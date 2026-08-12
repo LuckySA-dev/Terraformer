@@ -21,82 +21,120 @@ import type { TopologyElement } from './topology';
 
 cytoscape.use(fcose);
 
-const topologyStyle: StylesheetJson = [
-  {
-    selector: 'node',
-    style: {
-      label: 'data(label)',
-      'background-color': '#71817d',
-      'border-color': '#ffffff',
-      'border-width': 3,
-      color: '#24312f',
-      'font-size': 10,
-      'font-weight': 700,
-      'text-background-color': '#ffffff',
-      'text-background-opacity': 0.9,
-      'text-background-padding': '3px',
-      'text-margin-y': 10,
-      'text-valign': 'bottom',
-      'text-wrap': 'wrap',
-      'text-max-width': '80px',
-      height: 34,
-      width: 34,
+// Cytoscape renders to its own canvas, not the DOM, so its style values are
+// literal colors resolved once at graph-build time -- a CSS var() string
+// here would not be looked up the way it is in a stylesheet. Two fixed
+// palettes, chosen by prefers-color-scheme, stand in for the CSS custom
+// properties the rest of the app uses.
+function buildTopologyStyle(dark: boolean): StylesheetJson {
+  const c = dark
+    ? {
+        node: '#8b9c97',
+        nodeBorder: '#151f22',
+        text: '#e6ecea',
+        textBg: '#151f22',
+        registered: '#3fbfa5',
+        unreachable: '#f08a8f',
+        observed: '#151f22',
+        observedBorder: '#7d8b90',
+        edge: '#4a5c57',
+        edgeText: '#9aa8ad',
+        edgeTextBg: '#111a1c',
+        lldp: '#8891c9',
+        manual: '#d99a3f',
+      }
+    : {
+        node: '#71817d',
+        nodeBorder: '#ffffff',
+        text: '#24312f',
+        textBg: '#ffffff',
+        registered: '#196b5b',
+        unreachable: '#ba4650',
+        observed: '#ffffff',
+        observedBorder: '#7c8d89',
+        edge: '#8fa6a0',
+        edgeText: '#556762',
+        edgeTextBg: '#f7faf9',
+        lldp: '#7180b9',
+        manual: '#b17b24',
+      };
+  return [
+    {
+      selector: 'node',
+      style: {
+        label: 'data(label)',
+        'background-color': c.node,
+        'border-color': c.nodeBorder,
+        'border-width': 3,
+        color: c.text,
+        'font-size': 10,
+        'font-weight': 700,
+        'text-background-color': c.textBg,
+        'text-background-opacity': 0.9,
+        'text-background-padding': '3px',
+        'text-margin-y': 10,
+        'text-valign': 'bottom',
+        'text-wrap': 'wrap',
+        'text-max-width': '80px',
+        height: 34,
+        width: 34,
+      },
     },
-  },
-  {
-    selector: 'node[kind = "registered"]',
-    style: {
-      'background-color': '#196b5b',
-      height: 42,
-      width: 42,
+    {
+      selector: 'node[kind = "registered"]',
+      style: {
+        'background-color': c.registered,
+        height: 42,
+        width: 42,
+      },
     },
-  },
-  {
-    selector: 'node[status = "unreachable"]',
-    style: { 'background-color': '#ba4650' },
-  },
-  {
-    selector: 'node[kind = "observed"]',
-    style: {
-      'background-color': '#ffffff',
-      'border-color': '#7c8d89',
-      'border-style': 'dashed',
-      'border-width': 2,
+    {
+      selector: 'node[status = "unreachable"]',
+      style: { 'background-color': c.unreachable },
     },
-  },
-  {
-    selector: 'edge',
-    style: {
-      label: 'data(label)',
-      width: 2,
-      'line-color': '#8fa6a0',
-      'target-arrow-color': '#8fa6a0',
-      'target-arrow-shape': 'triangle',
-      'curve-style': 'bezier',
-      color: '#556762',
-      'font-size': 8,
-      'text-background-color': '#f7faf9',
-      'text-background-opacity': 1,
-      'text-background-padding': '2px',
-      'text-rotation': 'autorotate',
+    {
+      selector: 'node[kind = "observed"]',
+      style: {
+        'background-color': c.observed,
+        'border-color': c.observedBorder,
+        'border-style': 'dashed',
+        'border-width': 2,
+      },
     },
-  },
-  {
-    selector: 'edge[protocol = "lldp"]',
-    style: {
-      'line-color': '#7180b9',
-      'target-arrow-color': '#7180b9',
+    {
+      selector: 'edge',
+      style: {
+        label: 'data(label)',
+        width: 2,
+        'line-color': c.edge,
+        'target-arrow-color': c.edge,
+        'target-arrow-shape': 'triangle',
+        'curve-style': 'bezier',
+        color: c.edgeText,
+        'font-size': 8,
+        'text-background-color': c.edgeTextBg,
+        'text-background-opacity': 1,
+        'text-background-padding': '2px',
+        'text-rotation': 'autorotate',
+      },
     },
-  },
-  {
-    selector: 'edge[protocol = "manual"]',
-    style: {
-      'line-color': '#b17b24',
-      'line-style': 'dashed',
-      'target-arrow-color': '#b17b24',
+    {
+      selector: 'edge[protocol = "lldp"]',
+      style: {
+        'line-color': c.lldp,
+        'target-arrow-color': c.lldp,
+      },
     },
-  },
-];
+    {
+      selector: 'edge[protocol = "manual"]',
+      style: {
+        'line-color': c.manual,
+        'line-style': 'dashed',
+        'target-arrow-color': c.manual,
+      },
+    },
+  ];
+}
 
 function TopologyCanvas({
   elements,
@@ -114,6 +152,16 @@ function TopologyCanvas({
   useEffect(() => {
     onNodeTapRef.current = onNodeTap;
   }, [onNodeTap]);
+
+  const [prefersDark, setPrefersDark] = useState(
+    () => window.matchMedia('(prefers-color-scheme: dark)').matches,
+  );
+  useEffect(() => {
+    const query = window.matchMedia('(prefers-color-scheme: dark)');
+    const onChange = (event: MediaQueryListEvent) => setPrefersDark(event.matches);
+    query.addEventListener('change', onChange);
+    return () => query.removeEventListener('change', onChange);
+  }, []);
 
   // elements is a freshly built array on every parent render (it's derived,
   // unmemoized, and filter-dependent), so comparing it by reference below
@@ -156,7 +204,7 @@ function TopologyCanvas({
     const graph = cytoscape({
       container: container.current,
       elements,
-      style: topologyStyle,
+      style: buildTopologyStyle(prefersDark),
       // cytoscape-fcose's own option type doesn't line up byte-for-byte with
       // cytoscape core's LayoutOptions union under exactOptionalPropertyTypes,
       // even though the shape fcose actually expects at runtime is correct.
@@ -183,7 +231,7 @@ function TopologyCanvas({
       if (id.startsWith('device:')) onNodeTapRef.current?.(id.slice('device:'.length));
     });
     return () => graph.destroy();
-  }, [stableElements]);
+  }, [stableElements, prefersDark]);
 
   return (
     <div

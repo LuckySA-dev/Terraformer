@@ -2390,8 +2390,8 @@ p {
   height: min(620px, calc(100vh - 215px));
   min-height: 390px;
   background:
-    radial-gradient(circle at 1px 1px, #dce6e3 1px, transparent 0) 0 0 / 22px 22px,
-    #f7faf9;
+    radial-gradient(circle at 1px 1px, var(--border) 1px, transparent 0) 0 0 / 22px 22px,
+    var(--surface);
 }
 
 .topology-manual-links {

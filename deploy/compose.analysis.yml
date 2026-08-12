@@ -26,7 +26,22 @@ services:
     volumes:
       - batfish_data:/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9996/ >/dev/null || exit 1"]
+      # batfish/allinone:latest ships no curl/wget (confirmed 2026-08-12,
+      # Ubuntu 24.04 base) but does have python3. The coordinator's "/" has
+      # no handler and correctly 404s while up, so this only needs to prove
+      # the socket accepts a request -- any HTTP response, including 404,
+      # means healthy; only a connection-level error (refused/timeout,
+      # uncaught here) should fail the check.
+      test:
+        - "CMD-SHELL"
+        - |
+          python3 -c "
+          import urllib.error, urllib.request
+          try:
+              urllib.request.urlopen('http://127.0.0.1:9996/', timeout=5)
+          except urllib.error.HTTPError:
+              pass
+          "
       interval: 15s
       timeout: 5s
       retries: 10

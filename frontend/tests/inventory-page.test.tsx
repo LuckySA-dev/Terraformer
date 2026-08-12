@@ -19,6 +19,7 @@ vi.mock('../src/api/network', () => ({
     snapshots: vi.fn(),
     events: vi.fn(),
     testDeviceConnection: vi.fn(),
+    refreshDevice: vi.fn(),
   },
 }));
 
@@ -183,5 +184,47 @@ describe('InventoryPage device inspector collapse', () => {
     // fresh instance and reset to the Overview tab -- and for a device with
     // an in-progress Configure preview, would silently discard it too.
     expect(await screen.findByRole('button', { name: 'Interfaces' })).toHaveClass('is-active');
+  });
+});
+
+describe('InventoryPage refresh all', () => {
+  const second: Device = { ...device, id: '5f7837b9-4bf2-49ab-8205-c9acbf15a31d', name: 'Core switch' };
+
+  beforeEach(() => {
+    vi.mocked(api.credentialProfiles).mockResolvedValue([credential]);
+  });
+
+  it('queues a refresh job for every registered device', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.devices).mockResolvedValue([device, second]);
+    vi.mocked(api.refreshDevice).mockResolvedValue({
+      id: 'a1b2c3d4-df32-4a9e-9df0-6e6f8a2b6a11',
+      type: 'refresh_device',
+      state: 'queued',
+      device_id: device.id,
+      result: null,
+      error_code: null,
+      error_message: null,
+      created_at: '2026-07-12T01:00:00Z',
+      updated_at: '2026-07-12T01:00:00Z',
+      started_at: null,
+      finished_at: null,
+    });
+    renderInventory();
+    await screen.findByText('Edge router');
+
+    await user.click(screen.getByRole('button', { name: 'Refresh all' }));
+
+    expect(api.refreshDevice).toHaveBeenCalledWith(device.id);
+    expect(api.refreshDevice).toHaveBeenCalledWith(second.id);
+    expect(api.refreshDevice).toHaveBeenCalledTimes(2);
+  });
+
+  it('disables refresh all when the inventory is empty', async () => {
+    vi.mocked(api.devices).mockResolvedValue([]);
+    renderInventory();
+
+    expect(await screen.findByRole('button', { name: 'Refresh all' })).toBeDisabled();
+    expect(api.refreshDevice).not.toHaveBeenCalled();
   });
 });

@@ -8,6 +8,7 @@ import {
   MoreHorizontal,
   Plus,
   Radar,
+  RefreshCw,
   Router,
   Search,
   ShieldCheck,
@@ -177,7 +178,15 @@ export function InventoryPage({ focusDeviceId }: InventoryPageProps) {
     localStorage.setItem('terraformer.inspector.collapsed', '0');
   };
 
-  const devices = useQuery({ queryKey: ['devices'], queryFn: api.devices, retry: false });
+  // Polls briefly after "Refresh all" so newly queued jobs' status updates
+  // (e.g. a device going unreachable) show up without a manual page reload.
+  const [refreshingAll, setRefreshingAll] = useState(false);
+  const devices = useQuery({
+    queryKey: ['devices'],
+    queryFn: api.devices,
+    retry: false,
+    refetchInterval: refreshingAll ? 2_000 : false,
+  });
   const credentials = useQuery({
     queryKey: ['credential-profiles'],
     queryFn: api.credentialProfiles,
@@ -231,6 +240,16 @@ export function InventoryPage({ focusDeviceId }: InventoryPageProps) {
       await queryClient.invalidateQueries({ queryKey: ['events'] });
     },
   });
+  const refreshAll = useMutation({
+    mutationFn: () => Promise.all((devices.data ?? []).map((device) => api.refreshDevice(device.id))),
+    onSuccess: () => {
+      setRefreshingAll(true);
+      // Each refresh is a background job (connection test, timeout up to
+      // SSH_CONNECT_TIMEOUT_SECONDS); this is long enough for most to land,
+      // short enough not to poll forever if one hangs at its timeout.
+      setTimeout(() => setRefreshingAll(false), 15_000);
+    },
+  });
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -264,6 +283,14 @@ export function InventoryPage({ focusDeviceId }: InventoryPageProps) {
             <p>Structured writes require explicit preview and apply; manual terminals are Direct Mode.</p>
           </div>
           <div className="page-header__actions">
+            <Button
+              onClick={() => refreshAll.mutate()}
+              busy={refreshAll.isPending}
+              disabled={(devices.data ?? []).length === 0}
+              title="Re-check connectivity for every registered device"
+            >
+              <RefreshCw size={16} /> Refresh all
+            </Button>
             <Button onClick={() => setUsbConsoleOpen(true)}>
               <Cable size={16} /> Open USB Console
             </Button>

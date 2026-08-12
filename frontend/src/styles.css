@@ -146,12 +146,12 @@ p {
 .button--secondary {
   background: var(--surface);
   border-color: var(--border-strong);
-  color: #334248;
+  color: var(--ink);
 }
 
 .button--secondary:hover:not(:disabled) {
-  border-color: #aebbb6;
-  background: #fafcfb;
+  border-color: var(--border-strong);
+  background: var(--surface-soft);
 }
 
 .button--ghost {
@@ -222,8 +222,8 @@ p {
   font-weight: 800;
   letter-spacing: 0.055em;
   text-transform: uppercase;
-  color: #58666b;
-  background: #edf0ef;
+  color: var(--muted);
+  background: var(--surface-muted);
 }
 
 .badge__dot {
@@ -652,19 +652,19 @@ p {
 
 .inline-notice--safe,
 .inline-notice--info {
-  border-color: #cfe4df;
+  border-color: var(--border);
   color: var(--teal-dark);
-  background: #f1f8f6;
+  background: var(--teal-soft);
 }
 
 .inline-notice--warning {
-  border-color: #edd9b5;
+  border-color: var(--border);
   color: var(--amber);
-  background: #fff9ed;
+  background: var(--amber-soft);
 }
 
 .inline-notice--danger {
-  border-color: #f0c6ca;
+  border-color: var(--border);
   color: var(--red);
   background: var(--red-soft);
 }
@@ -1196,9 +1196,9 @@ p {
   justify-content: space-between;
   gap: 18px;
   padding: 0 14px;
-  border-top: 1px solid #d9dfdc;
-  color: #7b878a;
-  background: #f6f8f7;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  background: var(--surface);
   font-size: 8px;
 }
 
@@ -1239,7 +1239,7 @@ p {
 .status-separator {
   width: 1px;
   height: 11px;
-  background: #dce2df;
+  background: var(--border);
 }
 
 /* Inventory workspace */
@@ -1446,8 +1446,8 @@ p {
 .device-table th {
   padding: 9px 12px;
   border-bottom: 1px solid var(--border);
-  color: #8a9698;
-  background: #fafbfa;
+  color: var(--muted);
+  background: var(--surface-soft);
   font-size: 7px;
   font-weight: 800;
   letter-spacing: 0.08em;
@@ -1492,7 +1492,7 @@ p {
 }
 
 .device-table tr.is-selected td {
-  background: #f0f8f5;
+  background: var(--teal-soft);
 }
 
 .device-table tr.is-selected td:first-child {
@@ -1519,10 +1519,10 @@ p {
   display: grid;
   place-items: center;
   flex: 0 0 auto;
-  border: 1px solid #d8e4e0;
+  border: 1px solid var(--border);
   border-radius: 8px;
   color: var(--teal);
-  background: #f0f7f5;
+  background: var(--teal-soft);
 }
 
 .device-name > span:last-child {
@@ -1568,7 +1568,7 @@ p {
 .inspector--empty {
   position: relative;
   justify-content: center;
-  background: #f8faf9;
+  background: var(--surface);
 }
 
 .inspector__collapse {
@@ -1701,8 +1701,8 @@ p {
   justify-content: center;
   gap: 6px;
   border-top: 1px solid var(--border);
-  color: #758580;
-  background: #f8faf9;
+  color: var(--muted);
+  background: var(--surface);
   font-size: 7px;
   font-weight: 700;
   letter-spacing: 0.03em;
@@ -2151,8 +2151,8 @@ p {
 }
 
 .snapshot-list button:hover {
-  border-color: #b9c9c4;
-  background: #f8fbfa;
+  border-color: var(--border-strong);
+  background: var(--surface-soft);
 }
 
 .snapshot-list button > span {

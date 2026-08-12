@@ -262,6 +262,12 @@ export function InventoryPage({ focusDeviceId }: InventoryPageProps) {
   }, [devices.data, search]);
 
   const selectedDevice = devices.data?.find((device) => device.id === selectedId) ?? null;
+  // No device picked yet -- the inspector has nothing to show beyond the
+  // same "choose a device" placeholder the empty grid space already implies,
+  // so give the table the full width instead of reserving a panel for it.
+  // Selecting a device (selectDevice()) always clears the manual collapse
+  // flag too, so this never fights the operator's own choice to collapse it.
+  const hideInspector = inspectorCollapsed || selectedDevice === null;
   const reachable = (devices.data ?? []).filter(
     (device) => device.status === 'reachable',
   ).length;
@@ -274,7 +280,7 @@ export function InventoryPage({ focusDeviceId }: InventoryPageProps) {
   ).length;
 
   return (
-    <div className={inspectorCollapsed ? 'workspace-layout workspace-layout--inspector-collapsed' : 'workspace-layout'}>
+    <div className={hideInspector ? 'workspace-layout workspace-layout--inspector-collapsed' : 'workspace-layout'}>
       <main className="workspace-main">
         <header className="page-header">
           <div>
@@ -371,7 +377,7 @@ export function InventoryPage({ focusDeviceId }: InventoryPageProps) {
       {/* Hidden via CSS, not unmounted: an unmount would reset every tab's
           local state (e.g. an in-progress Configure preview) even though
           the selected device never changed and collapsing looks reversible. */}
-      <div className={inspectorCollapsed ? 'inspector-slot inspector-slot--collapsed' : 'inspector-slot'}>
+      <div className={hideInspector ? 'inspector-slot inspector-slot--collapsed' : 'inspector-slot'}>
         <DeviceInspector
           key={selectedDevice?.id ?? 'empty'}
           device={selectedDevice}

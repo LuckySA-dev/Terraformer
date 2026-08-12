@@ -145,12 +145,21 @@ describe('InventoryPage device inspector collapse', () => {
     vi.mocked(api.events).mockResolvedValue([]);
   });
 
+  it('gives the table full width until a device is selected', async () => {
+    renderInventory();
+
+    const inspector = await screen.findByRole('complementary', { name: 'Device inspector' });
+    expect(inspector.closest('.inspector-slot')).toHaveClass('inspector-slot--collapsed');
+    expect(document.querySelector('.workspace-layout')).toHaveClass('workspace-layout--inspector-collapsed');
+  });
+
   it('collapses the inspector and re-expands it by reselecting the device', async () => {
     const user = userEvent.setup();
     renderInventory();
 
     await user.click(await screen.findByText('Edge router'));
     expect(await screen.findByRole('complementary', { name: 'Edge router inspector' })).toBeVisible();
+    expect(document.querySelector('.workspace-layout')).not.toHaveClass('workspace-layout--inspector-collapsed');
 
     await user.click(screen.getByRole('button', { name: 'Collapse inspector' }));
     // Hidden via CSS, not unmounted -- see the state-preservation test below

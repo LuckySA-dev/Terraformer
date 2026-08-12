@@ -2583,11 +2583,22 @@ p {
   display: none;
 }
 
-.app-shell--sidebar-collapsed .sidebar__brand,
 .app-shell--sidebar-collapsed .environment-chip,
 .app-shell--sidebar-collapsed .sidebar__nav button,
 .app-shell--sidebar-collapsed .session-button {
   justify-content: center;
+}
+
+.app-shell--sidebar-collapsed .sidebar__brand {
+  /* Row layout no longer fits: the 42px brand icon, its gap, and the 32px
+     collapse button add up to ~95px of fixed-size flex children while the
+     collapsed sidebar only has ~48px to give them, so the button (flex:
+     0 0 auto, refuses to shrink) overflowed past the sidebar's right edge
+     and .app-shell__content -- next in DOM order, so it paints on top --
+     silently ate every click meant for it. Stacking removes the
+     side-by-side width constraint entirely. */
+  flex-direction: column;
+  gap: 8px;
 }
 
 .app-shell--sidebar-collapsed .sidebar__collapse {

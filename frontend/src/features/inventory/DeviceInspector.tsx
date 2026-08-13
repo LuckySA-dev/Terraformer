@@ -13,7 +13,6 @@ import {
   LoaderCircle,
   ListTree,
   Network,
-  PanelRightClose,
   Pencil,
   PlugZap,
   RefreshCw,
@@ -64,7 +63,6 @@ interface DeviceInspectorProps {
   onClose: () => void;
   onEdit: (device: Device) => void;
   onDelete: (device: Device) => void;
-  onCollapse?: () => void;
 }
 
 const finalJobStates = new Set(['succeeded', 'failed', 'cancelled']);
@@ -506,7 +504,7 @@ function ActivityTab({ device }: { device: Device }) {
   return <EventTimeline events={events.data} compact />;
 }
 
-export function DeviceInspector({ device, onClose, onEdit, onDelete, onCollapse }: DeviceInspectorProps) {
+export function DeviceInspector({ device, onClose, onEdit, onDelete }: DeviceInspectorProps) {
   const [tab, setTab] = useState<InspectorTab>('overview');
   const [activeJob, setActiveJob] = useState<{ id: string; label: string }>();
   const queryClient = useQueryClient();
@@ -586,11 +584,6 @@ export function DeviceInspector({ device, onClose, onEdit, onDelete, onCollapse 
   if (device === null) {
     return (
       <aside className="inspector inspector--empty" aria-label="Device inspector">
-        {onCollapse === undefined ? null : (
-          <button type="button" className="icon-button inspector__collapse" onClick={onCollapse} aria-label="Collapse inspector">
-            <PanelRightClose size={16} />
-          </button>
-        )}
         <AppState
           kind="empty"
           title="Select a device"
@@ -629,11 +622,6 @@ export function DeviceInspector({ device, onClose, onEdit, onDelete, onCollapse 
             <span className="mono">{device.management_address}</span>
           </div>
         </div>
-        {onCollapse === undefined ? null : (
-          <button type="button" className="icon-button" onClick={onCollapse} aria-label="Collapse inspector">
-            <PanelRightClose size={16} />
-          </button>
-        )}
         <button type="button" className="icon-button inspector__close" onClick={onClose} aria-label="Close inspector">
           <X size={18} />
         </button>

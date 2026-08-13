@@ -935,10 +935,18 @@ p {
   margin-left: auto;
 }
 
-.sidebar__brand > div:last-child {
+.sidebar__brand-text {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 1px;
+}
+
+.sidebar__brand-text strong,
+.sidebar__brand-text span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sidebar__brand strong {
@@ -2320,6 +2328,14 @@ p {
   border-top: 2px solid var(--muted-2);
 }
 
+.topology-line--cdp {
+  border-color: #8fa6a0;
+}
+
+.topology-line--lldp {
+  border-color: #7180b9;
+}
+
 .topology-line--manual {
   border-color: #b17b24;
   border-top-style: dashed;
@@ -2512,7 +2528,8 @@ p {
   grid-template-columns: 74px minmax(0, 1fr);
 }
 
-.app-shell--sidebar-collapsed .sidebar__brand > div:last-child,
+.app-shell--sidebar-collapsed .sidebar__brand-text,
+.app-shell--sidebar-collapsed .brand-mark,
 .app-shell--sidebar-collapsed .environment-chip > div,
 .app-shell--sidebar-collapsed .sidebar__nav span,
 .app-shell--sidebar-collapsed .sidebar__section-label,
@@ -2567,7 +2584,8 @@ p {
     min-height: 100vh;
   }
 
-  .sidebar__brand > div:last-child,
+  .sidebar__brand-text,
+  .brand-mark,
   .environment-chip > div,
   .sidebar__nav span,
   .sidebar__section-label,

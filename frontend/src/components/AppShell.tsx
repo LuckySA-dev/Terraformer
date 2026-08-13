@@ -77,7 +77,7 @@ export function AppShell({ health, onLogout }: AppShellProps) {
           <div className="brand-mark" aria-hidden="true">
             <Network size={21} />
           </div>
-          <div>
+          <div className="sidebar__brand-text">
             <strong>Terraformer</strong>
             <span>Network playground</span>
           </div>

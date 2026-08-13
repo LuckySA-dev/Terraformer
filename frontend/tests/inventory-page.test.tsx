@@ -144,19 +144,30 @@ describe('InventoryPage device inspector collapse', () => {
     vi.mocked(api.events).mockResolvedValue([]);
   });
 
-  it('collapses the inspector and re-expands it by reselecting the device', async () => {
+  it('closes the inspector with its single close control and reopens on reselect', async () => {
     const user = userEvent.setup();
     renderInventory();
 
     await user.click(await screen.findByText('Edge router'));
     expect(await screen.findByRole('complementary', { name: 'Edge router inspector' })).toBeVisible();
 
-    await user.click(screen.getByRole('button', { name: 'Collapse inspector' }));
-    expect(screen.queryByRole('complementary', { name: 'Edge router inspector' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Close inspector' }));
+    expect(screen.queryByRole('complementary')).not.toBeInTheDocument();
     expect(localStorage.getItem('terraformer.inspector.collapsed')).toBe('1');
 
     await user.click(screen.getByText('Edge router'));
     expect(await screen.findByRole('complementary', { name: 'Edge router inspector' })).toBeVisible();
     expect(localStorage.getItem('terraformer.inspector.collapsed')).toBe('0');
+  });
+
+  it('offers exactly one control for dismissing the inspector', async () => {
+    const user = userEvent.setup();
+    renderInventory();
+
+    await user.click(await screen.findByText('Edge router'));
+    await screen.findByRole('complementary', { name: 'Edge router inspector' });
+
+    expect(screen.queryByRole('button', { name: /collapse inspector/i })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /close inspector/i })).toHaveLength(1);
   });
 });

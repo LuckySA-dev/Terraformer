@@ -5,20 +5,29 @@ import type { ReactNode } from 'react';
 import { api } from '../src/api/network';
 import { TopologyPage } from '../src/features/topology/TopologyPage';
 import {
+  abbreviateInterface,
   buildTopologyElements,
   loadManualTopologyLinks,
   TOPOLOGY_MANUAL_LINKS_KEY,
   loadTopologyPositions,
+  shortenDeviceLabel,
   TOPOLOGY_POSITIONS_KEY,
 } from '../src/features/topology/topology';
 import type { Device, DeviceNeighbor } from '../src/types/api';
 
-const graph = vi.hoisted(() => ({
-  create: vi.fn(),
-  destroy: vi.fn(),
-  nodes: vi.fn(() => []),
-  on: vi.fn(),
-}));
+const graph = vi.hoisted(() => {
+  // Array-like so the drag handler's .map() works, with the class helpers the
+  // selection effect calls on a cytoscape collection.
+  const collection = () =>
+    Object.assign([] as unknown[], { addClass: vi.fn(), removeClass: vi.fn() });
+  return {
+    create: vi.fn(),
+    destroy: vi.fn(),
+    nodes: vi.fn(() => collection()),
+    getElementById: vi.fn(() => collection()),
+    on: vi.fn(),
+  };
+});
 
 vi.mock('cytoscape', () => ({ default: Object.assign(graph.create, { use: vi.fn() }) }));
 vi.mock('../src/api/network', () => ({
@@ -89,6 +98,7 @@ describe('TopologyPage read-only projection', () => {
       destroy: graph.destroy,
       nodes: graph.nodes,
       on: graph.on,
+      getElementById: graph.getElementById,
     });
     vi.mocked(api.facts).mockResolvedValue({ device_id: device.id, facts: device.facts, last_seen_at: null });
     vi.mocked(api.interfaces).mockResolvedValue([]);
@@ -113,9 +123,29 @@ describe('TopologyPage read-only projection', () => {
       (element) => element.group === 'nodes' && element.data.kind === 'observed',
     );
     const link = elements.find((element) => element.group === 'edges');
-    expect(observed?.data.label).toBe(neighbor.remote_device_name);
+    // FQDN is shortened to the hostname, and interfaces to Cisco short forms,
+    // so a dense graph stays readable; protocol is carried by edge colour.
+    expect(observed?.data.label).toBe('dist-sw-01');
     expect(link?.data.protocol).toBe('cdp');
-    expect(link?.data.label).toBe('CDP · GigabitEthernet1 → GigabitEthernet0/1');
+    expect(link?.data.label).toBe('Gi1 → Gi0/1');
+  });
+
+  it.each([
+    ['GigabitEthernet1/0/1', 'Gi1/0/1'],
+    ['FastEthernet0/1', 'Fa0/1'],
+    ['TenGigabitEthernet1/1/1', 'Te1/1/1'],
+    ['Port-channel12', 'Po12'],
+    ['Vlan10', 'Vl10'],
+    ['unknown-iface0', 'unknown-iface0'],
+  ])('abbreviates %s to %s', (full, short) => {
+    expect(abbreviateInterface(full)).toBe(short);
+  });
+
+  it.each([
+    ['sw1.example.test', 'sw1'],
+    ['sw1', 'sw1'],
+  ])('shortens device label %s to %s', (full, short) => {
+    expect(shortenDeviceLabel(full)).toBe(short);
   });
 
   it('renders saved neighbor evidence as a graph', async () => {
@@ -172,6 +202,22 @@ describe('TopologyPage read-only projection', () => {
     expect(await screen.findByRole('complementary', { name: 'Edge router inspector' })).toBeVisible();
   });
 
+  it('does not rebuild or re-lay-out the graph when a node is tapped', async () => {
+    vi.mocked(api.devices).mockResolvedValue([device]);
+    vi.mocked(api.neighbors).mockResolvedValue([neighbor]);
+    render(<TopologyPage onFocusDevice={vi.fn()} />, { wrapper: TestProviders });
+    await screen.findByText('2 nodes / 1 links');
+    expect(graph.create).toHaveBeenCalledOnce();
+
+    tapNode(`device:${device.id}`);
+    await screen.findByRole('complementary', { name: 'Edge router inspector' });
+
+    // Selecting a node must not destroy the instance and re-run the layout,
+    // which visibly resets the graph the operator is working with.
+    expect(graph.create).toHaveBeenCalledOnce();
+    expect(graph.destroy).not.toHaveBeenCalled();
+  });
+
   it('does not open the inspector for an observed-only node', async () => {
     vi.mocked(api.devices).mockResolvedValue([device]);
     vi.mocked(api.neighbors).mockResolvedValue([neighbor]);
@@ -180,8 +226,9 @@ describe('TopologyPage read-only projection', () => {
 
     tapNode(`observed:${neighbor.id}`);
 
-    expect(screen.queryByRole('complementary', { name: 'Edge router inspector' })).not.toBeInTheDocument();
-    expect(screen.getByRole('complementary', { name: 'Device inspector' })).toBeVisible();
+    // With nothing selected the inspector is not rendered at all, so the
+    // graph keeps the full width instead of showing an empty side panel.
+    expect(screen.queryByRole('complementary')).not.toBeInTheDocument();
   });
 
   it('hands editing and deleting off to Inventory instead of doing it inline', async () => {

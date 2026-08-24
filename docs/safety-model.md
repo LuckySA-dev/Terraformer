@@ -176,7 +176,9 @@ Docker port binding does not make an application safe for untrusted networks.
 
 - Never pass a device password on a command line or store it on the device row.
 - Never place secrets in `.env`, a Compose URL, logs, event detail, diff text,
-  screenshots, exception messages, test artifacts, or fixtures.
+  screenshots, exception messages, test artifacts, or fixtures. AI context and
+  tool results (`app/assistant/`) join this list -- see the AI assistant
+  boundary below.
 - Encrypt credentials and sensitive snapshots with AES-GCM; unique nonces and
   authenticated metadata are required.
 - Keep the encryption key separate from PostgreSQL. Mount it read-only and
@@ -189,6 +191,40 @@ Docker port binding does not make an application safe for untrusted networks.
 If a secret may have leaked, stop affected services, preserve sanitized audit
 evidence, rotate the exposed credential at its source, and only then update the
 encrypted profile. Do not paste it into an issue or support chat.
+
+## AI assistant boundary
+
+The AI gateway (`app/assistant/`, behind `AI_GATEWAY_ENABLED`, off by
+default) is a BYOK proxy only -- this application never runs or bundles a
+model server; every request forwards to a user-supplied `base_url`.
+
+- The tool schema sent to the model never includes a write tool, in Confirm
+  or Auto mode. `app/assistant/tools.py`'s `READ_ONLY_TOOLS` wraps only
+  existing read endpoints; `propose_change_plan` drafts a `DRAFT` Change
+  Plan through the same pipeline a manual preview uses (`ChangeService.
+  preview()`, tagged `source=ai_generated`) and never touches a device by
+  itself -- a separate, human/mode-gated apply is required afterward.
+- Tool results pass through `app/assistant/sanitize.py`'s `scrub_secrets`
+  before they are serialized into model context, on top of already being
+  built from the same response schemas already served over the public REST
+  API -- never raw ORM rows or vault-decrypted material.
+- Auto mode is opt-in per `AssistantSession`, requires one explicit risk
+  acknowledgment, and always resets to Confirm for a new session -- there is
+  no mechanism that carries a previous session's mode forward. It bounds
+  Change Plan applies to a small per-session count before it requires
+  re-acknowledgment (currently enforced client-side only; see
+  `docs/superpowers/plans/2026-08-24-phase-4-ai-assistant.md` task 12 for the
+  server-side upgrade path).
+- The destructive-command blocklist (`erase`/`reload`/`format`/`factory
+  reset`, `app/assistant/blocklist.py`) is unconditional in both modes. It
+  governs only what this application will stage from an AI suggestion; it
+  does not and cannot restrict a human typing directly into an already-open
+  Direct Mode terminal on their own initiative.
+- There is no live relay from a chat suggestion into an open terminal
+  session. A staged console command is blocklist-checked, copied to the
+  clipboard, and the operator is sent to Inventory to pick the device and
+  paste it themselves -- the same review a human already applies to typing a
+  command directly.
 
 ## Device and lab rules
 

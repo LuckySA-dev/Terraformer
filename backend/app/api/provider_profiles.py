@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 
 from app.api.dependencies import Authenticated, ContainerDependency, SessionDependency
+from app.assistant.client import AIProviderConnectionError
 from app.core.errors import AIGatewayDisabledError
 from app.models import ProviderProfile
 from app.schemas.provider_profiles import (
@@ -91,3 +92,21 @@ def delete_profile(
 ) -> Response:
     _service(session, container).delete(profile_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/{profile_id}/probe", response_model=ProviderProfileView)
+async def probe_profile(
+    profile_id: UUID,
+    _auth: Authenticated,
+    session: SessionDependency,
+    container: ContainerDependency,
+):
+    try:
+        profile = await _service(session, container).probe_capabilities(
+            profile_id, container.ai_provider_client
+        )
+    except AIProviderConnectionError as exc:
+        raise HTTPException(
+            status_code=502, detail="Could not reach the configured endpoint"
+        ) from exc
+    return _view(profile)

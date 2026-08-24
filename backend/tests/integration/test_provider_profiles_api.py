@@ -66,3 +66,28 @@ def test_create_provider_profile_with_api_key_never_returns_it(
     assert body["has_api_key"] is True
     assert "api_key" not in body
     assert "sk-test-not-a-real-key" not in create.text
+
+
+class _FakeProviderClient:
+    async def probe_capabilities(self, *, base_url: str, api_key: str | None, model_id: str):
+        from app.assistant.client import ProviderCapabilities
+
+        return ProviderCapabilities(supports_streaming=True, supports_tool_calling=True)
+
+    async def stream_chat(self, **_kwargs):
+        return
+        yield  # pragma: no cover -- makes this an async generator; unused here
+
+
+def test_probe_updates_capability_flags(authenticated_client: TestClient, container) -> None:
+    container.ai_provider_client = _FakeProviderClient()
+    create = authenticated_client.post(
+        "/api/provider-profiles",
+        json={"name": "Probed", "base_url": "http://localhost:11434/v1", "model_id": "llama3.1"},
+    )
+    profile_id = create.json()["id"]
+
+    probed = authenticated_client.post(f"/api/provider-profiles/{profile_id}/probe")
+    assert probed.status_code == 200, probed.text
+    assert probed.json()["supports_streaming"] is True
+    assert probed.json()["supports_tool_calling"] is True

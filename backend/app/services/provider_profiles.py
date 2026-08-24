@@ -7,6 +7,7 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.assistant.client import AIProviderClient
 from app.core.errors import ArtifactIntegrityError, ConflictError
 from app.core.security import EnvelopeCipher
 from app.core.time import new_uuid
@@ -116,3 +117,16 @@ class ProviderProfileService:
         profile = self._profiles.get(profile_id)
         self._profiles.delete(profile)
         self._session.commit()
+
+    async def probe_capabilities(
+        self, profile_id: UUID, client: AIProviderClient
+    ) -> ProviderProfile:
+        profile = self._profiles.get(profile_id, for_update=True)
+        material = self._vault.decrypt(profile)
+        capabilities = await client.probe_capabilities(
+            base_url=profile.base_url, api_key=material.api_key, model_id=profile.model_id
+        )
+        profile.supports_streaming = capabilities.supports_streaming
+        profile.supports_tool_calling = capabilities.supports_tool_calling
+        self._session.commit()
+        return profile

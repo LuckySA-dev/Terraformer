@@ -1,10 +1,10 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { api } from '../src/api/network';
 import { AssistantPage } from '../src/features/assistant/AssistantPage';
-import type { ProviderProfile } from '../src/types/api';
+import type { AssistantSession, ProviderProfile } from '../src/types/api';
 
 vi.mock('../src/api/network', () => ({
   api: {
@@ -15,8 +15,30 @@ vi.mock('../src/api/network', () => ({
     probeProviderProfile: vi.fn(),
     assistantSessions: vi.fn(),
     createAssistantSession: vi.fn(),
+    applyChangePlan: vi.fn(),
   },
 }));
+
+class FakeWebSocket {
+  static instances: FakeWebSocket[] = [];
+  onopen: (() => void) | null = null;
+  onmessage: ((event: { data: string }) => void) | null = null;
+  onclose: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  sent: string[] = [];
+
+  constructor(public url: string) {
+    FakeWebSocket.instances.push(this);
+  }
+
+  send(data: string) {
+    this.sent.push(data);
+  }
+
+  close() {
+    this.onclose?.();
+  }
+}
 
 const profile: ProviderProfile = {
   id: '2ad0db14-5a87-4147-a4e7-c98f88322464',
@@ -40,7 +62,18 @@ function renderAssistant() {
   render(<AssistantPage />, { wrapper: TestProviders });
 }
 
+const session: AssistantSession = {
+  id: 'session-1',
+  provider_profile_id: profile.id,
+  mode: 'confirm',
+  auto_apply_count: 0,
+  created_at: '2026-08-24T00:00:00Z',
+  updated_at: '2026-08-24T00:00:00Z',
+};
+
 beforeEach(() => {
+  FakeWebSocket.instances = [];
+  vi.stubGlobal('WebSocket', FakeWebSocket);
   vi.mocked(api.assistantSessions).mockResolvedValue([]);
   vi.mocked(api.providerProfiles).mockResolvedValue([profile]);
 });
@@ -62,7 +95,8 @@ it('shows an empty state and offers to create the first profile', async () => {
 
   await user.click(screen.getByRole('button', { name: 'Provider profile' }));
 
-  expect(await screen.findByText('No provider profiles yet')).toBeVisible();
+  const dialog = await screen.findByRole('dialog', { name: 'Provider profiles' });
+  expect(within(dialog).getByText('No provider profiles yet')).toBeVisible();
 });
 
 it('creates a profile with an optional API key', async () => {
@@ -99,4 +133,24 @@ it('deletes a profile through a separate confirmation modal', async () => {
   await user.click(within(confirm).getByRole('button', { name: 'Remove profile' }));
 
   expect(api.deleteProviderProfile).toHaveBeenCalledWith(profile.id);
+});
+
+it('starts a new chat with the selected provider profile and connects the socket', async () => {
+  vi.mocked(api.createAssistantSession).mockResolvedValue(session);
+  const user = userEvent.setup();
+  renderAssistant();
+
+  await user.selectOptions(await screen.findByLabelText('Provider profile'), profile.id);
+  await user.click(screen.getByRole('button', { name: 'New chat' }));
+
+  expect(api.createAssistantSession).toHaveBeenCalledWith(profile.id);
+  await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+  expect(FakeWebSocket.instances[0]?.url).toContain('/ws/assistant/session-1');
+  expect(await screen.findByRole('log', { name: 'Assistant conversation' })).toBeVisible();
+});
+
+it('disables New chat until a provider profile is selected', async () => {
+  renderAssistant();
+
+  expect(await screen.findByRole('button', { name: 'New chat' })).toBeDisabled();
 });

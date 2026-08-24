@@ -1,13 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { KeyRound } from 'lucide-react';
-import { useState } from 'react';
+import { KeyRound, Send } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../../api/network';
 import { AppState, QueryErrorState } from '../../components/ui/AppState';
 import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
+import { SelectField } from '../../components/ui/FormField';
 import type { ProviderProfile, ProviderProfileInput } from '../../types/api';
+import { ChatTranscript } from './ChatTranscript';
+import { ModeToggle } from './ModeToggle';
 import { ProviderProfileForm } from './ProviderProfileForm';
 import { ProviderProfileList } from './ProviderProfileList';
+import { useAssistantChat } from './useAssistantChat';
 
 type ProviderDialog =
   | { mode: 'list' }
@@ -15,10 +19,21 @@ type ProviderDialog =
   | { mode: 'edit'; profile: ProviderProfile }
   | null;
 
+// ponytail: session-lifetime in-memory cap, not server-enforced yet -- fine
+// for a single-user local app where the operator watching the chat *is*
+// the trust boundary; upgrade to a server-checked AssistantSession.auto_apply_count
+// (already a column) if this ever needs to hold across tabs/restarts.
+const MAX_AUTO_APPLIES_PER_SESSION = 5;
+
 export function AssistantPage() {
   const queryClient = useQueryClient();
   const [providerDialog, setProviderDialog] = useState<ProviderDialog>(null);
   const [deleteTarget, setDeleteTarget] = useState<ProviderProfile>();
+  const [selectedProfileId, setSelectedProfileId] = useState('');
+  const [activeSessionId, setActiveSessionId] = useState<string>();
+  const [draft, setDraft] = useState('');
+  const autoAppliedPlanIds = useRef(new Set<string>());
+  const [applyingPlanId, setApplyingPlanId] = useState<string>();
 
   const profiles = useQuery({
     queryKey: ['provider-profiles'],
@@ -30,6 +45,40 @@ export function AssistantPage() {
     queryFn: api.assistantSessions,
     retry: false,
   });
+
+  const chat = useAssistantChat(activeSessionId);
+
+  const createSession = useMutation({
+    mutationFn: (providerProfileId: string) => api.createAssistantSession(providerProfileId),
+    onSuccess: async (created) => {
+      setActiveSessionId(created.id);
+      await queryClient.invalidateQueries({ queryKey: ['assistant-sessions'] });
+    },
+  });
+
+  const applyChangePlan = useMutation({
+    mutationFn: (planId: string) => api.applyChangePlan(planId),
+    onSettled: () => setApplyingPlanId(undefined),
+  });
+
+  useEffect(() => {
+    if (chat.mode !== 'auto') return;
+    const unapplied = chat.transcript.filter(
+      (entry) => entry.role === 'change_plan' && entry.plan !== undefined,
+    );
+    for (const entry of unapplied) {
+      const planId = entry.plan?.plan_id;
+      if (planId === undefined || autoAppliedPlanIds.current.has(planId)) continue;
+      if (autoAppliedPlanIds.current.size >= MAX_AUTO_APPLIES_PER_SESSION) {
+        chat.setMode('confirm', false);
+        break;
+      }
+      autoAppliedPlanIds.current.add(planId);
+      setApplyingPlanId(planId);
+      applyChangePlan.mutate(planId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- chat.setMode/transcript identity changes every render; re-running on mode alone is the intent
+  }, [chat.mode, chat.transcript]);
 
   const saveProfile = useMutation({
     mutationFn: ({
@@ -70,11 +119,85 @@ export function AssistantPage() {
         </Button>
       </header>
 
-      {sessions.isPending ? (
-        <AppState kind="loading" title="Loading sessions" message="Reading assistant session metadata…" compact />
+      {sessions.isPending || profiles.isPending ? (
+        <AppState kind="loading" title="Loading assistant" message="Reading assistant session metadata…" compact />
       ) : sessions.isError ? (
         <QueryErrorState error={sessions.error} onRetry={() => void sessions.refetch()} compact />
-      ) : null}
+      ) : profiles.isError ? (
+        <QueryErrorState error={profiles.error} onRetry={() => void profiles.refetch()} compact />
+      ) : activeSessionId === undefined ? (
+        profiles.data.length === 0 ? (
+          <AppState
+            kind="empty"
+            title="No provider profiles yet"
+            message="Add a provider profile before starting a chat."
+          />
+        ) : (
+          <div className="assistant-page__new-chat">
+            <SelectField
+              label="Provider profile"
+              value={selectedProfileId}
+              onChange={(event) => setSelectedProfileId(event.target.value)}
+            >
+              <option value="">Choose a profile…</option>
+              {profiles.data.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </SelectField>
+            <Button
+              variant="primary"
+              busy={createSession.isPending}
+              disabled={selectedProfileId === ''}
+              onClick={() => createSession.mutate(selectedProfileId)}
+            >
+              New chat
+            </Button>
+            {createSession.error === null ? null : (
+              <div className="form-error" role="alert">
+                {createSession.error.message}
+              </div>
+            )}
+          </div>
+        )
+      ) : (
+        <div className="assistant-page__chat">
+          <ModeToggle mode={chat.mode} onRequestChange={chat.setMode} />
+          {chat.pendingModeError === undefined ? null : (
+            <div className="form-error" role="alert">
+              {chat.pendingModeError}
+            </div>
+          )}
+          <ChatTranscript
+            entries={chat.transcript}
+            onApplyPlan={(planId) => {
+              setApplyingPlanId(planId);
+              applyChangePlan.mutate(planId);
+            }}
+            applyingPlanId={applyingPlanId}
+          />
+          <form
+            className="assistant-page__composer"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (draft.trim() === '') return;
+              chat.sendMessage(draft);
+              setDraft('');
+            }}
+          >
+            <input
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              aria-label="Message"
+              placeholder="Ask about a device, or request a change..."
+            />
+            <Button type="submit">
+              <Send size={16} /> Send
+            </Button>
+          </form>
+        </div>
+      )}
 
       <Modal
         open={providerDialog !== null}

@@ -387,7 +387,18 @@ export interface ProviderProfileInput {
   base_url: string;
   model_id: string;
   api_key?: string;
+  clear_api_key?: boolean;
   context_limit_override?: number;
+}
+
+export interface AssistantMessage {
+  id: string;
+  session_id: string;
+  role: 'user' | 'assistant' | 'tool';
+  content: string;
+  tool_calls: Record<string, unknown> | null;
+  tool_results: Record<string, unknown> | null;
+  created_at: string;
 }
 
 export type AssistantSessionMode = 'confirm' | 'auto';

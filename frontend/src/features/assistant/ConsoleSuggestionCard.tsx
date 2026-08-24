@@ -11,6 +11,7 @@ interface ConsoleSuggestionCardProps {
 export function ConsoleSuggestionCard({ command, sessionId, onOpenInventory }: ConsoleSuggestionCardProps) {
   const [withheld, setWithheld] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   const [checking, setChecking] = useState(false);
 
   return (
@@ -28,16 +29,26 @@ export function ConsoleSuggestionCard({ command, sessionId, onOpenInventory }: C
             busy={checking}
             onClick={async () => {
               setChecking(true);
+              setCopyFailed(false);
               try {
+                // Only a blocklist rejection may show the "withheld" notice.
+                // Folding a clipboard failure in here too would tell the
+                // operator a harmless command matched a destructive pattern.
                 await api.stageCommand(sessionId, command);
-                await navigator.clipboard.writeText(command);
-                setCopied(true);
-                onOpenInventory();
               } catch {
                 setWithheld(true);
+                setChecking(false);
+                return;
+              }
+              try {
+                await navigator.clipboard.writeText(command);
+                setCopied(true);
+              } catch {
+                setCopyFailed(true);
               } finally {
                 setChecking(false);
               }
+              onOpenInventory();
             }}
           >
             Copy and open Inventory
@@ -45,6 +56,12 @@ export function ConsoleSuggestionCard({ command, sessionId, onOpenInventory }: C
           {copied ? (
             <span className="mini-result mini-result--success" role="status">
               Copied -- select the device and paste it into its terminal.
+            </span>
+          ) : null}
+          {copyFailed ? (
+            <span className="mini-result" role="status">
+              This browser blocked the clipboard. The command passed its safety check -- copy it
+              from above by hand.
             </span>
           ) : null}
         </div>

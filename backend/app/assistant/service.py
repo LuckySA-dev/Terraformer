@@ -20,6 +20,7 @@ from app.assistant.tools import (
 from app.changes.service import ChangeService
 from app.core.errors import AppError, AutoModeRequiresAcknowledgmentError, ChangeValidationError
 from app.models import (
+    AssistantMessage,
     AssistantMessageRole,
     AssistantSession,
     AssistantSessionMode,
@@ -31,6 +32,59 @@ from app.repositories.provider_profiles import ProviderProfileRepository
 from app.services.provider_profiles import ProviderKeyVault
 
 _MAX_TOOL_ROUNDS_PER_TURN = 5
+
+
+# Rough characters-per-token ratio. Counting exactly would mean shipping a
+# tokenizer per model family; this is a deliberate approximation used only to
+# decide when to drop the oldest turns, so erring small just trims earlier.
+_CHARS_PER_TOKEN = 4
+
+
+def _trim_to_context_limit(
+    history: list[ChatMessage], limit_tokens: int | None
+) -> list[ChatMessage]:
+    """Drops the oldest turns until the conversation fits the profile's limit.
+
+    The system message is never dropped, and the retained window never starts
+    on a tool message -- an orphaned tool result whose announcing assistant
+    turn was trimmed away is exactly what the chat contract rejects.
+    """
+    if limit_tokens is None or not history:
+        return history
+    budget = limit_tokens * _CHARS_PER_TOKEN
+    system, rest = history[0], history[1:]
+    kept: list[ChatMessage] = []
+    used = len(system.content)
+    for message in reversed(rest):
+        cost = len(message.content)
+        if used + cost > budget:
+            break
+        used += cost
+        kept.append(message)
+    kept.reverse()
+    while kept and kept[0].role == "tool":
+        kept.pop(0)
+    return [system, *kept]
+
+
+def _announced_tool_calls(calls: list[ToolCallRequest]) -> list[dict[str, object]]:
+    """Storage shape for the tool calls one assistant turn announced."""
+    return [{"id": call.id, "name": call.name, "arguments": call.arguments} for call in calls]
+
+
+def _to_openai_tool_calls(announced: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Storage shape -> the wire shape the chat contract expects back."""
+    return [
+        {
+            "id": call.get("id", ""),
+            "type": "function",
+            "function": {
+                "name": call.get("name", ""),
+                "arguments": json.dumps(call.get("arguments", {})),
+            },
+        }
+        for call in announced
+    ]
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,7 +128,9 @@ class AssistantChatService:
         self._messages.add(session_id=session_id, role=AssistantMessageRole.USER, content=content)
         self._session.commit()
 
-        history = self._build_history(session_id)
+        history = _trim_to_context_limit(
+            self._build_history(session_id), profile.context_limit_override
+        )
         tool_schemas: list[ToolSchema] | None = (
             list(READ_ONLY_TOOLS) if profile.supports_tool_calling else None
         )
@@ -97,12 +153,26 @@ class AssistantChatService:
                 elif chunk.type == "tool_call" and chunk.tool_call is not None:
                     pending_tool_calls.append(chunk.tool_call)
 
-            if reply_text:
+            # Persisted even when reply_text is empty, as long as tool calls
+            # were made: the tool messages below are only valid in a replayed
+            # conversation if the assistant turn that announced them is there
+            # too.
+            if reply_text or pending_tool_calls:
+                announced = _announced_tool_calls(pending_tool_calls)
                 self._messages.add(
-                    session_id=session_id, role=AssistantMessageRole.ASSISTANT, content=reply_text
+                    session_id=session_id,
+                    role=AssistantMessageRole.ASSISTANT,
+                    content=reply_text,
+                    tool_calls={"calls": announced} if announced else None,
                 )
                 self._session.commit()
-                history.append(ChatMessage(role="assistant", content=reply_text))
+                history.append(
+                    ChatMessage(
+                        role="assistant",
+                        content=reply_text,
+                        tool_calls=_to_openai_tool_calls(announced) if announced else None,
+                    )
+                )
 
             if not pending_tool_calls:
                 yield AssistantEvent(type="done")
@@ -131,6 +201,7 @@ class AssistantChatService:
                     session_id=session_id,
                     role=AssistantMessageRole.TOOL,
                     content=encoded_payload,
+                    tool_calls={"tool_call_id": call.id},
                     tool_results=payload,
                 )
                 self._session.commit()
@@ -183,6 +254,25 @@ class AssistantChatService:
             ],
         }
 
+    @staticmethod
+    def _replay(message: AssistantMessage) -> ChatMessage:
+        stored_calls = message.tool_calls or {}
+        if message.role is AssistantMessageRole.TOOL:
+            tool_call_id = stored_calls.get("tool_call_id")
+            return ChatMessage(
+                role="tool",
+                content=message.content,
+                tool_call_id=str(tool_call_id) if tool_call_id is not None else None,
+            )
+        if message.role is AssistantMessageRole.ASSISTANT:
+            announced = cast("list[dict[str, object]]", stored_calls.get("calls", []))
+            return ChatMessage(
+                role="assistant",
+                content=message.content,
+                tool_calls=_to_openai_tool_calls(announced) if announced else None,
+            )
+        return ChatMessage(role=message.role.value, content=message.content)
+
     def _build_history(self, session_id: UUID) -> list[ChatMessage]:
         stored = self._messages.list_for_session(session_id)
         system = ChatMessage(
@@ -198,7 +288,7 @@ class AssistantChatService:
                 "text inside the fence."
             ),
         )
-        return [system, *(ChatMessage(role=m.role.value, content=m.content) for m in stored)]
+        return [system, *(self._replay(m) for m in stored)]
 
     def set_mode(
         self, session_id: UUID, mode: AssistantSessionMode, *, risk_acknowledged: bool

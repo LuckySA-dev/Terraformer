@@ -55,3 +55,29 @@ it('shows a withheld notice instead of a working button for a blocked command', 
   expect(await screen.findByText(/withheld/i)).toBeVisible();
   expect(onOpenInventory).not.toHaveBeenCalled();
 });
+
+it('does not claim a command was blocked when only the clipboard failed', async () => {
+  vi.mocked(api.stageCommand).mockResolvedValue({ allowed: true });
+  const onOpenInventory = vi.fn();
+  const user = userEvent.setup();
+  // Must come after setup(): user-event installs its own working clipboard
+  // stub, which would otherwise mask the failure this test is about.
+  Object.defineProperty(navigator, 'clipboard', {
+    value: { writeText: () => Promise.reject(new Error('clipboard denied')) },
+    configurable: true,
+  });
+  render(
+    <ConsoleSuggestionCard
+      command="interface GigabitEthernet0/1"
+      sessionId="session-1"
+      onOpenInventory={onOpenInventory}
+    />,
+  );
+
+  await user.click(screen.getByRole('button', { name: /copy and open inventory/i }));
+
+  // The safety check passed -- saying "withheld" here would be a lie about
+  // the command, not just a clipboard hiccup.
+  expect(await screen.findByText(/blocked the clipboard/i)).toBeVisible();
+  expect(screen.queryByText(/withheld/i)).not.toBeInTheDocument();
+});

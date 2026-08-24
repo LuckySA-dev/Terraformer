@@ -26,7 +26,12 @@ _PROBE_TOOL = cast(
 class ChatMessage(BaseModel):
     role: Literal["system", "user", "assistant", "tool"]
     content: str
+    # Both are required by the chat contract to replay a tool exchange: a
+    # tool message must name the call it answers, and the assistant message
+    # before it must carry the calls it announced. Dropping either makes the
+    # provider reject the whole conversation on the next turn.
     tool_call_id: str | None = None
+    tool_calls: list[dict[str, object]] | None = None
 
 
 class ToolSchema(BaseModel):

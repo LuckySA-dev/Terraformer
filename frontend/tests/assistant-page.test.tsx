@@ -14,6 +14,7 @@ vi.mock('../src/api/network', () => ({
     deleteProviderProfile: vi.fn(),
     probeProviderProfile: vi.fn(),
     assistantSessions: vi.fn(),
+    assistantMessages: vi.fn(),
     createAssistantSession: vi.fn(),
     applyChangePlan: vi.fn(),
     stageCommand: vi.fn(),
@@ -80,6 +81,7 @@ beforeEach(() => {
   FakeWebSocket.instances = [];
   vi.stubGlobal('WebSocket', FakeWebSocket);
   vi.mocked(api.assistantSessions).mockResolvedValue([]);
+  vi.mocked(api.assistantMessages).mockResolvedValue([]);
   vi.mocked(api.providerProfiles).mockResolvedValue([profile]);
 });
 
@@ -138,6 +140,80 @@ it('deletes a profile through a separate confirmation modal', async () => {
   await user.click(within(confirm).getByRole('button', { name: 'Remove profile' }));
 
   expect(api.deleteProviderProfile).toHaveBeenCalledWith(profile.id);
+});
+
+it('warns that an untested profile gives the assistant no device tools', async () => {
+  const user = userEvent.setup();
+  renderAssistant();
+
+  await user.click(screen.getByRole('button', { name: 'Provider profile' }));
+
+  const dialog = await screen.findByRole('dialog', { name: 'Provider profiles' });
+  expect(within(dialog).getByText(/no device tools/i)).toBeVisible();
+});
+
+it('runs a capability probe from the list and reflects the enabled tools', async () => {
+  vi.mocked(api.probeProviderProfile).mockResolvedValue({
+    ...profile,
+    supports_streaming: true,
+    supports_tool_calling: true,
+  });
+  const user = userEvent.setup();
+  renderAssistant();
+
+  await user.click(screen.getByRole('button', { name: 'Provider profile' }));
+  await user.click(
+    await screen.findByRole('button', { name: `Test connection for ${profile.name}` }),
+  );
+
+  expect(api.probeProviderProfile).toHaveBeenCalledWith(profile.id);
+});
+
+it('surfaces a failed probe instead of silently leaving tools off', async () => {
+  vi.mocked(api.probeProviderProfile).mockRejectedValue(
+    new Error('Could not reach the configured endpoint'),
+  );
+  const user = userEvent.setup();
+  renderAssistant();
+
+  await user.click(screen.getByRole('button', { name: 'Provider profile' }));
+  await user.click(
+    await screen.findByRole('button', { name: `Test connection for ${profile.name}` }),
+  );
+
+  expect(await screen.findByText('Could not reach the configured endpoint')).toBeVisible();
+});
+
+it('restores a persisted transcript when a session is opened', async () => {
+  vi.mocked(api.createAssistantSession).mockResolvedValue(session);
+  vi.mocked(api.assistantMessages).mockResolvedValue([
+    {
+      id: 'm1',
+      session_id: session.id,
+      role: 'user',
+      content: 'what changed yesterday?',
+      tool_calls: null,
+      tool_results: null,
+      created_at: '2026-08-24T00:00:00Z',
+    },
+    {
+      id: 'm2',
+      session_id: session.id,
+      role: 'assistant',
+      content: 'Nothing was applied yesterday.',
+      tool_calls: null,
+      tool_results: null,
+      created_at: '2026-08-24T00:00:01Z',
+    },
+  ]);
+  const user = userEvent.setup();
+  renderAssistant();
+
+  await user.selectOptions(await screen.findByLabelText('Provider profile'), profile.id);
+  await user.click(screen.getByRole('button', { name: 'New chat' }));
+
+  expect(await screen.findByText('what changed yesterday?')).toBeVisible();
+  expect(screen.getByText('Nothing was applied yesterday.')).toBeVisible();
 });
 
 it('starts a new chat with the selected provider profile and connects the socket', async () => {

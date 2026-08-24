@@ -2,6 +2,7 @@ import { apiRequest, apiRequestWithStatus } from './client';
 import type {
   AnalysisFinding,
   AnalysisSnapshot,
+  AssistantMessage,
   AssistantSession,
   ChangePlan,
   ChangeType,
@@ -213,6 +214,10 @@ export const api = {
       method: 'POST',
     }),
   assistantSessions: () => apiRequest<AssistantSession[]>('/assistant-sessions'),
+  assistantMessages: (sessionId: string) =>
+    apiRequest<AssistantMessage[]>(
+      `/assistant-sessions/${encodeURIComponent(sessionId)}/messages`,
+    ),
   createAssistantSession: (providerProfileId: string) =>
     apiRequest<AssistantSession>('/assistant-sessions', {
       method: 'POST',

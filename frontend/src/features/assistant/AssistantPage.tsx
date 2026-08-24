@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { KeyRound, Send } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../../api/network';
-import { AppState, QueryErrorState } from '../../components/ui/AppState';
+import { AppState, InlineNotice, QueryErrorState } from '../../components/ui/AppState';
 import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
 import { SelectField } from '../../components/ui/FormField';
@@ -114,6 +114,15 @@ export function AssistantPage({ onOpenInventory }: AssistantPageProps) {
     },
   });
 
+  // Without this, supports_tool_calling stays false forever and the assistant
+  // never receives a single tool -- no device reads, no change proposals.
+  const probeProfile = useMutation({
+    mutationFn: (profile: ProviderProfile) => api.probeProviderProfile(profile.id),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['provider-profiles'] });
+    },
+  });
+
   return (
     <div className="assistant-page">
       <header className="assistant-page__header">
@@ -168,6 +177,12 @@ export function AssistantPage({ onOpenInventory }: AssistantPageProps) {
       ) : (
         <div className="assistant-page__chat">
           <ModeToggle mode={chat.mode} onRequestChange={chat.setMode} />
+          {chat.connectionState === 'closed' ? (
+            <InlineNotice tone="warning" title="Disconnected">
+              The assistant connection closed. Start a new chat to keep going -- this conversation
+              is saved and will reload.
+            </InlineNotice>
+          ) : null}
           {chat.pendingModeError === undefined ? null : (
             <div className="form-error" role="alert">
               {chat.pendingModeError}
@@ -232,6 +247,9 @@ export function AssistantPage({ onOpenInventory }: AssistantPageProps) {
               onCreate={() => setProviderDialog({ mode: 'create' })}
               onEdit={(profile) => setProviderDialog({ mode: 'edit', profile })}
               onDelete={setDeleteTarget}
+              onProbe={(profile) => probeProfile.mutate(profile)}
+              probingProfileId={probeProfile.isPending ? probeProfile.variables.id : undefined}
+              probeError={probeProfile.error?.message}
             />
           )
         ) : providerDialog?.mode === 'create' || providerDialog?.mode === 'edit' ? (

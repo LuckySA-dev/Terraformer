@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { api } from '../../api/network';
 import type { AssistantSessionMode } from '../../types/api';
 
 export interface ChangePlanPayload {
@@ -37,6 +38,35 @@ export function useAssistantChat(sessionId: string | undefined) {
   const [connectionState, setConnectionState] = useState<'connecting' | 'open' | 'closed'>('connecting');
   const [pendingModeError, setPendingModeError] = useState<string>();
   const streamingEntryId = useRef<string | null>(null);
+
+  // Messages are persisted server-side, so a session opened in a new tab (or
+  // after a reload) would otherwise look empty while the model still has the
+  // full history -- a confusing mismatch.
+  useEffect(() => {
+    if (sessionId === undefined) return;
+    let cancelled = false;
+    void api
+      .assistantMessages(sessionId)
+      .then((stored) => {
+        if (cancelled) return;
+        setTranscript(
+          stored
+            .filter((message) => message.role !== 'tool' && message.content !== '')
+            .map((message) => ({
+              id: `stored-${message.id}`,
+              role: message.role === 'user' ? 'user' : 'assistant',
+              content: message.content,
+            })),
+        );
+      })
+      .catch(() => {
+        // A failed history load must not block a live chat: the socket below
+        // still works, the operator just starts from a blank transcript.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId]);
 
   useEffect(() => {
     if (sessionId === undefined) return undefined;

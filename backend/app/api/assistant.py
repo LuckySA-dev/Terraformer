@@ -20,7 +20,11 @@ from app.models import AssistantSession, AssistantSessionMode
 from app.repositories.assistant import AssistantMessageRepository, AssistantSessionRepository
 from app.repositories.events import EventRepository
 from app.repositories.provider_profiles import ProviderProfileRepository
-from app.schemas.assistant import AssistantSessionCreate, AssistantSessionView
+from app.schemas.assistant import (
+    AssistantMessageView,
+    AssistantSessionCreate,
+    AssistantSessionView,
+)
 from app.schemas.common import APIModel
 from app.services.devices import DeviceService
 from app.services.snapshots import SnapshotService
@@ -66,6 +70,20 @@ def create_session(
     )
     session.commit()
     return _session_view(chat_session)
+
+
+@sessions_router.get("/{session_id}/messages", response_model=list[AssistantMessageView])
+def list_session_messages(
+    session_id: UUID,
+    _auth: Authenticated,
+    session: SessionDependency,
+    container: ContainerDependency,
+):
+    # 404s for an unknown session rather than returning an empty list, so a
+    # stale session id in the UI is distinguishable from a genuinely empty
+    # conversation.
+    AssistantSessionRepository(session).get(session_id)
+    return AssistantMessageRepository(session).list_for_session(session_id)
 
 
 class StageCommandRequest(APIModel):

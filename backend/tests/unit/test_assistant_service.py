@@ -82,6 +82,7 @@ class _Profile:
     base_url = "http://fake/v1"
     model_id = "test-model"
     supports_tool_calling = True
+    context_limit_override = None
 
 
 class _Session:

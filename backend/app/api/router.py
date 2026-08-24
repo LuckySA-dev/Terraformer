@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.api import (
     analysis,
+    assistant,
     changes,
     credentials,
     devices,
@@ -21,6 +22,7 @@ api_router.include_router(health.router)
 api_router.include_router(setup.router)
 api_router.include_router(credentials.router)
 api_router.include_router(provider_profiles.router)
+api_router.include_router(assistant.sessions_router)
 api_router.include_router(devices.router)
 api_router.include_router(diagnostics.router)
 api_router.include_router(discovery.router)

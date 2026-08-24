@@ -12,6 +12,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.responses import Response
 from starlette.types import ASGIApp
 
+from app.api.assistant import router as assistant_ws_router
 from app.api.router import api_router
 from app.api.terminal import router as terminal_router
 from app.container import ApplicationContainer, get_default_container
@@ -104,6 +105,7 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
     application.add_middleware(SecurityAndRequestContextMiddleware, container=active_container)
     application.include_router(api_router)
     application.include_router(terminal_router)
+    application.include_router(assistant_ws_router)
 
     @application.exception_handler(AppError)
     async def handle_app_error(  # pyright: ignore[reportUnusedFunction]

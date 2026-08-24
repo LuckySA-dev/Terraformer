@@ -9,6 +9,7 @@ from app.api.dependencies import Authenticated, ContainerDependency, SessionDepe
 from app.assistant.blocklist import contains_blocked_command
 from app.assistant.service import AssistantChatService, AssistantEvent
 from app.assistant.tools import ToolDispatcher
+from app.changes.service import ChangeService
 from app.container import ApplicationContainer
 from app.core.errors import (
     AIGatewayDisabledError,
@@ -98,8 +99,8 @@ def _event_to_frame(event: AssistantEvent) -> dict[str, object]:
     return frame
 
 
-def _build_tool_dispatcher(db_session: Session, container: ApplicationContainer) -> ToolDispatcher:
-    devices = DeviceService(
+def _build_device_service(db_session: Session, container: ApplicationContainer) -> DeviceService:
+    return DeviceService(
         db_session,
         settings=container.settings,
         drivers=container.drivers,
@@ -107,10 +108,30 @@ def _build_tool_dispatcher(db_session: Session, container: ApplicationContainer)
         host_key_trust=container.host_key_trust,
         connection_gate=container.connection_gate,
     )
+
+
+def _build_tool_dispatcher(
+    db_session: Session, container: ApplicationContainer, devices: DeviceService
+) -> ToolDispatcher:
     snapshots = SnapshotService(
         db_session, store=container.snapshot_store, devices=devices, drivers=container.drivers
     )
     return ToolDispatcher(devices=devices, snapshots=snapshots, events=EventRepository(db_session))
+
+
+def _build_change_service(
+    db_session: Session, container: ApplicationContainer, devices: DeviceService
+) -> ChangeService:
+    snapshots = SnapshotService(
+        db_session, store=container.snapshot_store, devices=devices, drivers=container.drivers
+    )
+    return ChangeService(
+        db_session,
+        settings=container.settings,
+        drivers=container.drivers,
+        devices=devices,
+        snapshots=snapshots,
+    )
 
 
 @router.websocket("/ws/assistant/{session_id}")
@@ -136,6 +157,12 @@ async def assistant_chat(websocket: WebSocket, session_id: str) -> None:
         return
 
     with container.session_factory() as db_session:
+        devices = _build_device_service(db_session, container)
+        changes = (
+            _build_change_service(db_session, container, devices)
+            if container.settings.structured_writes_enabled
+            else None
+        )
         service = AssistantChatService(
             db_session,
             provider_client=container.ai_provider_client,
@@ -143,7 +170,8 @@ async def assistant_chat(websocket: WebSocket, session_id: str) -> None:
             messages=AssistantMessageRepository(db_session),
             profiles=ProviderProfileRepository(db_session),
             vault=container.provider_key_vault,
-            tools=_build_tool_dispatcher(db_session, container),
+            tools=_build_tool_dispatcher(db_session, container, devices),
+            changes=changes,
         )
         try:
             while True:

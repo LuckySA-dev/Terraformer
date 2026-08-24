@@ -72,6 +72,35 @@ READ_ONLY_TOOLS: tuple[ToolSchema, ...] = (
     _EVENTS_TOOL,
 )
 
+# Deliberately NOT part of READ_ONLY_TOOLS and never routed through
+# ToolDispatcher -- this keeps test_read_only_tools_never_include_a_write_tool
+# meaningful. It is still not a device write: calling it only drafts and
+# validates a DRAFT ChangePlan through the same pipeline a manual preview
+# uses (app/changes/service.py's preview()), which itself performs no
+# device write. A separate, human/mode-gated apply is required afterward.
+PROPOSE_CHANGE_PLAN_TOOL = ToolSchema(
+    name="propose_change_plan",
+    description=(
+        "Propose a Change Plan for a registered Cisco IOS/IOS-XE device's "
+        "interface description or admin state. This only drafts and "
+        "validates a plan for human review -- it never touches the device. "
+        "A human must separately apply it before anything changes."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "device_id": {"type": "string", "format": "uuid"},
+            "change_type": {
+                "type": "string",
+                "enum": ["interface_description", "interface_admin_state"],
+            },
+            "target": {"type": "string", "description": "Interface name, e.g. GigabitEthernet0/1"},
+            "desired_value": {"type": "string"},
+        },
+        "required": ["device_id", "change_type", "target", "desired_value"],
+    },
+)
+
 
 class ToolDispatcher:
     def __init__(

@@ -16,6 +16,7 @@ vi.mock('../src/api/network', () => ({
     assistantSessions: vi.fn(),
     createAssistantSession: vi.fn(),
     applyChangePlan: vi.fn(),
+    stageCommand: vi.fn(),
   },
 }));
 
@@ -33,6 +34,10 @@ class FakeWebSocket {
 
   send(data: string) {
     this.sent.push(data);
+  }
+
+  emitMessage(payload: unknown) {
+    this.onmessage?.({ data: JSON.stringify(payload) });
   }
 
   close() {
@@ -153,4 +158,25 @@ it('disables New chat until a provider profile is selected', async () => {
   renderAssistant();
 
   expect(await screen.findByRole('button', { name: 'New chat' })).toBeDisabled();
+});
+
+it('renders a fenced command from the assistant as a console suggestion card', async () => {
+  vi.mocked(api.createAssistantSession).mockResolvedValue(session);
+  const user = userEvent.setup();
+  renderAssistant();
+
+  await user.selectOptions(await screen.findByLabelText('Provider profile'), profile.id);
+  await user.click(screen.getByRole('button', { name: 'New chat' }));
+  await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+  const socket = FakeWebSocket.instances[0];
+  if (socket === undefined) throw new Error('expected a FakeWebSocket instance');
+
+  socket.emitMessage({
+    type: 'token',
+    content: 'Try this:\n```\ninterface GigabitEthernet0/1\n```\n',
+  });
+  socket.emitMessage({ type: 'done' });
+
+  expect(await screen.findByText('interface GigabitEthernet0/1')).toBeVisible();
+  expect(screen.getByRole('button', { name: /copy and open inventory/i })).toBeVisible();
 });

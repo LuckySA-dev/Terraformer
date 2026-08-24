@@ -205,7 +205,7 @@ export function AppShell({ health, onLogout }: AppShellProps) {
               <AppState kind="loading" title="Loading assistant" message="Preparing the assistant..." />
             }
           >
-            <AssistantPage />
+            <AssistantPage onOpenInventory={goToInventory} />
           </Suspense>
         ) : (
           <ActivityPage />

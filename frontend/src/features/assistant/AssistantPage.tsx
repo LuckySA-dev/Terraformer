@@ -25,7 +25,11 @@ type ProviderDialog =
 // (already a column) if this ever needs to hold across tabs/restarts.
 const MAX_AUTO_APPLIES_PER_SESSION = 5;
 
-export function AssistantPage() {
+interface AssistantPageProps {
+  onOpenInventory?: () => void;
+}
+
+export function AssistantPage({ onOpenInventory }: AssistantPageProps) {
   const queryClient = useQueryClient();
   const [providerDialog, setProviderDialog] = useState<ProviderDialog>(null);
   const [deleteTarget, setDeleteTarget] = useState<ProviderProfile>();
@@ -176,6 +180,8 @@ export function AssistantPage() {
               applyChangePlan.mutate(planId);
             }}
             applyingPlanId={applyingPlanId}
+            sessionId={activeSessionId}
+            onOpenInventory={onOpenInventory ?? (() => undefined)}
           />
           <form
             className="assistant-page__composer"

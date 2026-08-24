@@ -1,13 +1,33 @@
 import { ChangePlanCard } from '../inventory/ChangePlanCard';
+import { ConsoleSuggestionCard } from './ConsoleSuggestionCard';
 import type { AssistantTranscriptEntry } from './useAssistantChat';
 
 interface ChatTranscriptProps {
   entries: AssistantTranscriptEntry[];
   onApplyPlan: (planId: string) => void;
   applyingPlanId?: string | undefined;
+  sessionId: string;
+  onOpenInventory: () => void;
 }
 
-export function ChatTranscript({ entries, onApplyPlan, applyingPlanId }: ChatTranscriptProps) {
+const FENCE_PATTERN = /```[a-z]*\n([\s\S]*?)```/g;
+
+function splitFencedBlocks(content: string): { text: string; commands: string[] } {
+  const commands: string[] = [];
+  const text = content.replace(FENCE_PATTERN, (_match, code: string) => {
+    commands.push(code.trim());
+    return '';
+  });
+  return { text: text.trim(), commands };
+}
+
+export function ChatTranscript({
+  entries,
+  onApplyPlan,
+  applyingPlanId,
+  sessionId,
+  onOpenInventory,
+}: ChatTranscriptProps) {
   return (
     <div className="chat-transcript" role="log" aria-label="Assistant conversation">
       {entries.map((entry) => {
@@ -40,6 +60,22 @@ export function ChatTranscript({ entries, onApplyPlan, applyingPlanId }: ChatTra
                 applyBusy={applyingPlanId === entry.plan.plan_id}
                 applySuccess={false}
               />
+            </div>
+          );
+        }
+        if (entry.role === 'assistant' && entry.content) {
+          const { text, commands } = splitFencedBlocks(entry.content);
+          return (
+            <div key={entry.id} className="chat-transcript__entry chat-transcript__entry--assistant">
+              {text === '' ? null : <p>{text}</p>}
+              {commands.map((command, index) => (
+                <ConsoleSuggestionCard
+                  key={`${entry.id}-command-${String(index)}`}
+                  command={command}
+                  sessionId={sessionId}
+                  onOpenInventory={onOpenInventory}
+                />
+              ))}
             </div>
           );
         }

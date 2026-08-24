@@ -6,19 +6,35 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.errors import NotFoundError
-from app.models import ChangePlan, ChangePlanStatus, ChangeRisk, ChangeStep, ChangeType, SafetyLevel
+from app.models import (
+    ChangePlan,
+    ChangePlanSource,
+    ChangePlanStatus,
+    ChangeRisk,
+    ChangeStep,
+    ChangeType,
+    SafetyLevel,
+)
 
 
 class ChangeRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    def create(self, *, device_id: UUID, safety_level: SafetyLevel, risk: ChangeRisk) -> ChangePlan:
+    def create(
+        self,
+        *,
+        device_id: UUID,
+        safety_level: SafetyLevel,
+        risk: ChangeRisk,
+        source: ChangePlanSource = ChangePlanSource.MANUAL,
+    ) -> ChangePlan:
         plan = ChangePlan(
             device_id=device_id,
             status=ChangePlanStatus.DRAFT,
             safety_level=safety_level,
             risk=risk,
+            source=source,
         )
         self._session.add(plan)
         self._session.flush()

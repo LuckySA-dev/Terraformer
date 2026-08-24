@@ -552,6 +552,11 @@ class ChangePlan(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         enum_type(ChangeRisk, "change_risk"),
         nullable=False,
     )
+    source: Mapped[ChangePlanSource] = mapped_column(
+        enum_type(ChangePlanSource, "change_plan_source"),
+        nullable=False,
+        default=ChangePlanSource.MANUAL,
+    )
     pre_change_snapshot_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("config_snapshots.id", ondelete="RESTRICT"),
     )

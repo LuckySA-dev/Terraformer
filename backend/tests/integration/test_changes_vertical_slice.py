@@ -299,3 +299,60 @@ def test_apply_on_a_non_draft_plan_is_rejected(
 
     assert second_apply.status_code == 409
     assert second_apply.json()["error"]["code"] == "change_plan_not_draft"
+
+
+def test_preview_defaults_source_to_manual(
+    authenticated_client: TestClient,
+    credential_profile: dict[str, object],
+    container: ApplicationContainer,
+) -> None:
+    container.settings.structured_writes_enabled = True
+    device_id = _register_cisco(authenticated_client, str(credential_profile["id"]), "192.0.2.17")
+
+    plan = _preview(authenticated_client, device_id)
+
+    assert plan["source"] == "manual"
+
+
+def test_service_preview_accepts_ai_generated_source(
+    authenticated_client: TestClient,
+    credential_profile: dict[str, object],
+    container: ApplicationContainer,
+) -> None:
+    from uuid import UUID
+
+    from app.changes.service import ChangeService
+    from app.models import ChangePlanSource, ChangeType
+    from app.services.devices import DeviceService
+    from app.services.snapshots import SnapshotService
+
+    container.settings.structured_writes_enabled = True
+    device_id = _register_cisco(authenticated_client, str(credential_profile["id"]), "192.0.2.18")
+
+    with container.session_factory() as session:
+        devices = DeviceService(
+            session,
+            settings=container.settings,
+            drivers=container.drivers,
+            vault=container.credential_vault,
+            host_key_trust=container.host_key_trust,
+            connection_gate=container.connection_gate,
+        )
+        service = ChangeService(
+            session,
+            settings=container.settings,
+            drivers=container.drivers,
+            devices=devices,
+            snapshots=SnapshotService(
+                session, store=container.snapshot_store, devices=devices, drivers=container.drivers
+            ),
+        )
+        plan = service.preview(
+            device_id=UUID(device_id),
+            change_type=ChangeType.INTERFACE_DESCRIPTION,
+            target="GigabitEthernet1",
+            desired_value="ai-drafted uplink",
+            source=ChangePlanSource.AI_GENERATED,
+        )
+
+        assert plan.source is ChangePlanSource.AI_GENERATED

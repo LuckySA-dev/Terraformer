@@ -24,7 +24,15 @@ from app.core.errors import (
 from app.core.logging import sanitize_text
 from app.core.time import utc_now
 from app.drivers import DeviceDriver, DriverRegistry
-from app.models import ChangePlan, ChangePlanStatus, ChangeType, Device, SSHCompatibility, Vendor
+from app.models import (
+    ChangePlan,
+    ChangePlanSource,
+    ChangePlanStatus,
+    ChangeType,
+    Device,
+    SSHCompatibility,
+    Vendor,
+)
 from app.repositories.changes import ChangeRepository
 from app.repositories.devices import DeviceRepository
 from app.services.connection_gate import ConnectionOperation
@@ -53,7 +61,13 @@ class ChangeService:
         self._devices = DeviceRepository(session)
 
     def preview(
-        self, *, device_id: UUID, change_type: ChangeType, target: str, desired_value: str
+        self,
+        *,
+        device_id: UUID,
+        change_type: ChangeType,
+        target: str,
+        desired_value: str,
+        source: ChangePlanSource = ChangePlanSource.MANUAL,
     ) -> ChangePlan:
         device = self._devices.get(device_id)
         if device.vendor not in _SUPPORTED_VENDORS:
@@ -103,6 +117,7 @@ class ChangeService:
             device_id=device.id,
             safety_level=driver.capabilities.safety_level,
             risk=risk,
+            source=source,
         )
         self._changes.set_snapshots(plan, pre_change_snapshot_id=pre_snapshot.id)
         self._changes.add_step(

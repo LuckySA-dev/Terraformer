@@ -46,6 +46,7 @@ import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { InputField, SelectField } from '../../components/ui/FormField';
 import { formatDateTime, formatRelativeTime, formatUptime, titleCase } from '../../lib/format';
+import { ChangePlanCard } from './ChangePlanCard';
 import { EventTimeline } from './EventTimeline';
 
 const TerminalPanel = lazy(() =>
@@ -630,41 +631,13 @@ function ConfigureTab({ device }: { device: Device }) {
         </div>
       )}
       {plan === null ? null : (
-        <div className="configure-preview">
-          <div>
-            <Badge tone={plan.risk === 'high' ? 'danger' : 'success'}>{plan.risk} risk</Badge>
-            <Badge tone="neutral">Safety level {plan.safety_level} · best effort</Badge>
-          </div>
-          {plan.steps.map((step) => (
-            <div key={step.id} className="configure-preview__step">
-              <p>
-                {step.target}: <span className="mono">{step.previous_value ?? '(none)'}</span> →{' '}
-                <span className="mono">{step.desired_value}</span>
-              </p>
-              <pre>{step.rendered_commands}</pre>
-            </div>
-          ))}
-          <Button
-            variant="primary"
-            size="small"
-            onClick={() => apply.mutate(plan.id)}
-            busy={apply.isPending}
-            disabled={plan.status !== 'draft'}
-          >
-            <ShieldCheck size={14} /> Apply
-          </Button>
-          {apply.error === null ? null : (
-            <div className="form-error" role="alert">
-              {apply.error.message}
-            </div>
-          )}
-          {apply.isSuccess ? (
-            <div className="mini-result mini-result--success" role="status">
-              <Check size={14} />
-              <span>Apply queued. The status below updates when the worker finishes.</span>
-            </div>
-          ) : null}
-        </div>
+        <ChangePlanCard
+          plan={plan}
+          onApply={(planId) => apply.mutate(planId)}
+          applyBusy={apply.isPending}
+          applyError={apply.error?.message}
+          applySuccess={apply.isSuccess}
+        />
       )}
       {history.data?.some((item) => item.status === 'rollback_failed') === true ? (
         <InlineNotice tone="danger" title="A rollback did not complete">

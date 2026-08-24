@@ -78,6 +78,11 @@ class Settings(BaseSettings):
     # Direct Mode terminal escape hatches. Intentional defense in depth, not
     # a missing UI shortcut.
     structured_writes_enabled: bool = False
+    # AI assistant gateway (BYOK -- this application never runs or bundles a
+    # model server). Off by default, same defense-in-depth reasoning as
+    # structured_writes_enabled: read-only tools and AI-drafted Change Plans
+    # both terminate in this application's own real write pipeline.
+    ai_gateway_enabled: bool = False
     terminal_pty_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
     terminal_max_duration_seconds: int = Field(default=3600, ge=60, le=86400)
     max_device_connections: int = Field(

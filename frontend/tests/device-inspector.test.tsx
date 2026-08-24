@@ -365,6 +365,7 @@ describe('DeviceInspector API contract and safety states', () => {
       status: 'draft',
       safety_level: 'C',
       risk: 'low',
+      source: 'manual',
       failure_code: null,
       applied_at: null,
       steps: [
@@ -450,6 +451,7 @@ describe('DeviceInspector API contract and safety states', () => {
       status: 'draft',
       safety_level: 'C',
       risk: 'low',
+      source: 'manual',
       failure_code: null,
       applied_at: null,
       steps: [
@@ -499,6 +501,7 @@ describe('DeviceInspector API contract and safety states', () => {
         status: 'rollback_failed',
         safety_level: 'C',
         risk: 'high',
+        source: 'manual',
         failure_code: 'device_command_rejected',
         applied_at: null,
         steps: [

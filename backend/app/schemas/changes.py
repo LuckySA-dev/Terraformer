@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from app.models import ChangePlanStatus, ChangeRisk, ChangeType, SafetyLevel
+from app.models import ChangePlanSource, ChangePlanStatus, ChangeRisk, ChangeType, SafetyLevel
 from app.schemas.common import APIModel
 
 
@@ -30,6 +30,7 @@ class ChangePlanView(APIModel):
     status: ChangePlanStatus
     safety_level: SafetyLevel
     risk: ChangeRisk
+    source: ChangePlanSource
     failure_code: str | None
     applied_at: datetime | None
     steps: list[ChangeStepView]

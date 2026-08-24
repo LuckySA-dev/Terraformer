@@ -126,6 +126,22 @@ class EventSeverity(StrEnum):
     ERROR = "error"
 
 
+class ChangePlanSource(StrEnum):
+    MANUAL = "manual"
+    AI_GENERATED = "ai_generated"
+
+
+class AssistantSessionMode(StrEnum):
+    CONFIRM = "confirm"
+    AUTO = "auto"
+
+
+class AssistantMessageRole(StrEnum):
+    USER = "user"
+    ASSISTANT = "assistant"
+    TOOL = "tool"
+
+
 def _enum_values(enum_class: type[StrEnum]) -> list[str]:
     return [item.value for item in enum_class]
 
@@ -158,6 +174,18 @@ class CredentialProfile(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     has_enable_password: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     devices: Mapped[list[Device]] = relationship(back_populates="credential_profile")
+
+
+class ProviderProfile(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "provider_profiles"
+
+    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    base_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    model_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    encrypted_api_key: Mapped[bytes | None] = mapped_column(LargeBinary)
+    context_limit_override: Mapped[int | None] = mapped_column(Integer)
+    supports_streaming: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    supports_tool_calling: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
 class Device(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -524,6 +552,11 @@ class ChangePlan(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         enum_type(ChangeRisk, "change_risk"),
         nullable=False,
     )
+    source: Mapped[ChangePlanSource] = mapped_column(
+        enum_type(ChangePlanSource, "change_plan_source"),
+        nullable=False,
+        default=ChangePlanSource.MANUAL,
+    )
     pre_change_snapshot_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("config_snapshots.id", ondelete="RESTRICT"),
     )
@@ -559,3 +592,45 @@ class ChangeStep(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     inverse_commands: Mapped[str] = mapped_column(Text, nullable=False)
 
     change_plan: Mapped[ChangePlan] = relationship(back_populates="steps")
+
+
+class AssistantSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "assistant_sessions"
+
+    provider_profile_id: Mapped[UUID] = mapped_column(
+        ForeignKey("provider_profiles.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    mode: Mapped[AssistantSessionMode] = mapped_column(
+        enum_type(AssistantSessionMode, "assistant_session_mode"),
+        nullable=False,
+        default=AssistantSessionMode.CONFIRM,
+    )
+    auto_mode_acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    auto_apply_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    messages: Mapped[list[AssistantMessage]] = relationship(
+        back_populates="session",
+        cascade="all, delete-orphan",
+        order_by="AssistantMessage.created_at",
+    )
+
+
+class AssistantMessage(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "assistant_messages"
+
+    session_id: Mapped[UUID] = mapped_column(
+        ForeignKey("assistant_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    role: Mapped[AssistantMessageRole] = mapped_column(
+        enum_type(AssistantMessageRole, "assistant_message_role"),
+        nullable=False,
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    tool_calls: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    tool_results: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+
+    session: Mapped[AssistantSession] = relationship(back_populates="messages")

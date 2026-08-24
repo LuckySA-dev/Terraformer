@@ -2,6 +2,8 @@ import { apiRequest, apiRequestWithStatus } from './client';
 import type {
   AnalysisFinding,
   AnalysisSnapshot,
+  AssistantMessage,
+  AssistantSession,
   ChangePlan,
   ChangeType,
   ConfigSnapshot,
@@ -22,6 +24,8 @@ import type {
   Job,
   HostKeyCandidate,
   PathCheckResult,
+  ProviderProfile,
+  ProviderProfileInput,
   SessionStatus,
   SetupStatus,
 } from '../types/api';
@@ -193,4 +197,35 @@ export const api = {
     apiRequest<ChangePlan[]>(`/change-plans?device_id=${encodeURIComponent(deviceId)}`),
   applyChangePlan: (id: string) =>
     apiRequest<Job>(`/change-plans/${encodeURIComponent(id)}/apply`, { method: 'POST' }),
+
+  providerProfiles: () => apiRequest<ProviderProfile[]>('/provider-profiles'),
+  createProviderProfile: (input: ProviderProfileInput) =>
+    apiRequest<ProviderProfile>('/provider-profiles', { method: 'POST', body: json(input) }),
+  updateProviderProfile: (id: string, input: Partial<ProviderProfileInput>) =>
+    apiRequest<ProviderProfile>(`/provider-profiles/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: json(input),
+    }),
+  deleteProviderProfile: async (id: string): Promise<void> => {
+    await apiRequest<unknown>(`/provider-profiles/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  },
+  probeProviderProfile: (id: string) =>
+    apiRequest<ProviderProfile>(`/provider-profiles/${encodeURIComponent(id)}/probe`, {
+      method: 'POST',
+    }),
+  assistantSessions: () => apiRequest<AssistantSession[]>('/assistant-sessions'),
+  assistantMessages: (sessionId: string) =>
+    apiRequest<AssistantMessage[]>(
+      `/assistant-sessions/${encodeURIComponent(sessionId)}/messages`,
+    ),
+  createAssistantSession: (providerProfileId: string) =>
+    apiRequest<AssistantSession>('/assistant-sessions', {
+      method: 'POST',
+      body: json({ provider_profile_id: providerProfileId }),
+    }),
+  stageCommand: (sessionId: string, command: string) =>
+    apiRequest<{ allowed: boolean }>(
+      `/assistant-sessions/${encodeURIComponent(sessionId)}/stage-command`,
+      { method: 'POST', body: json({ command }) },
+    ),
 };

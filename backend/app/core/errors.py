@@ -209,6 +209,24 @@ class StructuredWritesDisabledError(AppError):
     default_message = "Structured configuration writes are disabled by server policy"
 
 
+class AIGatewayDisabledError(AppError):
+    code = "ai_gateway_disabled_by_policy"
+    status_code = 403
+    default_message = "The AI assistant gateway is disabled by server policy"
+
+
+class AutoModeRequiresAcknowledgmentError(AppError):
+    code = "auto_mode_requires_acknowledgment"
+    status_code = 409
+    default_message = "Confirm the risk before enabling Auto mode"
+
+
+class BlockedCommandError(AppError):
+    code = "blocked_command"
+    status_code = 422
+    default_message = "This command matches a blocked pattern (erase/reload/format/factory-reset)"
+
+
 class ChangeVendorUnsupportedError(AppError):
     code = "change_vendor_unsupported"
     status_code = 422

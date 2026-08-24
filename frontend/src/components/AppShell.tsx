@@ -1,5 +1,6 @@
 import {
   Activity,
+  Bot,
   Database,
   HardDrive,
   KeyRound,
@@ -23,8 +24,11 @@ const TopologyPage = lazy(() => import('../features/topology/TopologyPage'));
 const AnalysisPage = lazy(() =>
   import('../features/analysis/AnalysisPage').then((module) => ({ default: module.AnalysisPage })),
 );
+const AssistantPage = lazy(() =>
+  import('../features/assistant/AssistantPage').then((module) => ({ default: module.AssistantPage })),
+);
 
-type ViewId = 'inventory' | 'topology' | 'analysis' | 'activity';
+type ViewId = 'inventory' | 'topology' | 'analysis' | 'activity' | 'assistant';
 
 interface AppShellProps {
   health: HealthResponse;
@@ -135,6 +139,15 @@ export function AppShell({ health, onLogout }: AppShellProps) {
             <Activity size={18} />
             <span>Event timeline</span>
           </button>
+          <button
+            type="button"
+            className={view === 'assistant' ? 'is-active' : ''}
+            onClick={() => setView('assistant')}
+            aria-current={view === 'assistant' ? 'page' : undefined}
+          >
+            <Bot size={18} />
+            <span>Assistant</span>
+          </button>
         </nav>
         <div className="sidebar__spacer" />
         <section className="safety-card">
@@ -185,6 +198,14 @@ export function AppShell({ health, onLogout }: AppShellProps) {
             }
           >
             <AnalysisPage />
+          </Suspense>
+        ) : view === 'assistant' ? (
+          <Suspense
+            fallback={
+              <AppState kind="loading" title="Loading assistant" message="Preparing the assistant..." />
+            }
+          >
+            <AssistantPage onOpenInventory={goToInventory} />
           </Suspense>
         ) : (
           <ActivityPage />

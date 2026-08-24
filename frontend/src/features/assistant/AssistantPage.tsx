@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { KeyRound, Send } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { ApiError } from '../../api/client';
 import { api } from '../../api/network';
 import { AppState, InlineNotice, QueryErrorState } from '../../components/ui/AppState';
 import { Button } from '../../components/ui/Button';
@@ -122,6 +123,25 @@ export function AssistantPage({ onOpenInventory }: AssistantPageProps) {
       await queryClient.invalidateQueries({ queryKey: ['provider-profiles'] });
     },
   });
+
+  const gatewayDisabled =
+    (profiles.error instanceof ApiError && profiles.error.code === 'ai_gateway_disabled_by_policy') ||
+    (sessions.error instanceof ApiError && sessions.error.code === 'ai_gateway_disabled_by_policy');
+
+  if (gatewayDisabled) {
+    return (
+      <div className="assistant-page">
+        <header className="assistant-page__header">
+          <h1>Assistant</h1>
+        </header>
+        <AppState
+          kind="unsupported"
+          title="The assistant is turned off"
+          message="This local deployment has AI_GATEWAY_ENABLED=false (the default). Set it to true in .env and restart the stack to turn on chat, read-only device tools, and AI-drafted Change Plans -- the assistant never runs or bundles a model itself, it proxies to a provider you configure once this is on."
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="assistant-page">

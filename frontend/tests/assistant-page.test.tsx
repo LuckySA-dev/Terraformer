@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
+import { ApiError } from '../src/api/client';
 import { api } from '../src/api/network';
 import { AssistantPage } from '../src/features/assistant/AssistantPage';
 import type { AssistantSession, ProviderProfile } from '../src/types/api';
@@ -83,6 +84,20 @@ beforeEach(() => {
   vi.mocked(api.assistantSessions).mockResolvedValue([]);
   vi.mocked(api.assistantMessages).mockResolvedValue([]);
   vi.mocked(api.providerProfiles).mockResolvedValue([profile]);
+});
+
+it('shows a clear message instead of a raw error when the gateway is disabled', async () => {
+  const disabledError = new ApiError('The AI assistant gateway is disabled by server policy', {
+    status: 403,
+    code: 'ai_gateway_disabled_by_policy',
+  });
+  vi.mocked(api.providerProfiles).mockRejectedValue(disabledError);
+  vi.mocked(api.assistantSessions).mockRejectedValue(disabledError);
+  renderAssistant();
+
+  expect(await screen.findByText('The assistant is turned off')).toBeVisible();
+  expect(screen.getByText(/AI_GATEWAY_ENABLED=false/)).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Provider profile' })).not.toBeInTheDocument();
 });
 
 it('opens the provider profile list from the header button', async () => {

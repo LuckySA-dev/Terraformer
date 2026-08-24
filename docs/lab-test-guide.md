@@ -13,10 +13,14 @@ No real-lab result is recorded in this repository, so every capability remains
 lab-unverified until an operator runs the harness against an approved device and
 records only sanitized evidence.
 
-Manual USB Console and device SSH terminal Direct Mode have
-**Automated verification passed; hardware validation pending.** Automated tests
-use fakes only; routine verification is network-free and does not enumerate or
-open a serial adapter or connect to a device.
+Manual USB Console has **Automated verification passed; hardware validation
+pending.** Automated tests use fakes only; routine verification is network-free
+and does not enumerate or open a serial adapter or connect to a device.
+
+Device SSH terminal Direct Mode has **Automated verification passed; physical
+lab verified** for Cisco Catalyst 2960, 2960X, 3650, and Cisco ISR 2911 under
+Cisco Legacy compatibility mode — see the authorized record below. Other
+device categories and compatibility modes remain hardware validation pending.
 
 ## Manual USB Console hardware-validation gate
 
@@ -44,6 +48,22 @@ attach or link prohibited content as evidence. Until an explicitly authorized
 session is completed and this metadata-only record is added, retain the status
 **Automated verification passed; hardware validation pending.**
 
+## SSH terminal hardware-validation record
+
+Authorized by the repository owner. Metadata-only, per the schema and
+prohibitions in this guide — no addresses, hostnames, credentials, commands,
+terminal output, or raw errors.
+
+| Date | Approver | Browser/version | Transport type | Device category | Application commit | Requested compatibility mode | Non-command validation steps | Pass/fail |
+|---|---|---|---|---|---|---|---|---|
+| 2026-08-11 | LuckySA (Owner) | Chrome 151.0.0.0 | SSH | Cisco Catalyst 2960, 2960X, 3650; Cisco ISR 2911 | 48b776d | Cisco Legacy | Connection test, structured facts/interface/neighbor read, and Direct Mode terminal open, connect, and disconnect lifecycle completed via the UI for each device category | Pass |
+
+This record covers connection admission, structured reads, and the terminal
+lifecycle only. Snapshot capture, discovery scanning, and diagnostics were not
+exercised in this session and remain **Hardware validation pending**. This
+record does not promote any structured-write capability; every write remains
+**Not Implemented**.
+
 ## SSH terminal hardware-validation gate
 
 Device SSH terminal validation requires separate operator approval for one exact
@@ -64,9 +84,11 @@ date, approver, browser/version, adapter or transport type, device category,
 application commit, requested compatibility mode, non-command validation-step
 descriptions, and pass/fail outcome. The same prohibitions apply: no addresses,
 hostnames, serial numbers, credentials, commands, terminal output, configuration,
-screenshots, raw errors, recordings, identifiers, or session content. No SSH terminal
-hardware result is recorded; status remains **Automated verification passed; hardware
-validation pending.**
+screenshots, raw errors, recordings, identifiers, or session content. An SSH
+terminal hardware result is recorded above for Cisco Catalyst 2960, 2960X, 3650,
+and Cisco ISR 2911; status is **Physical lab verified (SSH terminal, Cisco Legacy
+mode)** for those categories. USB Direct Mode is unaffected and remains
+**Automated verification passed; hardware validation pending.**
 
 ## Required harness contract
 

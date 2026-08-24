@@ -44,6 +44,35 @@ export type TopologyElement =
       };
     };
 
+// Cisco's own short forms. Full names ("GigabitEthernet1/0/1") make edge
+// labels several times longer than the links they sit on, which is what makes
+// a dense graph unreadable.
+const INTERFACE_ABBREVIATIONS: readonly (readonly [RegExp, string])[] = [
+  [/^TwentyFiveGigE/i, 'Twe'],
+  [/^TenGigabitEthernet/i, 'Te'],
+  [/^FortyGigabitEthernet/i, 'Fo'],
+  [/^HundredGigE/i, 'Hu'],
+  [/^GigabitEthernet/i, 'Gi'],
+  [/^FastEthernet/i, 'Fa'],
+  [/^Ethernet/i, 'Et'],
+  [/^Port-channel/i, 'Po'],
+  [/^Vlan/i, 'Vl'],
+  [/^Loopback/i, 'Lo'],
+];
+
+export function abbreviateInterface(name: string): string {
+  for (const [pattern, short] of INTERFACE_ABBREVIATIONS) {
+    if (pattern.test(name)) return name.replace(pattern, short);
+  }
+  return name;
+}
+
+/** Observed neighbours report FQDNs; the hostname alone is what identifies them on a graph. */
+export function shortenDeviceLabel(name: string): string {
+  const [hostname] = name.split('.');
+  return hostname !== undefined && hostname.length > 0 ? hostname : name;
+}
+
 export function buildTopologyElements(
   devices: Device[],
   neighborGroups: NeighborGroup[],
@@ -83,7 +112,7 @@ export function buildTopologyElements(
           group: 'nodes',
           data: {
             id: targetId,
-            label: neighbor.remote_device_name,
+            label: shortenDeviceLabel(neighbor.remote_device_name),
             kind: 'observed',
             status: 'observed',
           },
@@ -96,7 +125,7 @@ export function buildTopologyElements(
           id: `neighbor:${neighbor.id}`,
           source: `device:${deviceId}`,
           target: targetId,
-          label: `${neighbor.protocol.toUpperCase()} · ${neighbor.local_interface} → ${neighbor.remote_interface}`,
+          label: `${abbreviateInterface(neighbor.local_interface)} → ${abbreviateInterface(neighbor.remote_interface)}`,
           protocol: neighbor.protocol,
         },
       });

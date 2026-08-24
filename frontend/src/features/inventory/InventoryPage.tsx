@@ -381,12 +381,14 @@ export function InventoryPage({ focusDeviceId }: InventoryPageProps) {
         <DeviceInspector
           key={selectedDevice?.id ?? 'empty'}
           device={selectedDevice}
-          onClose={() => setSelectedId(undefined)}
-          onEdit={(device) => setDeviceDialog({ mode: 'edit', device })}
-          onCollapse={() => {
+          // One control, not two: closing hides the panel outright and
+          // reclaims its column. Selecting any device row reopens it.
+          onClose={() => {
+            setSelectedId(undefined);
             setInspectorCollapsed(true);
             localStorage.setItem('terraformer.inspector.collapsed', '1');
           }}
+          onEdit={(device) => setDeviceDialog({ mode: 'edit', device })}
           onDelete={setDeleteTarget}
         />
       </div>

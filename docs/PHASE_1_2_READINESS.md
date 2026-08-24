@@ -1,6 +1,6 @@
 # Phase 1-2 readiness ledger
 
-Last updated: 2026-08-08
+Last updated: 2026-08-11
 
 This ledger separates implementation, automated verification, virtual-lab
 evidence, and physical-lab evidence. The source of truth for product intent
@@ -23,8 +23,10 @@ What this policy does **not** change:
   `CAPABILITY_MATRIX.md` continue to require a run against that hardware, and
   virtual evidence must be recorded as virtual.
 - Behaviour that virtual images cannot reproduce — notably legacy SSH
-  negotiation against a Catalyst 2960/2960-X or ISR 1941 with an undersized RSA
-  host key — is still unproven until it is run against that gear.
+  negotiation against undersized-RSA-host-key gear — is still unproven until it
+  is run against that gear. **Update 2026-08-11:** proven for Catalyst 2960 and
+  2960X (see `lab-test-guide.md`). ISR 1941 specifically remains untested; the
+  ISR router covered in that record is a 2911, a different platform.
 - Every structured device write remains Not Implemented and Safety Level D.
 
 ## Classification
@@ -41,15 +43,15 @@ be collapsed.
 
 | Requirement | Backend | Frontend | Automated | Virtual lab | Physical lab | Priority | Status |
 |---|---|---|---|---|---|---|---|
-| Manual add | Implemented | Implemented | Passed | Pending | Pending | P1 | Hardware validation pending |
-| Host-key trust | Mandatory exact-device pin shared by tests, reads, jobs, snapshots, and terminal | Explicit inspect/fingerprint/confirm flow | Passed | Pending | Pending | P0 | Automated verification passed; hardware validation pending |
-| Facts | Implemented | Implemented | Passed | Pending | Pending | P1 | Hardware validation pending |
-| Interfaces | Implemented | Implemented | Passed | Pending | Pending | P1 | Hardware validation pending |
+| Manual add | Implemented | Implemented | Passed | Pending | Verified (2026-08-11, 4 categories) | P1 | Automated verification passed; physical lab verified |
+| Host-key trust | Mandatory exact-device pin shared by tests, reads, jobs, snapshots, and terminal | Explicit inspect/fingerprint/confirm flow | Passed | Pending | Verified (2026-08-11, 4 categories) | P0 | Automated verification passed; physical lab verified |
+| Facts | Implemented | Implemented | Passed | Pending | Verified (2026-08-11, 4 categories) | P1 | Automated verification passed; physical lab verified |
+| Interfaces | Implemented | Implemented | Passed | Pending | Verified (2026-08-11, 4 categories) | P1 | Automated verification passed; physical lab verified |
 | Snapshot | Immutable encrypted running-config snapshot implemented | Implemented | Passed | Pending | Pending | P1 | Hardware validation pending |
 | Discovery | Bounded SSH-aware discovery and approval implemented | Implemented | Passed | Pending | Not provable by one physical device | P1 | Hardware validation pending |
-| CDP/LLDP | Collection and persistence implemented | Last-good graph survives refresh failure with stale/retry guidance | Passed | Pending | Not provable by one physical device | P1 | Automated verification passed; hardware validation pending |
+| CDP/LLDP | Collection and persistence implemented | Last-good graph survives refresh failure with stale/retry guidance | Passed | Pending | Verified (2026-08-11, 4 categories) | P1 | Automated verification passed; physical lab verified |
 | Topology | Registered, observed, and manual-unverified projection implemented | Stale, retry, and responsive states implemented | Passed | Pending | Not provable by one physical device | P1 | Automated verification passed; hardware validation pending |
-| Terminal | Bounded authenticated PTY with mandatory device pin | Linked tabs/panels, adjacent-tab focus, retry focus, and responsive viewport implemented | Passed | Pending | Pending | P1 | Automated verification passed; hardware validation pending |
+| Terminal | Bounded authenticated PTY with mandatory device pin | Linked tabs/panels, adjacent-tab focus, retry focus, and responsive viewport implemented | Passed | Pending | Verified (2026-08-11, Cisco Legacy mode, 4 categories) | P1 | Automated verification passed; physical lab verified |
 | Diagnostics | Allowlisted RQ jobs implemented | Failed jobs have error icon, text, and alert semantics | Passed | Pending | Pending | P1 | Automated verification passed; hardware validation pending |
 
 ## Fixed closure scope
@@ -79,8 +81,17 @@ terminal output, configuration, screenshots, raw errors, or session content.
 
 ## Current result
 
-**Automated verification passed; hardware validation pending.** Backend Ruff,
-Pyright, 248 routine tests, frontend type/lint/build and 131 tests, plus normal
-and development Compose configuration validation passed on 2026-08-06. The
-single opt-in lab test remained skipped; no device or provider connection was
-opened. Virtual and physical acceptance remain Pending.
+**Automated verification passed; hardware validation pending for most
+capabilities.** Backend Ruff, Pyright, 248 routine tests, frontend
+type/lint/build and 131 tests, plus normal and development Compose
+configuration validation passed on 2026-08-06. The single opt-in lab test
+remained skipped; no device or provider connection was opened. Virtual
+acceptance remains Pending.
+
+**Physical acceptance: partially complete.** SSH connection admission,
+structured facts/interface/neighbor reads, and the Direct Mode terminal
+lifecycle were verified against real Cisco Catalyst 2960, 2960X, 3650, and
+ISR 2911 hardware under Cisco Legacy compatibility mode on 2026-08-11 —
+see the authorized record in `lab-test-guide.md`. Snapshot capture,
+discovery, and diagnostics remain untested against physical hardware, and
+every structured write remains Not Implemented.

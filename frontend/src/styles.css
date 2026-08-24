@@ -992,9 +992,17 @@ p {
 }
 
 .sidebar__brand-text {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 1px;
+}
+
+.sidebar__brand-text strong,
+.sidebar__brand-text span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sidebar__brand strong {
@@ -2380,6 +2388,14 @@ p {
   border-top: 2px solid var(--muted-2);
 }
 
+.topology-line--cdp {
+  border-color: #8fa6a0;
+}
+
+.topology-line--lldp {
+  border-color: #7180b9;
+}
+
 .topology-line--manual {
   border-color: #b17b24;
   border-top-style: dashed;
@@ -2649,10 +2665,20 @@ p {
     display: none;
   }
 
-  .sidebar__brand,
   .environment-chip,
   .sidebar__nav button,
   .session-button {
+    justify-content: center;
+  }
+
+  /* Same fix as .app-shell--sidebar-collapsed .sidebar__brand: the brand
+     icon and collapse button can't sit side by side in this width without
+     overflowing past the rail (see that rule's comment for the full
+     explanation). This breakpoint hits the same layout, so it needs the
+     same stacking fix. */
+  .sidebar__brand {
+    flex-direction: column;
+    gap: 8px;
     justify-content: center;
   }
 

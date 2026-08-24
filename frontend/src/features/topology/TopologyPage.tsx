@@ -102,6 +102,15 @@ function buildTopologyStyle(dark: boolean): StylesheetJson {
       },
     },
     {
+      selector: 'node.is-selected',
+      style: {
+        'border-color': c.manual,
+        'border-width': 5,
+        'font-size': 12,
+        'z-index': 20,
+      },
+    },
+    {
       selector: 'edge',
       style: {
         label: 'data(label)',
@@ -116,6 +125,9 @@ function buildTopologyStyle(dark: boolean): StylesheetJson {
         'text-background-opacity': 1,
         'text-background-padding': '2px',
         'text-rotation': 'autorotate',
+        // Drop link labels once they would render too small to read, so a
+        // zoomed-out view shows topology shape instead of a wall of text.
+        'min-zoomed-font-size': 7,
       },
     },
     {
@@ -136,14 +148,31 @@ function buildTopologyStyle(dark: boolean): StylesheetJson {
   ];
 }
 
+// Identity of the graph's *content*, ignoring array identity and saved
+// positions. The build effect keys off this so unrelated re-renders — a node
+// tap, a refresh poll, a filter toggle that changes nothing — never destroy
+// and re-lay-out the graph under the operator.
+function graphSignature(elements: TopologyElement[]): string {
+  return elements
+    .map((element) =>
+      element.group === 'nodes'
+        ? `n:${element.data.id}:${element.data.label}:${element.data.kind}:${element.data.status}`
+        : `e:${element.data.id}:${element.data.source}:${element.data.target}:${element.data.label}`,
+    )
+    .join('|');
+}
+
 function TopologyCanvas({
   elements,
   onNodeTap,
+  selectedDeviceId,
 }: {
   elements: TopologyElement[];
   onNodeTap?: (deviceId: string) => void;
+  selectedDeviceId?: string | undefined;
 }) {
   const container = useRef<HTMLDivElement>(null);
+  const graphRef = useRef<cytoscape.Core>(null);
   // A ref, not an effect dependency: onNodeTap is a fresh closure on every
   // parent render (e.g. the refresh-interval poll), and rebuilding the whole
   // cytoscape instance for that would lose in-progress drag state and
@@ -152,6 +181,11 @@ function TopologyCanvas({
   useEffect(() => {
     onNodeTapRef.current = onNodeTap;
   }, [onNodeTap]);
+  const elementsRef = useRef(elements);
+  useEffect(() => {
+    elementsRef.current = elements;
+  }, [elements]);
+  const signature = graphSignature(elements);
 
   const [prefersDark, setPrefersDark] = useState(
     () => window.matchMedia('(prefers-color-scheme: dark)').matches,
@@ -163,27 +197,9 @@ function TopologyCanvas({
     return () => query.removeEventListener('change', onChange);
   }, []);
 
-  // elements is a freshly built array on every parent render (it's derived,
-  // unmemoized, and filter-dependent), so comparing it by reference below
-  // would tear down and recreate the graph -- resetting the operator's pan
-  // and zoom via this layout's fit: true -- on every unrelated re-render,
-  // including just tapping a node to open the inspector. Track content via
-  // state, adjusted during render on a signature mismatch (the pattern
-  // React's own docs recommend for this -- see "Adjusting state when a prop
-  // changes" in "You Might Not Need an Effect"), so identical content keeps
-  // the same reference across renders instead of comparing content in a ref,
-  // which this codebase's stricter hooks lint forbids during render.
-  const elementsSignature = JSON.stringify(elements);
-  const [stableElements, setStableElements] = useState(elements);
-  const [lastSignature, setLastSignature] = useState(elementsSignature);
-  if (elementsSignature !== lastSignature) {
-    setLastSignature(elementsSignature);
-    setStableElements(elements);
-  }
-
   useEffect(() => {
     if (container.current === null) return undefined;
-    const elements = stableElements;
+    const elements = elementsRef.current;
     const hasSavedPositions = elements.every(
       (element) => element.group === 'edges' || element.position !== undefined,
     );
@@ -230,8 +246,26 @@ function TopologyCanvas({
       const id = event.target.id();
       if (id.startsWith('device:')) onNodeTapRef.current?.(id.slice('device:'.length));
     });
-    return () => graph.destroy();
-  }, [stableElements, prefersDark]);
+    graphRef.current = graph;
+    return () => {
+      graphRef.current = null;
+      graph.destroy();
+    };
+    // Rebuilds on a theme change too: colors are baked into the stylesheet
+    // at build time here, not read live, so a build keyed on signature alone
+    // would leave the graph on the old palette after the OS theme switches.
+  }, [signature, prefersDark]);
+
+  // Selection is a style change, not a rebuild — highlighting the tapped node
+  // must never disturb the layout the operator is looking at.
+  useEffect(() => {
+    const graph = graphRef.current;
+    if (graph === null) return;
+    graph.nodes('.is-selected').removeClass('is-selected');
+    if (selectedDeviceId !== undefined) {
+      graph.getElementById(`device:${selectedDeviceId}`).addClass('is-selected');
+    }
+  }, [selectedDeviceId, signature]);
 
   return (
     <div
@@ -343,7 +377,13 @@ export function TopologyPage({ onFocusDevice }: TopologyPageProps) {
   const focusInInventory = (device: { id: string }) => onFocusDevice?.(device.id);
 
   return (
-    <div className="workspace-layout">
+    <div
+      className={
+        selectedDevice === null
+          ? 'workspace-layout workspace-layout--inspector-collapsed'
+          : 'workspace-layout'
+      }
+    >
       <main className="topology-page">
         <header className="page-header">
           <div>
@@ -377,6 +417,8 @@ export function TopologyPage({ onFocusDevice }: TopologyPageProps) {
               <div className="topology-legend" aria-label="Topology legend">
                 <span><i className="topology-dot topology-dot--registered" /> Registered</span>
                 <span><i className="topology-dot topology-dot--observed" /> Observed only</span>
+                <span><i className="topology-line topology-line--cdp" /> CDP</span>
+                <span><i className="topology-line topology-line--lldp" /> LLDP</span>
                 <span><i className="topology-line topology-line--manual" /> Unverified link</span>
               </div>
               <div className="topology-filters">
@@ -465,19 +507,26 @@ export function TopologyPage({ onFocusDevice }: TopologyPageProps) {
               </Button>
             ))}
           </div>
-          <TopologyCanvas elements={filteredElements} onNodeTap={setSelectedDeviceId} />
+          <TopologyCanvas
+            elements={filteredElements}
+            onNodeTap={setSelectedDeviceId}
+            selectedDeviceId={selectedDeviceId}
+          />
           <p className="topology-note">
             Drag nodes to save positions in this browser. Observed nodes remain evidence, not inventory records.
             Manual links stay local and are always labeled UNVERIFIED.
           </p>
         </section>
       </main>
-      <DeviceInspector
-        device={selectedDevice}
-        onClose={() => setSelectedDeviceId(undefined)}
-        onEdit={focusInInventory}
-        onDelete={focusInInventory}
-      />
+      {selectedDevice === null ? null : (
+        <DeviceInspector
+          key={selectedDevice.id}
+          device={selectedDevice}
+          onClose={() => setSelectedDeviceId(undefined)}
+          onEdit={focusInInventory}
+          onDelete={focusInInventory}
+        />
+      )}
     </div>
   );
 }

@@ -153,7 +153,18 @@ describe('InventoryPage device inspector collapse', () => {
     expect(document.querySelector('.workspace-layout')).toHaveClass('workspace-layout--inspector-collapsed');
   });
 
-  it('collapses the inspector and re-expands it by reselecting the device', async () => {
+  it('offers exactly one control for dismissing the inspector', async () => {
+    const user = userEvent.setup();
+    renderInventory();
+
+    await user.click(await screen.findByText('Edge router'));
+    await screen.findByRole('complementary', { name: 'Edge router inspector' });
+
+    expect(screen.queryByRole('button', { name: /collapse inspector/i })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /close inspector/i })).toHaveLength(1);
+  });
+
+  it('closes the inspector with its single close control and reopens on reselect', async () => {
     const user = userEvent.setup();
     renderInventory();
 
@@ -161,38 +172,24 @@ describe('InventoryPage device inspector collapse', () => {
     expect(await screen.findByRole('complementary', { name: 'Edge router inspector' })).toBeVisible();
     expect(document.querySelector('.workspace-layout')).not.toHaveClass('workspace-layout--inspector-collapsed');
 
-    await user.click(screen.getByRole('button', { name: 'Collapse inspector' }));
-    // Hidden via CSS, not unmounted -- see the state-preservation test below
-    // for why. jsdom doesn't compute an external stylesheet's display: none,
-    // so assert the collapsed class directly instead of DOM absence.
-    const inspector = screen.getByRole('complementary', { name: 'Edge router inspector' });
-    expect(inspector.closest('.inspector-slot')).toHaveClass('inspector-slot--collapsed');
+    await user.click(screen.getByRole('button', { name: 'Close inspector' }));
+    // Closing also clears the selection, so this is a fresh DeviceInspector
+    // instance (new key) showing the empty placeholder -- hidden via the
+    // same CSS class as the "nothing selected yet" case above, not by being
+    // removed from the document. jsdom doesn't compute an external
+    // stylesheet's display: none, so assert the class directly.
+    const emptyInspector = await screen.findByRole('complementary', { name: 'Device inspector' });
+    expect(emptyInspector.closest('.inspector-slot')).toHaveClass('inspector-slot--collapsed');
     expect(localStorage.getItem('terraformer.inspector.collapsed')).toBe('1');
 
     // getByText would now match both the table row and the still-mounted
     // (CSS-hidden) inspector's own heading; the table row is the only match
     // with an actual button role.
     await user.click(screen.getByRole('button', { name: 'Inspect Edge router' }));
-    expect(await screen.findByRole('complementary', { name: 'Edge router inspector' })).toBeVisible();
-    expect(inspector.closest('.inspector-slot')).not.toHaveClass('inspector-slot--collapsed');
+    const reopened = await screen.findByRole('complementary', { name: 'Edge router inspector' });
+    expect(reopened).toBeVisible();
+    expect(reopened.closest('.inspector-slot')).not.toHaveClass('inspector-slot--collapsed');
     expect(localStorage.getItem('terraformer.inspector.collapsed')).toBe('0');
-  });
-
-  it('preserves inspector tab state across collapse and re-expand', async () => {
-    const user = userEvent.setup();
-    renderInventory();
-
-    await user.click(await screen.findByText('Edge router'));
-    await user.click(screen.getByRole('button', { name: 'Interfaces' }));
-    expect(screen.getByRole('button', { name: 'Interfaces' })).toHaveClass('is-active');
-
-    await user.click(screen.getByRole('button', { name: 'Collapse inspector' }));
-    await user.click(screen.getByRole('button', { name: 'Inspect Edge router' }));
-
-    // If collapsing had unmounted the inspector, re-expanding would create a
-    // fresh instance and reset to the Overview tab -- and for a device with
-    // an in-progress Configure preview, would silently discard it too.
-    expect(await screen.findByRole('button', { name: 'Interfaces' })).toHaveClass('is-active');
   });
 });
 

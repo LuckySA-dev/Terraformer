@@ -343,6 +343,7 @@ export type ChangePlanStatus =
 export type ChangeRisk = 'low' | 'high';
 export type ChangeType = 'interface_description' | 'interface_admin_state';
 export type SafetyLevel = 'D' | 'C';
+export type ChangePlanSource = 'manual' | 'ai_generated';
 
 export interface ChangeStep {
   id: string;
@@ -360,9 +361,42 @@ export interface ChangePlan {
   status: ChangePlanStatus;
   safety_level: SafetyLevel;
   risk: ChangeRisk;
+  source: ChangePlanSource;
   failure_code: string | null;
   applied_at: string | null;
   steps: ChangeStep[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProviderProfile {
+  id: string;
+  name: string;
+  base_url: string;
+  model_id: string;
+  has_api_key: boolean;
+  context_limit_override: number | null;
+  supports_streaming: boolean;
+  supports_tool_calling: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProviderProfileInput {
+  name: string;
+  base_url: string;
+  model_id: string;
+  api_key?: string;
+  context_limit_override?: number;
+}
+
+export type AssistantSessionMode = 'confirm' | 'auto';
+
+export interface AssistantSession {
+  id: string;
+  provider_profile_id: string;
+  mode: AssistantSessionMode;
+  auto_apply_count: number;
   created_at: string;
   updated_at: string;
 }

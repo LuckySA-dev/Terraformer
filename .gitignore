@@ -25,6 +25,7 @@ venv/
 .tooling/
 .uv-cache/
 .pytest_cache/
+.pytest-tmp/
 .mypy_cache/
 .pyright/
 .ruff_cache/

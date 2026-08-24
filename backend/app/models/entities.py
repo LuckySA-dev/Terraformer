@@ -160,6 +160,18 @@ class CredentialProfile(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     devices: Mapped[list[Device]] = relationship(back_populates="credential_profile")
 
 
+class ProviderProfile(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "provider_profiles"
+
+    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    base_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    model_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    encrypted_api_key: Mapped[bytes | None] = mapped_column(LargeBinary)
+    context_limit_override: Mapped[int | None] = mapped_column(Integer)
+    supports_streaming: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    supports_tool_calling: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
 class Device(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "devices"
     __table_args__ = (

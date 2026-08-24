@@ -20,6 +20,7 @@ from app.drivers.transport import ScrapliGenericTransportFactory, ScrapliTranspo
 from app.jobs.queue import JobQueue, RQJobQueue
 from app.services.connection_gate import RedisConnectionGate
 from app.services.credentials import CredentialVault
+from app.services.provider_profiles import ProviderKeyVault
 from app.services.ssh_trust import HostKeyCandidateStore, HostKeyProbe, HostKeyTrustService
 
 
@@ -101,6 +102,10 @@ class ApplicationContainer:
     @cached_property
     def credential_vault(self) -> CredentialVault:
         return CredentialVault(EnvelopeCipher(self.key_provider, purpose="credential-profiles"))
+
+    @cached_property
+    def provider_key_vault(self) -> ProviderKeyVault:
+        return ProviderKeyVault(EnvelopeCipher(self.key_provider, purpose="provider-profiles"))
 
     @cached_property
     def snapshot_store(self) -> EncryptedSnapshotStore:

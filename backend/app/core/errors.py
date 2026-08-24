@@ -209,6 +209,12 @@ class StructuredWritesDisabledError(AppError):
     default_message = "Structured configuration writes are disabled by server policy"
 
 
+class AIGatewayDisabledError(AppError):
+    code = "ai_gateway_disabled_by_policy"
+    status_code = 403
+    default_message = "The AI assistant gateway is disabled by server policy"
+
+
 class ChangeVendorUnsupportedError(AppError):
     code = "change_vendor_unsupported"
     status_code = 422

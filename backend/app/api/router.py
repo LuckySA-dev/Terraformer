@@ -10,6 +10,7 @@ from app.api import (
     events,
     health,
     jobs,
+    provider_profiles,
     setup,
     snapshots,
     ssh_trust,
@@ -19,6 +20,7 @@ api_router = APIRouter(prefix="/api")
 api_router.include_router(health.router)
 api_router.include_router(setup.router)
 api_router.include_router(credentials.router)
+api_router.include_router(provider_profiles.router)
 api_router.include_router(devices.router)
 api_router.include_router(diagnostics.router)
 api_router.include_router(discovery.router)

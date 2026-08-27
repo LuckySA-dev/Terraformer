@@ -237,14 +237,32 @@ export const api = {
     apiRequest<AssistantMessage[]>(
       `/assistant-sessions/${encodeURIComponent(sessionId)}/messages`,
     ),
-  createAssistantSession: (providerProfileId: string, modelId: string, deviceId?: string) =>
+  createAssistantSession: (
+    providerProfileId: string,
+    modelId: string,
+    deviceId?: string,
+    scopeDeviceIds: string[] = [],
+  ) =>
     apiRequest<AssistantSession>('/assistant-sessions', {
       method: 'POST',
       body: json({
         provider_profile_id: providerProfileId,
         model_id: modelId,
         device_id: deviceId ?? null,
+        scope_device_ids: scopeDeviceIds,
       }),
+    }),
+  /** Changes which devices a conversation is about. Empty means all of them. */
+  updateAssistantSessionScope: (sessionId: string, scopeDeviceIds: string[]) =>
+    apiRequest<AssistantSession>(`/assistant-sessions/${encodeURIComponent(sessionId)}`, {
+      method: 'PATCH',
+      body: json({ scope_device_ids: scopeDeviceIds }),
+    }),
+  /** Repoints a live conversation at another model without losing its history. */
+  updateAssistantSessionModel: (sessionId: string, providerProfileId: string, modelId: string) =>
+    apiRequest<AssistantSession>(`/assistant-sessions/${encodeURIComponent(sessionId)}`, {
+      method: 'PATCH',
+      body: json({ provider_profile_id: providerProfileId, model_id: modelId }),
     }),
   stageCommand: (sessionId: string, command: string) =>
     apiRequest<{ allowed: boolean }>(

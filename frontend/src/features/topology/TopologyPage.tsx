@@ -20,13 +20,26 @@ import {
 import type { TopologyElement } from './topology';
 import { DEVICE_ROLES, deviceIcon } from './deviceIcons';
 
-const AssistantChatPanel = lazy(() =>
-  import('../assistant/AssistantChatPanel').then((module) => ({
-    default: module.AssistantChatPanel,
+const AssistantSidebar = lazy(() =>
+  import('../assistant/AssistantSidebar').then((module) => ({
+    default: module.AssistantSidebar,
+  })),
+);
+
+const DeviceConfigWindow = lazy(() =>
+  import('../config/DeviceConfigWindow').then((module) => ({
+    default: module.DeviceConfigWindow,
   })),
 );
 
 cytoscape.use(fcose);
+
+/**
+ * Ceiling for the zoom `fit` is allowed to settle on. 1 renders a node at its
+ * declared 52x40, which is the size the glyphs were drawn for; a sparse graph
+ * is centred with space around it instead of magnified to fill the canvas.
+ */
+const RESTING_ZOOM_CAP = 1;
 
 // Cytoscape renders to its own canvas, not the DOM, so its style values are
 // literal colors resolved once at graph-build time -- a CSS var() string
@@ -218,10 +231,12 @@ function graphSignature(elements: TopologyElement[]): string {
 function TopologyCanvas({
   elements,
   onNodeTap,
+  onNodeConfigure,
   selectedDeviceId,
 }: {
   elements: TopologyElement[];
   onNodeTap?: (deviceId: string) => void;
+  onNodeConfigure?: (deviceId: string) => void;
   selectedDeviceId?: string | undefined;
 }) {
   const container = useRef<HTMLDivElement>(null);
@@ -234,6 +249,10 @@ function TopologyCanvas({
   useEffect(() => {
     onNodeTapRef.current = onNodeTap;
   }, [onNodeTap]);
+  const onNodeConfigureRef = useRef(onNodeConfigure);
+  useEffect(() => {
+    onNodeConfigureRef.current = onNodeConfigure;
+  }, [onNodeConfigure]);
   const elementsRef = useRef(elements);
   useEffect(() => {
     elementsRef.current = elements;
@@ -292,6 +311,24 @@ function TopologyCanvas({
       minZoom: 0.35,
       maxZoom: 2.5,
     });
+    // `fit` scales the graph until it fills the canvas, which is what an
+    // operator wants for a busy network and exactly wrong for a small one: two
+    // nodes were being blown up to the 2.5x ceiling, so the glyphs rendered
+    // several times their intended size and read as clip art rather than a
+    // diagram. Cap the resting zoom and re-centre; panning and manual zoom are
+    // untouched, so the operator can still zoom in past this themselves.
+    const capInitialZoom = () => {
+      if (graph.zoom() > RESTING_ZOOM_CAP) {
+        graph.zoom(RESTING_ZOOM_CAP);
+        graph.center();
+      }
+    };
+    // Called both now and on layoutstop: a non-animated layout has usually
+    // already settled by the time the constructor returns, but `preset` and
+    // `fcose` do not guarantee it. Capping is idempotent, so running twice is
+    // free and running once is enough.
+    capInitialZoom();
+    graph.one('layoutstop', capInitialZoom);
     graph.on('dragfree', 'node', () => {
       // graph.nodes() is only whatever the active protocol/registered-only
       // filter currently shows -- writing that alone would silently drop the
@@ -308,6 +345,13 @@ function TopologyCanvas({
     graph.on('tap', 'node', (event: cytoscape.EventObjectNode) => {
       const id = event.target.id();
       if (id.startsWith('device:')) onNodeTapRef.current?.(id.slice('device:'.length));
+    });
+    // Double-click opens the config window, the way Packet Tracer opens a
+    // device. Only registered devices have one: an observed node is a sighting
+    // from a neighbour table, not something this application can configure.
+    graph.on('dbltap', 'node', (event: cytoscape.EventObjectNode) => {
+      const id = event.target.id();
+      if (id.startsWith('device:')) onNodeConfigureRef.current?.(id.slice('device:'.length));
     });
     graphRef.current = graph;
     return () => {
@@ -359,7 +403,15 @@ export function TopologyPage({ onFocusDevice }: TopologyPageProps) {
   const [showLldp, setShowLldp] = useState(true);
   const [registeredOnly, setRegisteredOnly] = useState(false);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>();
+  const [configuringDeviceId, setConfiguringDeviceId] = useState<string>();
   const [assistantOpen, setAssistantOpen] = useState(false);
+
+  // One right rail, shared: the inspector and the assistant are mutually
+  // exclusive, so each opener closes the other.
+  const openAssistant = () => {
+    setAssistantOpen(true);
+    setSelectedDeviceId(undefined);
+  };
   const refreshInterval = refreshSeconds === 0 ? false : refreshSeconds * 1_000;
   const devices = useQuery({
     queryKey: ['devices'],
@@ -440,6 +492,8 @@ export function TopologyPage({ onFocusDevice }: TopologyPageProps) {
     localStorage.setItem(TOPOLOGY_MANUAL_LINKS_KEY, JSON.stringify(links));
   };
   const selectedDevice = devices.data.find((device) => device.id === selectedDeviceId) ?? null;
+  const configuringDevice =
+    devices.data.find((device) => device.id === configuringDeviceId) ?? null;
   // Editing or deleting isn't built for this page — hand off to Inventory,
   // which already owns the device mutation and safety-gate wiring, rather
   // than duplicating it here for a second entry point.
@@ -448,7 +502,7 @@ export function TopologyPage({ onFocusDevice }: TopologyPageProps) {
   return (
     <div
       className={
-        selectedDevice === null
+        selectedDevice === null && !assistantOpen
           ? 'workspace-layout workspace-layout--inspector-collapsed'
           : 'workspace-layout'
       }
@@ -579,42 +633,39 @@ export function TopologyPage({ onFocusDevice }: TopologyPageProps) {
           </div>
           <TopologyCanvas
             elements={filteredElements}
-            onNodeTap={setSelectedDeviceId}
+            onNodeTap={(id) => {
+              setAssistantOpen(false);
+              setSelectedDeviceId(id);
+            }}
+            onNodeConfigure={setConfiguringDeviceId}
             selectedDeviceId={selectedDeviceId}
           />
           <p className="topology-note">
-            Drag nodes to save positions in this browser. Observed nodes remain evidence, not inventory records.
-            Manual links stay local and are always labeled UNVERIFIED.
+            Click a device to inspect it, or double-click to open its configuration window. Drag
+            nodes to save positions in this browser. Observed nodes remain evidence, not inventory
+            records. Manual links stay local and are always labeled UNVERIFIED.
           </p>
         </section>
         <section className="topology-panel topology-assistant">
           <div className="topology-toolbar">
             <div>
               <h2>Ask about the whole network</h2>
-              <span>Workspace-wide chat -- separate from every per-device conversation</span>
+              <span>Opens in the right sidebar -- pick the devices it should be about</span>
             </div>
-            <Button size="small" onClick={() => setAssistantOpen(!assistantOpen)}>
-              <Bot size={13} /> {assistantOpen ? 'Hide assistant' : 'Open assistant'}
+            <Button size="small" onClick={openAssistant}>
+              <Bot size={13} /> Open assistant
             </Button>
           </div>
-          {assistantOpen ? (
-            <div className="topology-assistant__body">
-              <Suspense
-                fallback={
-                  <AppState
-                    kind="loading"
-                    title="Loading assistant"
-                    message="Preparing the workspace chat…"
-                    compact
-                  />
-                }
-              >
-                <AssistantChatPanel scopeHint="This chat spans the whole workspace, so you can ask it to compare devices or reason across the topology. It is kept separate from the per-device conversations in each device's Assistant tab. Ask it to look a device up by name and it will find the right one." />
-              </Suspense>
-            </div>
-          ) : null}
         </section>
       </main>
+      {!assistantOpen ? null : (
+        <Suspense fallback={null}>
+          <AssistantSidebar
+            onClose={() => setAssistantOpen(false)}
+            onOpenInventory={() => onFocusDevice?.(selectedDeviceId ?? '')}
+          />
+        </Suspense>
+      )}
       {selectedDevice === null ? null : (
         <DeviceInspector
           key={selectedDevice.id}
@@ -623,6 +674,15 @@ export function TopologyPage({ onFocusDevice }: TopologyPageProps) {
           onEdit={focusInInventory}
           onDelete={focusInInventory}
         />
+      )}
+      {configuringDevice === null ? null : (
+        <Suspense fallback={null}>
+          <DeviceConfigWindow
+            key={configuringDevice.id}
+            device={configuringDevice}
+            onClose={() => setConfiguringDeviceId(undefined)}
+          />
+        </Suspense>
       )}
     </div>
   );

@@ -221,6 +221,52 @@ describe('UsbSerialTransport', () => {
     expect(portIsOpen).toBe(false);
   });
 
+  it('names a port held by another program instead of the generic failure', async () => {
+    const fixture = serialFixture();
+    fixture.port.open.mockRejectedValueOnce(
+      new DOMException('Failed to open serial port. raw chromium detail', 'NetworkError'),
+    );
+    const events: TerminalTransportEvent[] = [];
+    const transport = new UsbSerialTransport(fixture.api, defaultSerialSettings);
+
+    await expect(transport.open((event) => events.push(event)))
+      .rejects.toMatchObject({ code: 'port_in_use' });
+
+    const failure = events.find((event) => event.type === 'error');
+    expect(failure).toMatchObject({ code: 'port_in_use', message: 'Port already in use' });
+    expect(failure).toHaveProperty('recommendedAction');
+    expect(JSON.stringify(events)).not.toContain('raw chromium detail');
+  });
+
+  it('names an adapter already open in this browser', async () => {
+    const fixture = serialFixture();
+    fixture.port.open.mockRejectedValueOnce(
+      new DOMException('The port is already open. raw chromium detail', 'InvalidStateError'),
+    );
+    const events: TerminalTransportEvent[] = [];
+    const transport = new UsbSerialTransport(fixture.api, defaultSerialSettings);
+
+    await expect(transport.open((event) => events.push(event)))
+      .rejects.toMatchObject({ code: 'port_in_use' });
+    expect(JSON.stringify(events)).not.toContain('raw chromium detail');
+  });
+
+  it('keeps the generic mapping for an unrecognised open failure', async () => {
+    const fixture = serialFixture();
+    fixture.port.open.mockRejectedValueOnce(
+      new DOMException('raw unknown detail', 'UnknownFutureError'),
+    );
+    const events: TerminalTransportEvent[] = [];
+    const transport = new UsbSerialTransport(fixture.api, defaultSerialSettings);
+
+    await expect(transport.open((event) => events.push(event)))
+      .rejects.toMatchObject({ code: 'port_unavailable' });
+    expect(events).toContainEqual({
+      type: 'error', code: 'port_unavailable', message: 'Port unavailable',
+    });
+    expect(JSON.stringify(events)).not.toContain('raw unknown detail');
+  });
+
   it('rejects an overflowing write queue before the extra chunk reaches the port', async () => {
     const fixture = serialFixture();
     const transport = new UsbSerialTransport(fixture.api, defaultSerialSettings);

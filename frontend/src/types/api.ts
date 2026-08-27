@@ -418,6 +418,12 @@ export interface AssistantSession {
   model_id: string;
   /** null means a workspace-wide chat rather than one pinned to a device. */
   device_id: string | null;
+  /**
+   * Devices the operator scoped this conversation to; empty means all of them.
+   * Context for the model, not an enforced boundary -- every change still
+   * needs a preview and a human confirmation.
+   */
+  scope_device_ids: string[];
   mode: AssistantSessionMode;
   supports_streaming: boolean;
   supports_tool_calling: boolean;

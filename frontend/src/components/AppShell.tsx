@@ -146,7 +146,7 @@ export function AppShell({ health, onLogout }: AppShellProps) {
             aria-current={view === 'assistant' ? 'page' : undefined}
           >
             <Bot size={18} />
-            <span>AI provider keys</span>
+            <span>Assistant</span>
           </button>
         </nav>
         <div className="sidebar__spacer" />

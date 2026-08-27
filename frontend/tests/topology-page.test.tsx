@@ -33,6 +33,12 @@ const graph = vi.hoisted(() => {
     elements: vi.fn(() => collection()),
     getElementById: vi.fn(() => collection()),
     on: vi.fn(),
+    one: vi.fn(),
+    // The view starts fitted, then the page caps how far `fit` may zoom in so a
+    // two-node graph is not magnified to fill the canvas. Default the double
+    // above that cap so a test can observe the correction happening.
+    zoom: vi.fn(() => 2.5),
+    center: vi.fn(),
   };
 });
 
@@ -106,6 +112,9 @@ describe('TopologyPage read-only projection', () => {
       nodes: graph.nodes,
       elements: graph.elements,
       on: graph.on,
+      one: graph.one,
+      zoom: graph.zoom,
+      center: graph.center,
       getElementById: graph.getElementById,
     });
     vi.mocked(api.facts).mockResolvedValue({ device_id: device.id, facts: device.facts, last_seen_at: null });
@@ -177,6 +186,19 @@ describe('TopologyPage read-only projection', () => {
     } | undefined;
     expect(call?.layout?.name).toBe('fcose');
     expect(call?.layout?.nodeDimensionsIncludeLabels).toBe(true);
+  });
+
+  it('caps how far the initial fit may zoom a sparse graph in', async () => {
+    vi.mocked(api.devices).mockResolvedValue([device]);
+    vi.mocked(api.neighbors).mockResolvedValue([]);
+    render(<TopologyPage />, { wrapper: TestProviders });
+
+    expect(await screen.findByRole('heading', { name: 'Network topology' })).toBeVisible();
+    // The double reports a fitted zoom of 2.5 -- the ceiling `fit` would reach
+    // on a two-node graph, which rendered the glyphs several times their
+    // intended size. The page must pull it back and re-centre.
+    expect(graph.zoom).toHaveBeenCalledWith(1);
+    expect(graph.center).toHaveBeenCalled();
   });
 
   it('filters out a protocol and its now-orphaned observed node when unchecked', async () => {

@@ -27,6 +27,7 @@ from app.repositories.provider_profiles import ProviderProfileRepository
 from app.schemas.assistant import (
     AssistantMessageView,
     AssistantSessionCreate,
+    AssistantSessionUpdate,
     AssistantSessionView,
 )
 from app.schemas.common import APIModel
@@ -52,6 +53,7 @@ def _session_view(chat_session: AssistantSession) -> AssistantSessionView:
         provider_profile_id=chat_session.provider_profile_id,
         model_id=chat_session.model_id,
         device_id=chat_session.device_id,
+        scope_device_ids=[UUID(value) for value in chat_session.scope_device_ids],
         mode=chat_session.mode,
         supports_streaming=chat_session.supports_streaming,
         supports_tool_calling=chat_session.supports_tool_calling,
@@ -107,9 +109,62 @@ async def create_session(
         provider_profile_id=request.provider_profile_id,
         model_id=request.model_id,
         device_id=request.device_id,
+        scope_device_ids=[str(value) for value in request.scope_device_ids],
         supports_streaming=capabilities.supports_streaming,
         supports_tool_calling=capabilities.supports_tool_calling,
     )
+    session.commit()
+    return _session_view(chat_session)
+
+
+@sessions_router.patch("/{session_id}", response_model=AssistantSessionView)
+async def update_session_model(
+    session_id: UUID,
+    request: AssistantSessionUpdate,
+    _auth: Authenticated,
+    session: SessionDependency,
+    container: ContainerDependency,
+):
+    """Repoint a live conversation, keeping its history.
+
+    Covers two independent edits the sidebar makes without leaving the thread:
+    the model it runs on, and which devices it is about. Each field is
+    optional so one picker cannot clobber the other's value.
+
+    Switching model re-probes capabilities for the same reason
+    `create_session` probes them: they belong to the model, not the profile,
+    so carrying the previous model's flags forward could advertise tool
+    calling a model does not have.
+    """
+    repository = AssistantSessionRepository(session)
+    chat_session = repository.get(session_id)
+
+    if request.scope_device_ids is not None:
+        repository.set_scope(chat_session, [str(value) for value in request.scope_device_ids])
+
+    if request.provider_profile_id is not None and request.model_id is not None:
+        profile = ProviderProfileRepository(session).get(request.provider_profile_id)
+        material = container.provider_key_vault.decrypt(profile)
+        try:
+            capabilities = await container.ai_client_for(profile.provider_type).probe_capabilities(
+                base_url=profile.base_url, api_key=material.api_key, model_id=request.model_id
+            )
+        except AIProviderConnectionError as exc:
+            # Nothing is committed on this path, so the session keeps the
+            # model that still works rather than being left pointing at one
+            # that could not be reached.
+            session.rollback()
+            raise HTTPException(
+                status_code=502, detail="Could not reach the configured endpoint"
+            ) from exc
+        repository.set_model(
+            chat_session,
+            provider_profile_id=request.provider_profile_id,
+            model_id=request.model_id,
+            supports_streaming=capabilities.supports_streaming,
+            supports_tool_calling=capabilities.supports_tool_calling,
+        )
+
     session.commit()
     return _session_view(chat_session)
 

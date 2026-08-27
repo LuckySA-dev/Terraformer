@@ -629,6 +629,16 @@ class AssistantSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("devices.id", ondelete="CASCADE"),
         index=True,
     )
+    # Which devices the operator wants this conversation to be about, as
+    # device-id strings. An empty list means "all registered devices".
+    #
+    # Distinct from device_id above, and not a security boundary: device_id
+    # partitions history so one device's chat cannot surface another's, while
+    # this only tells the model which devices the operator means, so "shut
+    # SW1 and SW2 down" does not need two UUIDs pasted into the message. Every
+    # tool still takes an explicit device_id and every change still goes
+    # through preview and a human confirmation.
+    scope_device_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     model_id: Mapped[str] = mapped_column(String(200), nullable=False)
     context_limit_override: Mapped[int | None] = mapped_column(Integer)
     supports_streaming: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

@@ -5,6 +5,7 @@ import type { ReactNode } from 'react';
 import { ApiError } from '../src/api/client';
 import { api } from '../src/api/network';
 import { AssistantPage } from '../src/features/assistant/AssistantPage';
+import { ProviderKeysDialog } from '../src/features/assistant/ProviderKeysDialog';
 import type { ProviderProfile } from '../src/types/api';
 
 vi.mock('../src/api/network', () => ({
@@ -15,6 +16,12 @@ vi.mock('../src/api/network', () => ({
     deleteProviderProfile: vi.fn(),
     providerProfileModels: vi.fn(),
     listProviderModels: vi.fn(),
+    assistantSessions: vi.fn(),
+    assistantMessages: vi.fn(),
+    createAssistantSession: vi.fn(),
+    updateAssistantSessionModel: vi.fn(),
+    applyChangePlan: vi.fn(),
+    stageCommand: vi.fn(),
   },
 }));
 
@@ -37,9 +44,17 @@ function renderAssistant() {
   render(<AssistantPage />, { wrapper: TestProviders });
 }
 
+// Provider keys now live behind the composer's model picker, so the CRUD
+// behaviour these tests cover is exercised where it actually renders.
+function renderKeys() {
+  render(<ProviderKeysDialog open onClose={vi.fn()} />, { wrapper: TestProviders });
+}
+
 beforeEach(() => {
   vi.mocked(api.providerProfiles).mockResolvedValue([profile]);
   vi.mocked(api.providerProfileModels).mockResolvedValue({ models: ['llama3.1'] });
+  vi.mocked(api.assistantSessions).mockResolvedValue([]);
+  vi.mocked(api.assistantMessages).mockResolvedValue([]);
 });
 
 it('shows a clear message instead of a raw error when the gateway is disabled', async () => {
@@ -52,24 +67,27 @@ it('shows a clear message instead of a raw error when the gateway is disabled', 
 
   expect(await screen.findByText('The assistant is turned off')).toBeVisible();
   expect(screen.getByText(/AI_GATEWAY_ENABLED=false/)).toBeVisible();
-  expect(screen.queryByRole('button', { name: /add provider/i })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /new profile/i })).not.toBeInTheDocument();
 });
 
-it('lists saved provider profiles directly on the page', async () => {
+it('opens straight into a chat rather than a settings screen', async () => {
   renderAssistant();
+
+  // The tab named after the assistant used to be the one place you could not
+  // talk to it.
+  expect(await screen.findByLabelText('Message')).toBeVisible();
+  expect(screen.getByRole('button', { name: /send/i })).toBeInTheDocument();
+});
+
+it('lists saved provider profiles in the keys dialog', async () => {
+  renderKeys();
 
   expect(await screen.findByText('Local Ollama')).toBeVisible();
 });
 
-it('explains where the assistant actually appears', async () => {
-  renderAssistant();
-
-  expect(await screen.findByText('Where the assistant appears')).toBeVisible();
-});
-
 it('shows an empty state when no profile exists yet', async () => {
   vi.mocked(api.providerProfiles).mockResolvedValue([]);
-  renderAssistant();
+  renderKeys();
 
   expect(await screen.findByText('No provider profiles yet')).toBeVisible();
 });
@@ -77,9 +95,9 @@ it('shows an empty state when no profile exists yet', async () => {
 it('creates a profile with an optional API key', async () => {
   vi.mocked(api.createProviderProfile).mockResolvedValue({ ...profile, id: 'new-id' });
   const user = userEvent.setup();
-  renderAssistant();
+  renderKeys();
 
-  await user.click(await screen.findByRole('button', { name: /add provider/i }));
+  await user.click(await screen.findByRole('button', { name: /new profile/i }));
   await user.type(screen.getByLabelText('Profile name'), 'Cloud');
   await user.type(screen.getByLabelText('Base URL'), 'https://api.openai.com/v1');
   await user.click(screen.getByRole('button', { name: 'Save profile' }));
@@ -92,9 +110,9 @@ it('creates a profile with an optional API key', async () => {
 it('saves an Anthropic profile with the anthropic wire format, not a base URL swap', async () => {
   vi.mocked(api.createProviderProfile).mockResolvedValue({ ...profile, id: 'new-id' });
   const user = userEvent.setup();
-  renderAssistant();
+  renderKeys();
 
-  await user.click(await screen.findByRole('button', { name: /add provider/i }));
+  await user.click(await screen.findByRole('button', { name: /new profile/i }));
   await user.type(screen.getByLabelText('Profile name'), 'Claude');
   await user.selectOptions(screen.getByLabelText('Provider'), 'Anthropic (Claude)');
   await user.click(screen.getByRole('button', { name: 'Save profile' }));
@@ -110,9 +128,9 @@ it('saves an Anthropic profile with the anthropic wire format, not a base URL sw
 
 it('keeps the trailing slash Gemini requires when its preset is chosen', async () => {
   const user = userEvent.setup();
-  renderAssistant();
+  renderKeys();
 
-  await user.click(await screen.findByRole('button', { name: /add provider/i }));
+  await user.click(await screen.findByRole('button', { name: /new profile/i }));
   await user.selectOptions(screen.getByLabelText('Provider'), 'Google Gemini');
 
   expect(screen.getByLabelText('Base URL')).toHaveValue(
@@ -123,9 +141,9 @@ it('keeps the trailing slash Gemini requires when its preset is chosen', async (
 it('verifies the connection and reports how many models are available', async () => {
   vi.mocked(api.listProviderModels).mockResolvedValue({ models: ['llama3.1', 'llama3.2'] });
   const user = userEvent.setup();
-  renderAssistant();
+  renderKeys();
 
-  await user.click(await screen.findByRole('button', { name: /add provider/i }));
+  await user.click(await screen.findByRole('button', { name: /new profile/i }));
   await user.type(screen.getByLabelText('Base URL'), 'http://localhost:11434/v1');
   await user.click(screen.getByRole('button', { name: /verify connection/i }));
 
@@ -140,9 +158,9 @@ it('verifies the connection and reports how many models are available', async ()
 it('surfaces a connection failure when verifying a new profile fails', async () => {
   vi.mocked(api.listProviderModels).mockRejectedValue(new Error('network down'));
   const user = userEvent.setup();
-  renderAssistant();
+  renderKeys();
 
-  await user.click(await screen.findByRole('button', { name: /add provider/i }));
+  await user.click(await screen.findByRole('button', { name: /new profile/i }));
   await user.type(screen.getByLabelText('Base URL'), 'http://localhost:11434/v1');
   await user.click(screen.getByRole('button', { name: /verify connection/i }));
 
@@ -152,7 +170,7 @@ it('surfaces a connection failure when verifying a new profile fails', async () 
 it('deletes a profile through a separate confirmation modal', async () => {
   vi.mocked(api.deleteProviderProfile).mockResolvedValue(undefined);
   const user = userEvent.setup();
-  renderAssistant();
+  renderKeys();
 
   await user.click(await screen.findByRole('button', { name: 'Delete Local Ollama' }));
 
@@ -166,7 +184,7 @@ it('deletes a profile through a separate confirmation modal', async () => {
 it("tests a saved profile's connection from the list", async () => {
   vi.mocked(api.providerProfileModels).mockResolvedValue({ models: ['llama3.1', 'llama3.2'] });
   const user = userEvent.setup();
-  renderAssistant();
+  renderKeys();
 
   await user.click(
     await screen.findByRole('button', { name: `Test connection for ${profile.name}` }),
@@ -179,7 +197,7 @@ it("tests a saved profile's connection from the list", async () => {
 it('surfaces a failed connection test for a saved profile', async () => {
   vi.mocked(api.providerProfileModels).mockRejectedValue(new Error('boom'));
   const user = userEvent.setup();
-  renderAssistant();
+  renderKeys();
 
   await user.click(
     await screen.findByRole('button', { name: `Test connection for ${profile.name}` }),

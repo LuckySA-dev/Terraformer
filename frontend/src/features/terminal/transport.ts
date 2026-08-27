@@ -30,7 +30,14 @@ export interface TerminalTransport {
 }
 
 export class TerminalTransportError extends Error {
-  constructor(readonly code: string, message: string) {
+  constructor(
+    readonly code: string,
+    message: string,
+    // Fixed, code-derived remediation text only. It is written here alongside
+    // the code, never taken from an exception, so a raw browser or device
+    // message can still not reach the UI through this field.
+    readonly recommendedAction?: string,
+  ) {
     super(message);
     this.name = 'TerminalTransportError';
   }

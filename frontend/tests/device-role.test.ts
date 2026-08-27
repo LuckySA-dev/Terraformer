@@ -23,6 +23,30 @@ it('falls back to an endpoint when nothing identifies the device', () => {
   expect(classifyDeviceRole('some-unknown-box')).toBe('endpoint');
 });
 
+it('reads the operator naming convention when no model was reported', () => {
+  // A device that has not returned facts yet has only its name and a driver
+  // key, and cisco_iosxe runs on both routers and switches. Falling through to
+  // 'endpoint' drew Cisco switches as desktop computers on the canvas.
+  expect(classifyDeviceRole(null, null, 'cisco_iosxe', 'SW1')).toBe('switch');
+  expect(classifyDeviceRole(null, null, 'cisco_iosxe', 'core-sw-01')).toBe('switch');
+  expect(classifyDeviceRole(null, null, 'cisco_iosxe', 'R1')).toBe('router');
+  expect(classifyDeviceRole(null, null, 'cisco_iosxe', 'RTR-2')).toBe('router');
+  expect(classifyDeviceRole(null, null, 'fortinet_fortios', 'FW1')).toBe('firewall');
+});
+
+it('lets a reported model outrank the operator name', () => {
+  // Precedence is the order of ROLE_PATTERNS, not the argument order: the
+  // name-convention patterns are tested last on purpose.
+  expect(classifyDeviceRole('ISR4331/K9', null, 'cisco_iosxe', 'SW1')).toBe('router');
+  expect(classifyDeviceRole('cisco WS-C2960X', null, 'cisco_iosxe', 'R1')).toBe('switch');
+});
+
+it('does not read an interface name as a device role', () => {
+  // These strings travel with a device but never identify one.
+  expect(classifyDeviceRole('GigabitEthernet1/0/1')).toBe('endpoint');
+  expect(classifyDeviceRole('unknown-hardware')).toBe('endpoint');
+});
+
 it('ignores blank hints instead of tripping over them', () => {
   expect(classifyDeviceRole(undefined, 'ISR4331')).toBe('router');
 });

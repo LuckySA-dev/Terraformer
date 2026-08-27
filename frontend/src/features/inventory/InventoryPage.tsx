@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  Bot,
   Box,
   Cable,
   CheckCircle2,
@@ -14,7 +15,7 @@ import {
   ShieldCheck,
   Unplug,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { lazy, Suspense, useMemo, useState } from 'react';
 import { api } from '../../api/network';
 import type {
   CredentialProfile,
@@ -28,6 +29,12 @@ import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
 import { formatRelativeTime } from '../../lib/format';
+
+const AssistantSidebar = lazy(() =>
+  import('../assistant/AssistantSidebar').then((module) => ({
+    default: module.AssistantSidebar,
+  })),
+);
 import { CredentialForm } from './CredentialForm';
 import { CredentialList } from './CredentialList';
 import { DeviceForm } from './DeviceForm';
@@ -170,12 +177,22 @@ export function InventoryPage({ focusDeviceId }: InventoryPageProps) {
   const [credentialDeleteTarget, setCredentialDeleteTarget] = useState<CredentialProfile>();
   const [discoveryOpen, setDiscoveryOpen] = useState(false);
   const [usbConsoleOpen, setUsbConsoleOpen] = useState(false);
+  // The inspector and the assistant share one column, so opening either has
+  // to close the other. Tracked as a single value rather than two booleans
+  // that could both be true.
+  const [assistantOpen, setAssistantOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Device>();
 
   const selectDevice = (deviceId: string) => {
     setSelectedId(deviceId);
     setInspectorCollapsed(false);
+    setAssistantOpen(false);
     localStorage.setItem('terraformer.inspector.collapsed', '0');
+  };
+
+  const openAssistant = () => {
+    setAssistantOpen(true);
+    setInspectorCollapsed(true);
   };
 
   // Polls briefly after "Refresh all" so newly queued jobs' status updates
@@ -267,7 +284,8 @@ export function InventoryPage({ focusDeviceId }: InventoryPageProps) {
   // so give the table the full width instead of reserving a panel for it.
   // Selecting a device (selectDevice()) always clears the manual collapse
   // flag too, so this never fights the operator's own choice to collapse it.
-  const hideInspector = inspectorCollapsed || selectedDevice === null;
+  const hideInspector = assistantOpen || inspectorCollapsed || selectedDevice === null;
+  const hideRail = hideInspector && !assistantOpen;
   const reachable = (devices.data ?? []).filter(
     (device) => device.status === 'reachable',
   ).length;
@@ -280,7 +298,7 @@ export function InventoryPage({ focusDeviceId }: InventoryPageProps) {
   ).length;
 
   return (
-    <div className={hideInspector ? 'workspace-layout workspace-layout--inspector-collapsed' : 'workspace-layout'}>
+    <div className={hideRail ? 'workspace-layout workspace-layout--inspector-collapsed' : 'workspace-layout'}>
       <main className="workspace-main">
         <header className="page-header">
           <div>
@@ -296,6 +314,9 @@ export function InventoryPage({ focusDeviceId }: InventoryPageProps) {
               title="Re-check connectivity for every registered device"
             >
               <RefreshCw size={16} /> Refresh all
+            </Button>
+            <Button onClick={openAssistant}>
+              <Bot size={16} /> Assistant
             </Button>
             <Button onClick={() => setUsbConsoleOpen(true)}>
               <Cable size={16} /> Open USB Console
@@ -377,6 +398,13 @@ export function InventoryPage({ focusDeviceId }: InventoryPageProps) {
       {/* Hidden via CSS, not unmounted: an unmount would reset every tab's
           local state (e.g. an in-progress Configure preview) even though
           the selected device never changed and collapsing looks reversible. */}
+      {assistantOpen ? (
+        <div className="inspector-slot">
+          <Suspense fallback={null}>
+            <AssistantSidebar onClose={() => setAssistantOpen(false)} />
+          </Suspense>
+        </div>
+      ) : null}
       <div className={hideInspector ? 'inspector-slot inspector-slot--collapsed' : 'inspector-slot'}>
         <DeviceInspector
           key={selectedDevice?.id ?? 'empty'}

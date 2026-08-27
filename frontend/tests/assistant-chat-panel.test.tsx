@@ -13,6 +13,9 @@ vi.mock('../src/api/network', () => ({
     assistantSessions: vi.fn(),
     assistantMessages: vi.fn(),
     createAssistantSession: vi.fn(),
+    updateAssistantSessionModel: vi.fn(),
+    updateAssistantSessionScope: vi.fn(),
+    devices: vi.fn(),
     applyChangePlan: vi.fn(),
     stageCommand: vi.fn(),
   },
@@ -25,6 +28,12 @@ class FakeWebSocket {
   onclose: (() => void) | null = null;
   onerror: (() => void) | null = null;
   sent: string[] = [];
+  readyState = 1;
+  // The hook reads these off the global the way the real API exposes them.
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSING = 2;
+  static readonly CLOSED = 3;
 
   constructor(public url: string) {
     FakeWebSocket.instances.push(this);
@@ -60,6 +69,7 @@ const session: AssistantSession = {
   provider_profile_id: profile.id,
   model_id: 'llama3.1',
   device_id: DEVICE_ID,
+  scope_device_ids: [],
   mode: 'confirm',
   supports_streaming: false,
   supports_tool_calling: true,
@@ -83,10 +93,16 @@ function renderPanel(deviceId?: string) {
   );
 }
 
+async function pickModel(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByRole('button', { name: /^Model:/ }));
+  await user.click(await screen.findByRole('menuitem', { name: /llama3\.1/ }));
+}
+
 async function startChat(user: ReturnType<typeof userEvent.setup>) {
-  await user.selectOptions(await screen.findByLabelText('Provider profile'), profile.id);
-  await user.type(await screen.findByLabelText('Model'), 'llama3.1');
-  await user.click(screen.getByRole('button', { name: 'New chat' }));
+  await pickModel(user);
+  await user.type(screen.getByLabelText('Message'), 'hello');
+  await user.click(screen.getByRole('button', { name: /send/i }));
+  await waitFor(() => expect(api.createAssistantSession).toHaveBeenCalled());
 }
 
 beforeEach(() => {
@@ -96,14 +112,15 @@ beforeEach(() => {
   vi.mocked(api.providerProfileModels).mockResolvedValue({ models: ['llama3.1'] });
   vi.mocked(api.assistantSessions).mockResolvedValue([]);
   vi.mocked(api.assistantMessages).mockResolvedValue([]);
+  vi.mocked(api.devices).mockResolvedValue([]);
 });
 
 it('refuses to work until an API key profile exists', async () => {
   vi.mocked(api.providerProfiles).mockResolvedValue([]);
   renderPanel(DEVICE_ID);
 
-  expect(await screen.findByText('Add an API key first')).toBeVisible();
-  expect(screen.queryByRole('button', { name: 'New chat' })).not.toBeInTheDocument();
+  expect(await screen.findByText('Add a provider key to start')).toBeVisible();
+  expect(screen.getByLabelText('Message')).toBeDisabled();
 });
 
 it('asks the server only for this device\'s own conversations', async () => {
@@ -129,7 +146,8 @@ it('pins a new device chat to that device', async () => {
 
   await startChat(user);
 
-  expect(api.createAssistantSession).toHaveBeenCalledWith(profile.id, 'llama3.1', DEVICE_ID);
+  // Empty scope is "all devices"; a device-pinned chat has no scope picker.
+  expect(api.createAssistantSession).toHaveBeenCalledWith(profile.id, 'llama3.1', DEVICE_ID, []);
 });
 
 it('leaves a workspace chat unpinned', async () => {
@@ -139,7 +157,7 @@ it('leaves a workspace chat unpinned', async () => {
 
   await startChat(user);
 
-  expect(api.createAssistantSession).toHaveBeenCalledWith(profile.id, 'llama3.1', undefined);
+  expect(api.createAssistantSession).toHaveBeenCalledWith(profile.id, 'llama3.1', undefined, []);
 });
 
 it('shows the scope so the operator knows what this chat can see', async () => {
@@ -164,8 +182,7 @@ it('lists earlier conversations for this scope so they can be reopened', async (
   const user = userEvent.setup();
   renderPanel(DEVICE_ID);
 
-  await user.click(await screen.findByText('Earlier conversations here'));
-  await user.click(screen.getByRole('button', { name: /llama3\.1/ }));
+  await user.selectOptions(await screen.findByLabelText('Conversation'), session.id);
 
   expect(await screen.findByText('what changed yesterday?')).toBeVisible();
 });
@@ -190,7 +207,7 @@ it('shows the mode the server actually has when a chat is reopened', async () =>
   const user = userEvent.setup();
   renderPanel(DEVICE_ID);
 
-  await user.click(await screen.findByRole('button', { name: /llama3\.1/ }));
+  await user.selectOptions(await screen.findByLabelText('Conversation'), session.id);
 
   expect(await screen.findByText('3 auto-applies left')).toBeVisible();
 });
@@ -201,7 +218,7 @@ it('stops auto-applying once the server-side allowance is spent', async () => {
   const user = userEvent.setup();
   renderPanel(DEVICE_ID);
 
-  await user.click(await screen.findByRole('button', { name: /llama3\.1/ }));
+  await user.selectOptions(await screen.findByLabelText('Conversation'), session.id);
   await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
   const socket = FakeWebSocket.instances[0];
   if (socket === undefined) throw new Error('expected a FakeWebSocket instance');
@@ -229,7 +246,7 @@ it('sends the session id only when Auto fired the apply', async () => {
   const user = userEvent.setup();
   renderPanel(DEVICE_ID);
 
-  await user.click(await screen.findByRole('button', { name: /llama3\.1/ }));
+  await user.selectOptions(await screen.findByLabelText('Conversation'), session.id);
   await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
   const socket = FakeWebSocket.instances[0];
   if (socket === undefined) throw new Error('expected a FakeWebSocket instance');
@@ -260,7 +277,7 @@ it('shows why an apply failed instead of silently stopping', async () => {
   const user = userEvent.setup();
   renderPanel(DEVICE_ID);
 
-  await user.click(await screen.findByRole('button', { name: /llama3\.1/ }));
+  await user.selectOptions(await screen.findByLabelText('Conversation'), session.id);
   await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
   const socket = FakeWebSocket.instances[0];
   if (socket === undefined) throw new Error('expected a FakeWebSocket instance');
@@ -351,15 +368,128 @@ it('renders a fenced command from the assistant as a console suggestion card', a
   expect(screen.getByRole('button', { name: /copy and open inventory/i })).toBeVisible();
 });
 
-it('disables New chat until a provider profile and model are chosen', async () => {
+it('will not send until a model is chosen', async () => {
   const user = userEvent.setup();
   renderPanel(DEVICE_ID);
 
-  expect(await screen.findByRole('button', { name: 'New chat' })).toBeDisabled();
+  await user.type(await screen.findByLabelText('Message'), 'hello');
+  expect(screen.getByRole('button', { name: /send/i })).toBeDisabled();
 
-  await user.selectOptions(await screen.findByLabelText('Provider profile'), profile.id);
-  expect(screen.getByRole('button', { name: 'New chat' })).toBeDisabled();
+  await pickModel(user);
+  expect(screen.getByRole('button', { name: /send/i })).toBeEnabled();
+});
 
-  await user.type(await screen.findByLabelText('Model'), 'llama3.1');
-  expect(screen.getByRole('button', { name: 'New chat' })).toBeEnabled();
+it('switches model from the composer without starting a new conversation', async () => {
+  vi.mocked(api.assistantSessions).mockResolvedValue([session]);
+  vi.mocked(api.providerProfileModels).mockResolvedValue({ models: ['llama3.1', 'qwen2.5'] });
+  vi.mocked(api.updateAssistantSessionModel).mockResolvedValue({ ...session, model_id: 'qwen2.5' });
+  const user = userEvent.setup();
+  renderPanel(DEVICE_ID);
+
+  await user.selectOptions(await screen.findByLabelText('Conversation'), session.id);
+  await user.click(await screen.findByRole('button', { name: /^Model:/ }));
+  await user.click(await screen.findByRole('menuitem', { name: /qwen2\.5/ }));
+
+  // The point of the PATCH: the thread is repointed, not replaced, so the
+  // history above the composer survives the switch.
+  await waitFor(() =>
+    expect(api.updateAssistantSessionModel).toHaveBeenCalledWith(session.id, profile.id, 'qwen2.5'),
+  );
+  expect(api.createAssistantSession).not.toHaveBeenCalled();
+});
+
+it('picks a model without contacting the provider until something is sent', async () => {
+  vi.mocked(api.providerProfileModels).mockResolvedValue({ models: ['llama3.1', 'qwen2.5'] });
+  const user = userEvent.setup();
+  renderPanel(DEVICE_ID);
+
+  await user.click(await screen.findByRole('button', { name: /^Model:/ }));
+  await user.click(await screen.findByRole('menuitem', { name: /qwen2\.5/ }));
+
+  // Creating a session probes the provider. Doing that for a chat the operator
+  // may never send would spend a request on an idle dropdown.
+  expect(api.createAssistantSession).not.toHaveBeenCalled();
+  expect(api.updateAssistantSessionModel).not.toHaveBeenCalled();
+  expect(await screen.findByRole('button', { name: /^Model: qwen2\.5/ })).toBeVisible();
+});
+
+it('reaches provider key management from inside the chat', async () => {
+  const user = userEvent.setup();
+  renderPanel(DEVICE_ID);
+
+  await user.click(await screen.findByRole('button', { name: /^Model:/ }));
+  await user.click(await screen.findByRole('menuitem', { name: /manage provider keys/i }));
+
+  expect(await screen.findByText('Provider keys')).toBeVisible();
+});
+
+const sw = (id: string, name: string) => ({
+  id,
+  name,
+  management_address: `192.0.2.${id.slice(-1)}`,
+  port: 22,
+  vendor: 'cisco_iosxe' as const,
+  is_lab: false,
+  console_transport: 'ssh' as const,
+  credential_profile_id: 'c6d6a5be-bf2e-4d6a-bda8-3a559f985631',
+  status: 'reachable' as const,
+  facts: {},
+  capabilities: [],
+  last_seen_at: null,
+  last_error_code: null,
+  created_at: '2026-08-27T00:00:00Z',
+  updated_at: '2026-08-27T00:00:00Z',
+});
+
+it('scopes a workspace chat to the devices the operator names', async () => {
+  const sw1 = sw('9f1d3a2b-0000-4000-8000-000000000101', 'SW1');
+  const sw2 = sw('9f1d3a2b-0000-4000-8000-000000000102', 'SW2');
+  vi.mocked(api.devices).mockResolvedValue([sw1, sw2]);
+  vi.mocked(api.createAssistantSession).mockResolvedValue({ ...session, device_id: null });
+  const user = userEvent.setup();
+  renderPanel();
+
+  await user.click(await screen.findByRole('button', { name: /^Devices: All devices/ }));
+  await user.click(await screen.findByRole('menuitemcheckbox', { name: 'SW1' }));
+  // The menu stays open so a two-device scope is two clicks, not two openings.
+  await user.click(screen.getByRole('menuitemcheckbox', { name: 'SW2' }));
+  await pickModel(user);
+  await user.type(screen.getByLabelText('Message'), 'shut both down');
+  await user.click(screen.getByRole('button', { name: /send/i }));
+
+  await waitFor(() =>
+    expect(api.createAssistantSession).toHaveBeenCalledWith(profile.id, 'llama3.1', undefined, [
+      sw1.id,
+      sw2.id,
+    ]),
+  );
+});
+
+it('offers no device scope for a chat already pinned to one device', async () => {
+  renderPanel(DEVICE_ID);
+
+  expect(await screen.findByLabelText('Message')).toBeVisible();
+  expect(screen.queryByRole('button', { name: /^Devices:/ })).not.toBeInTheDocument();
+});
+
+it('rescopes a live conversation without starting a new one', async () => {
+  const sw1 = sw('9f1d3a2b-0000-4000-8000-000000000101', 'SW1');
+  vi.mocked(api.devices).mockResolvedValue([sw1]);
+  vi.mocked(api.assistantSessions).mockResolvedValue([{ ...session, device_id: null }]);
+  vi.mocked(api.updateAssistantSessionScope).mockResolvedValue({
+    ...session,
+    device_id: null,
+    scope_device_ids: [sw1.id],
+  });
+  const user = userEvent.setup();
+  renderPanel();
+
+  await user.selectOptions(await screen.findByLabelText('Conversation'), session.id);
+  await user.click(await screen.findByRole('button', { name: /^Devices:/ }));
+  await user.click(await screen.findByRole('menuitemcheckbox', { name: 'SW1' }));
+
+  await waitFor(() =>
+    expect(api.updateAssistantSessionScope).toHaveBeenCalledWith(session.id, [sw1.id]),
+  );
+  expect(api.createAssistantSession).not.toHaveBeenCalled();
 });

@@ -3,6 +3,12 @@ import { useAssistantChat } from '../src/features/assistant/useAssistantChat';
 
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
+  // The hook queues a message unless the socket is open, and reads the state
+  // constants off the global the way the real API exposes them.
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSING = 2;
+  static readonly CLOSED = 3;
   onopen: (() => void) | null = null;
   onmessage: ((event: { data: string }) => void) | null = null;
   onclose: (() => void) | null = null;

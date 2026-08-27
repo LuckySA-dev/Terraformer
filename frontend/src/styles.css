@@ -1256,10 +1256,27 @@ p {
   height: 100%;
   display: grid;
   grid-template-columns: minmax(620px, 1fr) 374px;
+  /* Without an explicit row the single implicit row is auto-sized, so it grows
+     to the tallest child instead of being capped at the container height. The
+     inspector then had no bounded height for its own `overflow: auto` to work
+     against, so a long tab (Overview's capability list, Terminal's Disconnect
+     bar) ran past the viewport and was clipped by .app-shell__content's
+     `overflow: hidden` with no way to scroll to it. */
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .workspace-layout--inspector-collapsed {
   grid-template-columns: minmax(0, 1fr);
+}
+
+/* Topology renders .inspector straight into the grid, but Inventory wraps it so
+   collapsing can hide it without unmounting tab state. The wrapper has to pass
+   the bounded row height down or .inspector is content-sized again and its
+   internal scroll area never engages. */
+.inspector-slot {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .inspector-slot--collapsed {
@@ -1273,6 +1290,9 @@ p {
 .workspace-main,
 .activity-page {
   min-width: 0;
+  /* Pairs with the row above: a grid item defaults to min-height:auto, which
+     would keep it from shrinking below its content and re-inflate the row. */
+  min-height: 0;
   overflow: auto;
   padding: 27px 29px 34px;
 }
@@ -3375,6 +3395,10 @@ p {
 .assistant-page__composer {
   flex: 0 0 auto;
   display: flex;
+  /* The composer is two stacked rows -- the message line, then the model and
+     device pickers. It was still laid out as one row, so the pickers sat
+     beside the input and pushed it out of the panel. */
+  flex-direction: column;
   gap: 8px;
 }
 
@@ -3443,6 +3467,9 @@ p {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  /* The mode toggle, the conversation list and New chat do not fit on one
+     line in a sidebar, and overflowing pushed them under the panel edge. */
+  flex-wrap: wrap;
 }
 
 .assistant-panel__history {
@@ -3495,4 +3522,474 @@ p {
   min-height: 380px;
   padding: 14px 16px 16px;
   border-top: 1px solid var(--border);
+}
+
+/* Floating device configuration window
+   Modeled on Packet Tracer's Config tab: a movable window with a category tree
+   on the left, one form at a time on the right, and the exact commands the
+   change would send along the bottom. Positioned by the drag hook, so `left`
+   and `top` are set inline and must not be declared here. */
+
+.config-window {
+  position: fixed;
+  z-index: 60;
+  width: min(760px, calc(100vw - 48px));
+  max-height: min(620px, calc(100vh - 96px));
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 11px;
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+.config-window__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 10px 9px 13px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-soft);
+  /* The bar is the drag handle; without this a drag selects the title text. */
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.config-window__bar:active {
+  cursor: grabbing;
+}
+
+.config-window__title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.config-window__title .mono {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.config-window > .inline-notice {
+  border-radius: 0;
+}
+
+.config-window__body {
+  min-height: 0;
+  flex: 1;
+  display: grid;
+  grid-template-columns: 176px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.config-window__tree {
+  min-height: 0;
+  padding: 10px 8px;
+  border-right: 1px solid var(--border);
+  background: var(--surface-soft);
+  overflow: auto;
+}
+
+.config-window__group + .config-window__group {
+  margin-top: 12px;
+}
+
+.config-window__group-label {
+  display: block;
+  padding: 0 7px 5px;
+  color: var(--muted-2);
+  font-size: 7px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.config-window__item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 6px 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.config-window__item:hover {
+  background: var(--surface-muted);
+}
+
+.config-window__item.is-active {
+  color: #fff;
+  background: var(--teal);
+}
+
+/* Declared-but-unbuilt entries stay selectable so their reason is readable,
+   but must never look like a control that would do something. */
+.config-window__item svg {
+  color: var(--muted-2);
+  flex: none;
+}
+
+.config-window__item.is-active svg {
+  color: #fff;
+}
+
+.config-window__pane {
+  min-height: 0;
+  padding: 13px;
+  overflow: auto;
+}
+
+.config-window__form {
+  display: grid;
+  gap: 11px;
+}
+
+.config-window__unavailable {
+  display: grid;
+  place-items: center;
+  height: 100%;
+}
+
+.config-window__commands {
+  border-top: 1px solid var(--border);
+  background: var(--surface-soft);
+}
+
+.config-window__commands-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.config-window__command-list {
+  max-height: 108px;
+  margin: 0;
+  padding: 9px 12px 11px;
+  border-top: 1px solid var(--border);
+  color: #b8cbc6;
+  background: #10191b;
+  font-family: "DM Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow: auto;
+}
+
+/* Assistant tab: the chat is the page, keys live behind the model picker */
+
+.assistant-page {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+.assistant-page > .assistant-page__chat {
+  flex: 1;
+  min-height: 0;
+}
+
+.assistant-panel__scope {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 9px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assistant-panel__toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.assistant-panel__sessions {
+  max-width: 230px;
+  height: 26px;
+  padding-block: 0;
+  font-size: 9px;
+}
+
+.assistant-panel__blank {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  overflow: auto;
+}
+
+.assistant-page__composer-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.assistant-page__composer-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.assistant-page__composer-tools {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 7px;
+}
+
+.assistant-page__composer-note {
+  color: var(--amber);
+  font-size: 8px;
+  font-weight: 700;
+}
+
+/* Model picker -- the composer-level control Cursor/opencode/Claude Code put
+   next to the message box rather than in a settings screen. */
+
+.model-picker {
+  position: relative;
+}
+
+.model-picker__trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 320px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 9px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.model-picker__trigger:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--surface-soft);
+}
+
+.model-picker__trigger:disabled {
+  color: var(--muted-2);
+  cursor: not-allowed;
+}
+
+.model-picker__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-picker__provider {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: var(--muted);
+  background: var(--surface-muted);
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.model-picker__spin {
+  flex: none;
+  animation: model-picker-spin 900ms linear infinite;
+}
+
+@keyframes model-picker-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .model-picker__spin { animation: none; }
+}
+
+.model-picker__menu {
+  position: absolute;
+  z-index: 70;
+  bottom: calc(100% + 6px);
+  left: 0;
+  width: 274px;
+  max-height: 330px;
+  padding: 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  overflow: auto;
+}
+
+.model-picker__group + .model-picker__group {
+  margin-top: 9px;
+}
+
+.model-picker__group-label {
+  display: block;
+  padding: 0 7px 4px;
+  color: var(--muted-2);
+  font-size: 7px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.model-picker__item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.model-picker__item:hover {
+  background: var(--surface-muted);
+}
+
+.model-picker__item.is-selected {
+  color: var(--teal);
+  font-weight: 700;
+}
+
+.model-picker__note,
+.model-picker__empty {
+  display: block;
+  padding: 5px 7px;
+  color: var(--muted-2);
+  font-size: 9px;
+}
+
+.model-picker__manage {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 7px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 6px 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.model-picker__manage:hover {
+  color: var(--ink);
+  background: var(--surface-muted);
+}
+
+/* Assistant right rail -- shares the inspector's column and gets its full
+   height, since the two are mutually exclusive. */
+
+.inspector--assistant .inspector__content--flush {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  /* The transcript scrolls edge to edge, so the padding belongs to the rows
+     inside it rather than this container -- otherwise scrolled content stops
+     short of the panel edge and looks clipped. */
+  padding: 0;
+  overflow: hidden;
+}
+
+.inspector--assistant .assistant-page__chat {
+  flex: 1;
+  min-height: 0;
+  gap: 0;
+}
+
+/* Each band owns its own gutter, matching the inspector's own 13px. */
+.inspector--assistant .assistant-panel__toolbar {
+  flex: 0 0 auto;
+  padding: 10px 13px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Filling the whole rail, the transcript is the panel -- so it drops the card
+   border, radius and shadow it needs when it sits inside a padded tab. */
+.inspector--assistant .chat-transcript {
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+.inspector--assistant .assistant-page__composer {
+  padding: 11px 13px 13px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-soft);
+}
+
+.inspector--assistant .form-error {
+  margin: 0 13px;
+}
+
+/* A long model id or a list of device names must not widen the rail. */
+.inspector--assistant .model-picker__trigger {
+  max-width: 210px;
+}
+
+.device-scope .model-picker__menu {
+  width: 250px;
+}
+
+.device-scope .model-picker__note {
+  margin: 8px 0 0;
+  padding-top: 7px;
+  border-top: 1px solid var(--border);
+  line-height: 1.5;
+}
+
+/* In the narrow assistant rail the mode toggle stacks its label above the
+   buttons instead of sitting beside them, which is what pushed the
+   conversation controls off the panel. */
+.inspector--assistant .mode-toggle {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+
+.inspector--assistant .mode-toggle__label {
+  flex: 1 0 100%;
+}
+
+.inspector--assistant .assistant-panel__toolbar-actions {
+  margin-left: 0;
+  flex-wrap: wrap;
+}
+
+.inspector--assistant .assistant-panel__sessions {
+  max-width: 100%;
+  flex: 1 1 150px;
 }

@@ -133,7 +133,9 @@ class AssistantChatService:
         self._session.commit()
 
         history = _trim_to_context_limit(
-            self._build_history(session_id, chat_session.device_id),
+            self._build_history(
+                session_id, chat_session.device_id, chat_session.scope_device_ids
+            ),
             chat_session.context_limit_override,
         )
         tool_schemas: list[ToolSchema] | None = (
@@ -300,7 +302,41 @@ class AssistantChatService:
             "the operator names a different device."
         )
 
-    def _build_history(self, session_id: UUID, device_id: UUID | None = None) -> list[ChatMessage]:
+    def _scope_context(self, scope_device_ids: list[str]) -> str:
+        """Name the devices the operator selected in the sidebar.
+
+        The point is the same as `_device_context`: let the operator say "shut
+        SW1 and SW2 down" without pasting two UUIDs. This is context, not
+        enforcement -- the tools still take an explicit device_id and every
+        change still needs a preview and a human confirmation, so a model that
+        reaches outside this list is wrong rather than dangerous.
+        """
+        named: list[str] = []
+        for raw in scope_device_ids:
+            if self._devices is None:
+                named.append(f'device_id "{raw}"')
+                continue
+            try:
+                device = self._devices.get(UUID(raw))
+            except (AppError, ValueError):
+                # Removed mid-conversation, or an id that no longer parses.
+                continue
+            named.append(f'{device.name} (device_id "{device.id}")')
+        if not named:
+            return ""
+        return (
+            "The operator has scoped this conversation to these devices: "
+            f"{', '.join(named)}. Treat them as the subject of requests that do "
+            "not name a device, and ask before acting on any device outside "
+            "this list."
+        )
+
+    def _build_history(
+        self,
+        session_id: UUID,
+        device_id: UUID | None = None,
+        scope_device_ids: list[str] | None = None,
+    ) -> list[ChatMessage]:
         stored = self._messages.list_for_session(session_id)
         instructions = (
             "You are a read-only network assistant. You can inspect "
@@ -314,6 +350,10 @@ class AssistantChatService:
         )
         if device_id is not None:
             instructions = f"{instructions}\n\n{self._device_context(device_id)}"
+        elif scope_device_ids:
+            scope = self._scope_context(scope_device_ids)
+            if scope:
+                instructions = f"{instructions}\n\n{scope}"
         return [
             ChatMessage(role="system", content=instructions),
             *(self._replay(m) for m in stored),

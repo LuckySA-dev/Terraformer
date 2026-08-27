@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from typing import ClassVar
 from uuid import uuid4
 
 import pytest
@@ -87,6 +88,9 @@ class _Session:
     id = uuid4()
     provider_profile_id = uuid4()
     device_id = None
+    # Empty is the "every registered device" scope, which is what an
+    # unscoped conversation has always been.
+    scope_device_ids: ClassVar[list[str]] = []
     model_id = "test-model"
     supports_tool_calling = True
     context_limit_override = None

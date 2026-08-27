@@ -1,13 +1,15 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Send } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError } from '../../api/client';
 import { api } from '../../api/network';
 import { AppState, InlineNotice, QueryErrorState } from '../../components/ui/AppState';
 import { Button } from '../../components/ui/Button';
-import { InputField, SelectField } from '../../components/ui/FormField';
 import { ChatTranscript } from './ChatTranscript';
+import { DeviceScopePicker } from './DeviceScopePicker';
+import { ModelPicker, type ModelChoice } from './ModelPicker';
 import { ModeToggle } from './ModeToggle';
+import { ProviderKeysDialog } from './ProviderKeysDialog';
 import { useAssistantChat } from './useAssistantChat';
 
 // Mirrors MAX_AUTO_APPLIES_PER_SESSION in the backend. This copy only stops
@@ -30,10 +32,15 @@ export function AssistantChatPanel({
   onOpenInventory,
 }: AssistantChatPanelProps) {
   const queryClient = useQueryClient();
-  const [selectedProfileId, setSelectedProfileId] = useState('');
-  const [selectedModelId, setSelectedModelId] = useState('');
   const [activeSessionId, setActiveSessionId] = useState<string>();
   const [draft, setDraft] = useState('');
+  const [keysOpen, setKeysOpen] = useState(false);
+  const [modelsWanted, setModelsWanted] = useState<string[]>([]);
+  // Only used before a session exists. Once one does, the session's own
+  // provider/model is the truth -- mirroring it here would let the two drift.
+  const [pendingChoice, setPendingChoice] = useState<ModelChoice | null>(null);
+  // Same shape as pendingChoice: only consulted before a session exists.
+  const [pendingScope, setPendingScope] = useState<string[] | null>(null);
   const autoAppliedPlanIds = useRef(new Set<string>());
 
   const scope = deviceId === undefined ? 'workspace' : 'device';
@@ -50,11 +57,43 @@ export function AssistantChatPanel({
     queryFn: () => api.assistantSessions(scope, deviceId),
     retry: false,
   });
-  const profileModels = useQuery({
-    queryKey: ['provider-profile-models', selectedProfileId],
-    queryFn: () => api.providerProfileModels(selectedProfileId),
-    enabled: selectedProfileId !== '',
+  // One query per profile the picker has actually opened, rather than a single
+  // query keyed on a "selected" profile: the menu lists every provider's models
+  // at once, and refetching on each hover would make it flicker.
+  const modelQueries = useQueries({
+    queries: modelsWanted.map((profileId) => ({
+      queryKey: ['provider-profile-models', profileId],
+      queryFn: () => api.providerProfileModels(profileId),
+      retry: false,
+      staleTime: 5 * 60 * 1000,
+    })),
+  });
+  const modelsByProfile: Record<string, string[] | undefined> = {};
+  modelsWanted.forEach((profileId, index) => {
+    const result = modelQueries[index];
+    // An unreachable provider resolves to an empty list rather than staying
+    // "Loading…" forever, so the menu can say so.
+    modelsByProfile[profileId] = result?.isError === true ? [] : result?.data?.models;
+  });
+  const requestModels = useCallback((profileId: string) => {
+    setModelsWanted((current) => (current.includes(profileId) ? current : [...current, profileId]));
+  }, []);
+
+  // Land on the model the operator used last rather than an empty picker, so a
+  // fresh visit to the tab is one keystroke from a question. Sessions come back
+  // newest-first. Derived rather than copied into state on mount: mirroring it
+  // would need an effect to keep the two in step once the list loads.
+  const lastUsed = sessions.data?.[0];
+  const defaultChoice: ModelChoice | null =
+    lastUsed === undefined
+      ? null
+      : { profileId: lastUsed.provider_profile_id, modelId: lastUsed.model_id };
+
+  const devices = useQuery({
+    queryKey: ['devices'],
+    queryFn: api.devices,
     retry: false,
+    enabled: deviceId === undefined,
   });
 
   const activeSession = sessions.data?.find((item) => item.id === activeSessionId);
@@ -66,9 +105,34 @@ export function AssistantChatPanel({
 
   const createSession = useMutation({
     mutationFn: ({ profileId, modelId }: { profileId: string; modelId: string }) =>
-      api.createAssistantSession(profileId, modelId, deviceId),
+      api.createAssistantSession(profileId, modelId, deviceId, scopeIds),
     onSuccess: async (created) => {
       setActiveSessionId(created.id);
+      await queryClient.invalidateQueries({ queryKey: ['assistant-sessions'] });
+    },
+  });
+
+  const setScope = useMutation({
+    mutationFn: (scopeDeviceIds: string[]) => {
+      if (activeSessionId === undefined) throw new Error('No conversation to scope yet.');
+      return api.updateAssistantSessionScope(activeSessionId, scopeDeviceIds);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['assistant-sessions'] });
+    },
+  });
+
+  // Switching model keeps the thread: the server repoints the same session and
+  // re-probes capabilities, so the conversation above the composer survives.
+  const switchModel = useMutation({
+    mutationFn: ({ profileId, modelId }: { profileId: string; modelId: string }) => {
+      if (activeSessionId === undefined) {
+        return api.createAssistantSession(profileId, modelId, deviceId);
+      }
+      return api.updateAssistantSessionModel(activeSessionId, profileId, modelId);
+    },
+    onSuccess: async (updated) => {
+      setActiveSessionId(updated.id);
       await queryClient.invalidateQueries({ queryKey: ['assistant-sessions'] });
     },
   });
@@ -144,112 +208,71 @@ export function AssistantChatPanel({
     return <QueryErrorState error={sessions.error} onRetry={() => void sessions.refetch()} compact />;
   }
 
-  // The gate the whole feature hangs on: no key, no AI anywhere.
-  if (profiles.data.length === 0) {
-    return (
-      <AppState
-        kind="empty"
-        title="Add an API key first"
-        message="The assistant needs a provider profile before it can help here. Open the Assistant tab in the sidebar and add one -- you only need an API key."
-      />
-    );
-  }
+  const hasKey = profiles.data.length > 0;
+  // The model the composer will use: whatever this session already runs on,
+  // or the last one picked before a session exists.
+  const choice: ModelChoice | null =
+    activeSession !== undefined
+      ? { profileId: activeSession.provider_profile_id, modelId: activeSession.model_id }
+      : (pendingChoice ?? defaultChoice);
+  // Same precedence as the model: the live session owns its scope, and the
+  // local pick only stands in until one exists.
+  const scopeIds: string[] =
+    activeSession !== undefined ? activeSession.scope_device_ids : (pendingScope ?? []);
 
-  if (activeSessionId === undefined) {
-    const previous = sessions.data;
-    return (
-      <div className="assistant-panel__start">
-        <InlineNotice tone="info" title="What this chat can see">
-          {scopeHint}
-        </InlineNotice>
-        <SelectField
-          label="Provider profile"
-          value={selectedProfileId}
-          onChange={(event) => {
-            setSelectedProfileId(event.target.value);
-            setSelectedModelId('');
-          }}
-        >
-          <option value="">Choose a profile…</option>
-          {profiles.data.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.name}
-            </option>
-          ))}
-        </SelectField>
-        {selectedProfileId === '' ? null : (
-          <>
-            <InputField
-              label="Model"
-              placeholder="gpt-4o, claude-opus-5, llama3.1…"
-              autoComplete="off"
-              list={`assistant-models-${scope}`}
-              value={selectedModelId}
-              onChange={(event) => setSelectedModelId(event.target.value)}
-              hint={
-                profileModels.isPending
-                  ? 'Loading available models…'
-                  : profileModels.isError
-                    ? 'Could not fetch the model list -- type the model ID by hand.'
-                    : profileModels.data.models.length > 0
-                      ? `${String(profileModels.data.models.length)} model(s) available -- pick one or type your own.`
-                      : 'The provider returned no models -- type the model ID by hand.'
-              }
-            />
-            <datalist id={`assistant-models-${scope}`}>
-              {profileModels.data?.models.map((model) => <option key={model} value={model} />)}
-            </datalist>
-          </>
-        )}
-        <Button
-          variant="primary"
-          busy={createSession.isPending}
-          disabled={selectedProfileId === '' || selectedModelId.trim() === ''}
-          onClick={() =>
-            createSession.mutate({
-              profileId: selectedProfileId,
-              modelId: selectedModelId.trim(),
-            })
-          }
-        >
-          New chat
-        </Button>
-        {createSession.error === null ? null : (
-          <div className="form-error" role="alert">
-            {createSession.error.message}
-          </div>
-        )}
-        {previous.length === 0 ? null : (
-          <div className="assistant-panel__history">
-            <span className="field__hint">Earlier conversations here</span>
-            {previous.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className="assistant-panel__history-item"
-                onClick={() => setActiveSessionId(item.id)}
-              >
-                <strong>{item.model_id}</strong>
-                <small>{new Date(item.created_at).toLocaleString()}</small>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-    );
-  }
+  const submit = (content: string) => {
+    if (content.trim() === '') return;
+    if (activeSessionId !== undefined) {
+      chat.sendMessage(content);
+      return;
+    }
+    if (choice === null) return;
+    // The session is created behind the first message rather than in front of
+    // it: the operator types, and the plumbing catches up. useAssistantChat
+    // holds the message until the socket opens.
+    chat.sendMessage(content);
+    createSession.mutate({ profileId: choice.profileId, modelId: choice.modelId });
+  };
 
   return (
     <div className="assistant-page__chat">
       <div className="assistant-panel__toolbar">
-        <ModeToggle
-          mode={chat.mode}
-          onRequestChange={chat.setMode}
-          autoAppliesRemaining={Math.max(0, MAX_AUTO_APPLIES_PER_SESSION - autoAppliesUsed)}
-        />
-        <Button size="small" onClick={() => setActiveSessionId(undefined)}>
-          Leave chat
-        </Button>
+        {/* No scope line here before a chat starts: the empty state below
+            already carries the same sentence, and printing it twice was the
+            first thing the operator saw. */}
+        {activeSessionId === undefined ? null : (
+          <ModeToggle
+            mode={chat.mode}
+            onRequestChange={chat.setMode}
+            autoAppliesRemaining={Math.max(0, MAX_AUTO_APPLIES_PER_SESSION - autoAppliesUsed)}
+          />
+        )}
+        <div className="assistant-panel__toolbar-actions">
+          {sessions.data.length === 0 ? null : (
+            <select
+              className="input select assistant-panel__sessions"
+              aria-label="Conversation"
+              value={activeSessionId ?? ''}
+              onChange={(event) => {
+                const next = event.target.value;
+                setActiveSessionId(next === '' ? undefined : next);
+                setDraft('');
+              }}
+            >
+              <option value="">New chat</option>
+              {sessions.data.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.model_id} · {new Date(item.created_at).toLocaleString()}
+                </option>
+              ))}
+            </select>
+          )}
+          {activeSessionId === undefined ? null : (
+            <Button size="small" onClick={() => setActiveSessionId(undefined)}>
+              New chat
+            </Button>
+          )}
+        </div>
       </div>
       {activeSession && !activeSession.supports_tool_calling ? (
         <InlineNotice tone="warning" title="No device tools for this model">
@@ -268,33 +291,90 @@ export function AssistantChatPanel({
           {chat.pendingModeError}
         </div>
       )}
-      <ChatTranscript
-        entries={chat.transcript}
-        onApplyPlan={(planId) => applyChangePlan.mutate({ planId, automatic: false })}
-        applyingPlanId={applyingPlanId}
-        applyFailure={applyFailure}
-        sessionId={activeSessionId}
-        onOpenInventory={onOpenInventory ?? (() => undefined)}
-      />
+      {activeSessionId !== undefined || chat.transcript.length > 0 ? (
+        <ChatTranscript
+          entries={chat.transcript}
+          onApplyPlan={(planId) => applyChangePlan.mutate({ planId, automatic: false })}
+          applyingPlanId={applyingPlanId}
+          applyFailure={applyFailure}
+          sessionId={activeSessionId ?? ''}
+          onOpenInventory={onOpenInventory ?? (() => undefined)}
+        />
+      ) : (
+        <div className="assistant-panel__blank">
+          <AppState
+            kind="empty"
+            title={hasKey ? 'Ask anything' : 'Add a provider key to start'}
+            message={hasKey ? scopeHint : 'The assistant proxies to a provider you supply. Pick "Manage provider keys" in the model menu below and paste an API key -- this app never runs or bundles a model.'}
+            compact
+          />
+        </div>
+      )}
+      {createSession.error === null ? null : (
+        <div className="form-error" role="alert">{createSession.error.message}</div>
+      )}
+      {switchModel.error === null ? null : (
+        <div className="form-error" role="alert">{switchModel.error.message}</div>
+      )}
+      {setScope.error === null ? null : (
+        <div className="form-error" role="alert">{setScope.error.message}</div>
+      )}
       <form
         className="assistant-page__composer"
         onSubmit={(event) => {
           event.preventDefault();
-          if (draft.trim() === '') return;
-          chat.sendMessage(draft);
+          submit(draft);
           setDraft('');
         }}
       >
-        <input
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          aria-label="Message"
-          placeholder="Ask about this, or request a change..."
-        />
-        <Button type="submit">
-          <Send size={16} /> Send
-        </Button>
+        <div className="assistant-page__composer-row">
+          <input
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            aria-label="Message"
+            placeholder={
+              choice === null ? 'Pick a model to start...' : 'Ask about this, or request a change...'
+            }
+            disabled={!hasKey}
+          />
+          <Button type="submit" disabled={!hasKey || choice === null || draft.trim() === ''}>
+            <Send size={16} /> Send
+          </Button>
+        </div>
+        <div className="assistant-page__composer-tools">
+          <ModelPicker
+            profiles={profiles.data}
+            modelsByProfile={modelsByProfile}
+            value={choice}
+            onChange={(next) => {
+              // With no session yet there is nothing to repoint, and creating
+              // one here would probe the provider for a chat that may never
+              // be sent. Remember the choice and let the first message do it.
+              if (activeSessionId === undefined) setPendingChoice(next);
+              else switchModel.mutate(next);
+            }}
+            onManageKeys={() => setKeysOpen(true)}
+            onNeedModels={requestModels}
+            busy={switchModel.isPending || createSession.isPending}
+          />
+          {deviceId !== undefined ? null : (
+            <DeviceScopePicker
+              devices={devices.data ?? []}
+              value={scopeIds}
+              onChange={(next) => {
+                if (activeSessionId === undefined) setPendingScope(next);
+                else setScope.mutate(next);
+              }}
+              busy={setScope.isPending}
+              disabled={!hasKey}
+            />
+          )}
+          {activeSession !== undefined && !activeSession.supports_tool_calling ? (
+            <span className="assistant-page__composer-note">Chat only — no device tools</span>
+          ) : null}
+        </div>
       </form>
+      <ProviderKeysDialog open={keysOpen} onClose={() => setKeysOpen(false)} />
     </div>
   );
 }

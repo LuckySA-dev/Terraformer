@@ -25,7 +25,12 @@ interface TerminalSessionProps {
   openLabel?: string;
   openDisabled?: boolean;
   configuration?: ReactNode;
-  onReset?: () => void;
+  /**
+   * Called when a session ends. `sessionOpened` is false when the transport
+   * never reached `connected`, so a caller can keep operator-entered settings
+   * that were never actually exercised against the device.
+   */
+  onReset?: (sessionOpened: boolean) => void;
   active?: boolean;
 }
 
@@ -52,7 +57,14 @@ async function withCleanupTimeout(cleanup: Promise<void>, milliseconds: number):
 
 function sanitizedError(error: unknown, fallback: TerminalFailure): TerminalFailure {
   return error instanceof TerminalTransportError
-    ? { code: error.code, message: error.message, retryable: false }
+    ? {
+      code: error.code,
+      message: error.message,
+      retryable: false,
+      ...(error.recommendedAction === undefined
+        ? {}
+        : { recommendedAction: error.recommendedAction }),
+    }
     : fallback;
 }
 
@@ -86,6 +98,7 @@ export function TerminalSession({
     () => Promise.resolve(),
   );
   const acceptingInput = useRef(false);
+  const sessionOpened = useRef(false);
   const activeRef = useRef(active);
   const [accepted, setAccepted] = useState(false);
   const [authorized, setAuthorized] = useState(false);
@@ -152,7 +165,7 @@ export function TerminalSession({
           setReopenBlocked(blockReopen);
           setAccepted(false);
           setAuthorized(false);
-          onReset?.();
+          onReset?.(sessionOpened.current);
         }
       }
     })();
@@ -212,6 +225,7 @@ export function TerminalSession({
       && (event.status === 'connecting' || event.status === 'connected')
     ) {
       acceptingInput.current = event.status === 'connected';
+      if (event.status === 'connected') sessionOpened.current = true;
       setStatus(event.status);
     } else if (event.type === 'error') {
       token.disposed = true;
@@ -238,6 +252,7 @@ export function TerminalSession({
     setPendingPaste(undefined);
     setAccepted(true);
     setStatus('connecting');
+    sessionOpened.current = false;
     const token = { disposed: false };
     sessionToken.current = token;
 

@@ -148,7 +148,14 @@ export class UsbSerialTransport implements TerminalTransport {
         return;
       }
       const mapped = this.openFailure(error);
-      listener({ type: 'error', code: mapped.code, message: mapped.message });
+      listener({
+        type: 'error',
+        code: mapped.code,
+        message: mapped.message,
+        ...(mapped.recommendedAction === undefined
+          ? {}
+          : { recommendedAction: mapped.recommendedAction }),
+      });
       try {
         await this.close(Date.now() + TERMINAL_CLEANUP_TIMEOUT_MS);
       } catch {
@@ -235,6 +242,33 @@ export class UsbSerialTransport implements TerminalTransport {
       }
       if (error.name === 'SecurityError') {
         return new TerminalTransportError('serial_access_blocked', 'Serial access blocked');
+      }
+      // An adapter the operating system will not hand over -- held by another
+      // browser tab, another browser window, or a native serial program such as
+      // TeraTerm or PuTTY -- surfaces as NetworkError. Collapsing it into the
+      // generic "port unavailable" hid the only thing the operator can act on,
+      // and made a busy port look identical to broken hardware. The design's
+      // error taxonomy already called for "port unavailable *or already in
+      // use*"; this is that second case. Still mapped by DOMException.name
+      // alone, so the underlying message is never retained.
+      if (error.name === 'NetworkError') {
+        return new TerminalTransportError(
+          'port_in_use',
+          'Port already in use',
+          'Another browser tab or serial program (TeraTerm, PuTTY) is holding this '
+          + 'adapter. Close it, or unplug and reconnect the adapter, then open the '
+          + 'console again.',
+        );
+      }
+      // The same adapter is already open in this browser -- usually a USB
+      // console left running in another tab of this application.
+      if (error.name === 'InvalidStateError') {
+        return new TerminalTransportError(
+          'port_in_use',
+          'Port already in use',
+          'This adapter is already open in this browser. Close the other USB console '
+          + 'tab, then open the console again.',
+        );
       }
     }
     return new TerminalTransportError('port_unavailable', 'Port unavailable');

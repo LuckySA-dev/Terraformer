@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Activity,
-  Bot,
   Braces,
   Check,
   ChevronRight,
@@ -53,12 +52,6 @@ import { EventTimeline } from './EventTimeline';
 const TerminalPanel = lazy(() =>
   import('./TerminalPanel').then((module) => ({ default: module.TerminalPanel })),
 );
-const AssistantChatPanel = lazy(() =>
-  import('../assistant/AssistantChatPanel').then((module) => ({
-    default: module.AssistantChatPanel,
-  })),
-);
-
 type InspectorTab =
   | 'overview'
   | 'interfaces'
@@ -67,8 +60,7 @@ type InspectorTab =
   | 'terminal'
   | 'snapshots'
   | 'configure'
-  | 'activity'
-  | 'assistant';
+  | 'activity';
 
 interface DeviceInspectorProps {
   device: Device | null;
@@ -809,7 +801,6 @@ export function DeviceInspector({ device, onClose, onEdit, onDelete }: DeviceIns
       { id: 'snapshots' as const, label: 'Snapshots', icon: FileLock2 },
       { id: 'configure' as const, label: 'Configure', icon: Settings2 },
       { id: 'activity' as const, label: 'Activity', icon: Activity },
-      { id: 'assistant' as const, label: 'Assistant', icon: Bot },
     ],
     [],
   );
@@ -962,23 +953,6 @@ export function DeviceInspector({ device, onClose, onEdit, onDelete }: DeviceIns
         ) : null}
         {tab === 'configure' ? <ConfigureTab device={device} /> : null}
         {tab === 'activity' ? <ActivityTab device={device} /> : null}
-        {tab === 'assistant' ? (
-          <Suspense
-            fallback={
-              <AppState
-                kind="loading"
-                title="Loading assistant"
-                message="Preparing this device's chat…"
-                compact
-              />
-            }
-          >
-            <AssistantChatPanel
-              deviceId={device.id}
-              scopeHint={`This conversation is only about ${device.name}, and is kept separate from every other device's chat. The assistant already knows which device this is, so you can just ask -- it can read facts, interfaces, neighbors, snapshots and events, and draft a Change Plan for you to review.`}
-            />
-          </Suspense>
-        ) : null}
       </div>
       <footer className="inspector__footer">
         <ShieldCheck size={14} /> Structured writes require explicit preview and apply · Terminal is Direct Mode

@@ -39,6 +39,17 @@ const ROLE_PATTERNS: readonly (readonly [RegExp, DeviceRole])[] = [
   [/\bswitch\b/i, 'switch'],
   [/\b(?:isr|asr|csr|ncs|iosv|vios)/i, 'router'],
   [/\brouter\b/i, 'router'],
+  // Operator naming conventions, tested last so any real platform string still
+  // wins. A device that never returned a model -- the common case before a
+  // successful facts read, and for a lab node that reports nothing -- would
+  // otherwise fall all the way through to 'endpoint' and be drawn as a desktop
+  // computer, which is how two Cisco switches ended up as monitors on the
+  // canvas. Anchored to a name-like token so "GigabitEthernet" cannot read as
+  // a firewall via its "fw"-less middle, and so a hostname such as "sw3" or
+  // "core-sw-01" resolves the way the operator already reads it.
+  [/(?:^|[^a-z])(?:sw|switch)[-_]?\d*(?:$|[^a-z])/i, 'switch'],
+  [/(?:^|[^a-z])(?:rtr|rt|r)[-_]?\d+(?:$|[^a-z])/i, 'router'],
+  [/(?:^|[^a-z])(?:fw|asa)[-_]?\d*(?:$|[^a-z])/i, 'firewall'],
 ];
 
 /**
@@ -130,7 +141,17 @@ export function buildTopologyElements(
         id,
         label: device.facts.hostname ?? device.name,
         kind: 'registered',
-        role: classifyDeviceRole(device.facts.model, device.facts.vendor, device.vendor),
+        // The operator's own name is a weak hint, but it is the only one left
+        // when a device has not returned a model yet. Precedence comes from the
+        // order of ROLE_PATTERNS, not the order of these arguments -- the
+        // name-convention patterns are tested last, so a real platform string
+        // still decides whenever one exists.
+        role: classifyDeviceRole(
+          device.facts.model,
+          device.facts.vendor,
+          device.vendor,
+          device.name,
+        ),
         status: device.status,
       },
       ...(positions[id] === undefined ? {} : { position: positions[id] }),

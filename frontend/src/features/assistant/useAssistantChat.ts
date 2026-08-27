@@ -39,6 +39,11 @@ export function useAssistantChat(
   initialMode: AssistantSessionMode = 'confirm',
 ) {
   const socketRef = useRef<WebSocket | null>(null);
+  // Messages typed before the socket is open -- which now happens by design:
+  // the composer accepts the first message and the session is created behind
+  // it, so there is a real window where there is no socket yet. `send()` on a
+  // CONNECTING socket throws, so they wait here instead.
+  const pendingSends = useRef<string[]>([]);
   const [transcript, setTranscript] = useState<AssistantTranscriptEntry[]>([]);
   const [mode, setModeState] = useState<AssistantSessionMode>(initialMode);
   const [connectionState, setConnectionState] = useState<'connecting' | 'open' | 'closed'>('connecting');
@@ -89,7 +94,14 @@ export function useAssistantChat(
     const wsOrigin = window.location.origin.replace(/^http/, 'ws');
     const socket = new WebSocket(`${wsOrigin}/ws/assistant/${sessionId}`);
     socketRef.current = socket;
-    socket.onopen = () => setConnectionState('open');
+    socket.onopen = () => {
+      setConnectionState('open');
+      const queued = pendingSends.current;
+      pendingSends.current = [];
+      for (const content of queued) {
+        socket.send(JSON.stringify({ type: 'user_message', content }));
+      }
+    };
     socket.onclose = () => setConnectionState('closed');
     socket.onmessage = (event: MessageEvent<string>) => {
       const frame = JSON.parse(event.data) as ServerFrame;
@@ -127,7 +139,12 @@ export function useAssistantChat(
 
   const sendMessage = useCallback((content: string) => {
     setTranscript((current) => [...current, { id: newEntryId(), role: 'user', content }]);
-    socketRef.current?.send(JSON.stringify({ type: 'user_message', content }));
+    const socket = socketRef.current;
+    if (socket !== null && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: 'user_message', content }));
+    } else {
+      pendingSends.current.push(content);
+    }
   }, []);
 
   const setMode = useCallback((nextMode: AssistantSessionMode, riskAcknowledged: boolean) => {

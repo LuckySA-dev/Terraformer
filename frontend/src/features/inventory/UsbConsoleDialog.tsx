@@ -146,7 +146,13 @@ export function UsbConsoleDialog({ serialApi, capability }: UsbConsoleDialogProp
       note="Serial content stays in this browser tab and is destroyed when the session closes."
       openDisabled={baudRate === null || activeSerialApi === undefined}
       configuration={settingsForm}
-      onReset={() => setSettings(DEFAULT_USB_SETTINGS)}
+      // A session that never opened exercised nothing, so the operator's baud
+      // and line-ending choices are kept. Resetting them after a failed open
+      // silently returned the next attempt to 9600 and turned a busy port into
+      // what looked like a garbled device.
+      onReset={(sessionOpened) => {
+        if (sessionOpened) setSettings(DEFAULT_USB_SETTINGS);
+      }}
     />
   );
 }

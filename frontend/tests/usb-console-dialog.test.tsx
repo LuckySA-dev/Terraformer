@@ -349,6 +349,28 @@ describe('Manual USB Console', () => {
     expect(terminalMocks.instances[1]).not.toBe(terminalMocks.instances[0]);
   });
 
+  it('explains a busy port and keeps the operator settings for the next attempt', async () => {
+    const privacy = installUsbPrivacyGuards();
+    const fixture = serialFixture();
+    fixture.port.open.mockRejectedValueOnce(
+      new DOMException('Failed to open serial port. raw chromium detail', 'NetworkError'),
+    );
+    renderDialog(fixture);
+    await userEvent.selectOptions(screen.getByLabelText('Baud rate'), '115200');
+    await userEvent.selectOptions(screen.getByLabelText('Line ending'), 'lf');
+    await userEvent.click(screen.getByRole('checkbox', { name: /authorized to access/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Open USB Direct Mode' }));
+
+    expect(await screen.findByText('Port already in use')).toBeVisible();
+    expect(screen.getByText(/Another browser tab or serial program/)).toBeVisible();
+    expect(screen.queryByText(/raw chromium detail/)).not.toBeInTheDocument();
+    // The failed attempt never reached the device, so re-entering the console
+    // settings is not required before retrying.
+    expect(screen.getByLabelText('Baud rate')).toHaveValue('115200');
+    expect(screen.getByLabelText('Line ending')).toHaveValue('lf');
+    privacy.assertUnused();
+  });
+
   it('returns to sanitized idle state after adapter removal and can reopen', async () => {
     const first = serialFixture();
     const second = serialFixture();

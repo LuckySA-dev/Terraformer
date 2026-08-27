@@ -58,6 +58,7 @@ class AssistantSessionRepository:
         provider_profile_id: UUID,
         model_id: str,
         device_id: UUID | None = None,
+        scope_device_ids: list[str] | None = None,
         context_limit_override: int | None = None,
         supports_streaming: bool = False,
         supports_tool_calling: bool = False,
@@ -66,6 +67,7 @@ class AssistantSessionRepository:
             provider_profile_id=provider_profile_id,
             model_id=model_id,
             device_id=device_id,
+            scope_device_ids=scope_device_ids or [],
             context_limit_override=context_limit_override,
             supports_streaming=supports_streaming,
             supports_tool_calling=supports_tool_calling,
@@ -73,6 +75,34 @@ class AssistantSessionRepository:
         self._session.add(chat_session)
         self._session.flush()
         return chat_session
+
+    def set_model(
+        self,
+        chat_session: AssistantSession,
+        *,
+        provider_profile_id: UUID,
+        model_id: str,
+        supports_streaming: bool,
+        supports_tool_calling: bool,
+    ) -> None:
+        """Point an existing conversation at a different model.
+
+        Capability flags are replaced, never merged: they were probed against
+        the previous model and say nothing about this one. Mode and the Auto
+        allowance are deliberately left alone -- switching model is not a fresh
+        acceptance of risk, so it must not silently reset the count that bounds
+        how many applies Auto mode still has.
+        """
+        chat_session.provider_profile_id = provider_profile_id
+        chat_session.model_id = model_id
+        chat_session.supports_streaming = supports_streaming
+        chat_session.supports_tool_calling = supports_tool_calling
+        self._session.flush()
+
+    def set_scope(self, chat_session: AssistantSession, scope_device_ids: list[str]) -> None:
+        """Replace which devices the conversation is about. Empty means all."""
+        chat_session.scope_device_ids = scope_device_ids
+        self._session.flush()
 
     def set_mode(self, chat_session: AssistantSession, mode: AssistantSessionMode) -> None:
         chat_session.mode = mode

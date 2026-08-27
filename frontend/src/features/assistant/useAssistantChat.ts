@@ -31,10 +31,16 @@ type ServerFrame =
 let nextEntryId = 0;
 const newEntryId = () => `entry-${String((nextEntryId += 1))}`;
 
-export function useAssistantChat(sessionId: string | undefined) {
+export function useAssistantChat(
+  sessionId: string | undefined,
+  // Reopening a chat has to show the mode the server actually has. Starting
+  // at 'confirm' regardless made the toggle lie about an Auto session, and
+  // the client-side auto-apply keys off this value.
+  initialMode: AssistantSessionMode = 'confirm',
+) {
   const socketRef = useRef<WebSocket | null>(null);
   const [transcript, setTranscript] = useState<AssistantTranscriptEntry[]>([]);
-  const [mode, setModeState] = useState<AssistantSessionMode>('confirm');
+  const [mode, setModeState] = useState<AssistantSessionMode>(initialMode);
   const [connectionState, setConnectionState] = useState<'connecting' | 'open' | 'closed'>('connecting');
   const [pendingModeError, setPendingModeError] = useState<string>();
   const streamingEntryId = useRef<string | null>(null);
@@ -42,6 +48,16 @@ export function useAssistantChat(sessionId: string | undefined) {
   // Messages are persisted server-side, so a session opened in a new tab (or
   // after a reload) would otherwise look empty while the model still has the
   // full history -- a confusing mismatch.
+  // Switching between saved chats must not carry the previous chat's mode
+  // across; each session owns its own. Adjusted during render rather than in
+  // an effect so the first paint of a reopened chat already shows the right
+  // mode instead of flashing the previous one.
+  const [modeSessionId, setModeSessionId] = useState(sessionId);
+  if (sessionId !== modeSessionId) {
+    setModeSessionId(sessionId);
+    setModeState(initialMode);
+  }
+
   useEffect(() => {
     if (sessionId === undefined) return;
     let cancelled = false;

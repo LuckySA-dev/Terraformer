@@ -8,7 +8,7 @@ import pytest
 from app.assistant.client import ChatChunk, ToolCallRequest
 from app.assistant.service import AssistantChatService
 from app.assistant.tools import ReadOnlyToolError, ToolResult
-from app.models import AssistantSessionMode
+from app.models import AssistantSessionMode, ProviderType
 
 pytestmark = pytest.mark.anyio
 
@@ -80,14 +80,16 @@ class _FakeDbSession:
 class _Profile:
     id = uuid4()
     base_url = "http://fake/v1"
-    model_id = "test-model"
-    supports_tool_calling = True
-    context_limit_override = None
+    provider_type = ProviderType.OPENAI_COMPATIBLE
 
 
 class _Session:
     id = uuid4()
     provider_profile_id = uuid4()
+    device_id = None
+    model_id = "test-model"
+    supports_tool_calling = True
+    context_limit_override = None
     mode = AssistantSessionMode.CONFIRM
 
 
@@ -97,7 +99,7 @@ def _service(provider: _FakeProviderClient, *, changes=None) -> AssistantChatSer
         kwargs["changes"] = changes
     return AssistantChatService(
         session=_FakeDbSession(),  # type: ignore[arg-type]
-        provider_client=provider,
+        provider_client_for=lambda _provider_type: provider,
         sessions=_FakeSessions(_Session()),
         messages=_FakeMessages(),
         profiles=_FakeProfiles(_Profile()),

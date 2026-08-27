@@ -3,11 +3,13 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from pydantic import SecretStr
 
 from app.api.dependencies import Authenticated, ContainerDependency, SessionDependency
 from app.assistant.client import AIProviderConnectionError
 from app.core.errors import AIGatewayDisabledError
-from app.models import ProviderProfile
+from app.models import ProviderProfile, ProviderType
+from app.schemas.common import APIModel
 from app.schemas.provider_profiles import (
     ProviderProfileCreate,
     ProviderProfileUpdate,
@@ -36,12 +38,9 @@ def _view(profile: ProviderProfile) -> ProviderProfileView:
     return ProviderProfileView(
         id=profile.id,
         name=profile.name,
+        provider_type=profile.provider_type,
         base_url=profile.base_url,
-        model_id=profile.model_id,
         has_api_key=profile.encrypted_api_key is not None,
-        context_limit_override=profile.context_limit_override,
-        supports_streaming=profile.supports_streaming,
-        supports_tool_calling=profile.supports_tool_calling,
         created_at=profile.created_at,
         updated_at=profile.updated_at,
     )
@@ -94,19 +93,51 @@ def delete_profile(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.post("/{profile_id}/probe", response_model=ProviderProfileView)
-async def probe_profile(
-    profile_id: UUID,
+class ListModelsRequest(APIModel):
+    base_url: str
+    api_key: SecretStr | None = None
+    provider_type: ProviderType = ProviderType.OPENAI_COMPATIBLE
+
+
+class ListModelsResponse(APIModel):
+    models: list[str]
+
+
+@router.post("/list-models", response_model=ListModelsResponse)
+async def list_models(
+    request: ListModelsRequest,
     _auth: Authenticated,
-    session: SessionDependency,
     container: ContainerDependency,
 ):
+    # Ad-hoc, not tied to a saved profile: the create form needs this before
+    # anything exists to probe. Never persists the base_url/key it is given.
+    api_key = request.api_key.get_secret_value() if request.api_key is not None else None
     try:
-        profile = await _service(session, container).probe_capabilities(
-            profile_id, container.ai_provider_client
+        models = await container.ai_client_for(request.provider_type).list_models(
+            base_url=request.base_url, api_key=api_key
         )
     except AIProviderConnectionError as exc:
         raise HTTPException(
             status_code=502, detail="Could not reach the configured endpoint"
         ) from exc
-    return _view(profile)
+    return ListModelsResponse(models=models)
+
+
+@router.get("/{profile_id}/models", response_model=ListModelsResponse)
+async def list_profile_models(
+    profile_id: UUID,
+    _auth: Authenticated,
+    session: SessionDependency,
+    container: ContainerDependency,
+):
+    service = _service(session, container)
+    profile = service.get(profile_id)
+    try:
+        models = await service.list_models(
+            profile_id, container.ai_client_for(profile.provider_type)
+        )
+    except AIProviderConnectionError as exc:
+        raise HTTPException(
+            status_code=502, detail="Could not reach the configured endpoint"
+        ) from exc
+    return ListModelsResponse(models=models)

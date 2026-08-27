@@ -7,13 +7,23 @@ from fastapi import APIRouter, Depends, status
 from app.api.dependencies import Authenticated, ContainerDependency, SessionDependency
 from app.changes.service import ChangeService
 from app.core.errors import (
+    AutoApplyLimitReachedError,
     ChangePlanDeviceLockedError,
     ChangePlanNotDraftError,
     StructuredWritesDisabledError,
 )
-from app.models import ChangePlanStatus, JobType
+from app.models import AssistantSession, AssistantSessionMode, ChangePlanStatus, JobType
+from app.repositories.assistant import (
+    MAX_AUTO_APPLIES_PER_SESSION,
+    AssistantSessionRepository,
+)
 from app.repositories.jobs import JobRepository
-from app.schemas.changes import ChangeApplyJobInput, ChangePlanRequest, ChangePlanView
+from app.schemas.changes import (
+    ChangeApplyJobInput,
+    ChangeApplyRequest,
+    ChangePlanRequest,
+    ChangePlanView,
+)
 from app.schemas.jobs import JobView
 from app.services.devices import DeviceService
 from app.services.jobs import JobService
@@ -105,8 +115,23 @@ def apply_change_plan(
     _auth: Authenticated,
     session: SessionDependency,
     container: ContainerDependency,
+    request: ChangeApplyRequest | None = None,
 ):
     plan = _service(session, container).get(change_plan_id)
+    # An apply the operator clicked and an apply Auto mode fired look
+    # identical by the time they reach this endpoint. Only the second one is
+    # rate-limited, so the caller says which it is -- and the count that
+    # limits it lives in the database, not the browser.
+    assistant_session_id = request.assistant_session_id if request is not None else None
+    chat_session: AssistantSession | None = None
+    if assistant_session_id is not None:
+        sessions = AssistantSessionRepository(session)
+        chat_session = sessions.get(assistant_session_id, for_update=True)
+        if chat_session.mode is AssistantSessionMode.AUTO:
+            if chat_session.auto_apply_count >= MAX_AUTO_APPLIES_PER_SESSION:
+                raise AutoApplyLimitReachedError()
+        else:
+            chat_session = None
     # Both checks must be synchronous, here, not only inside ChangeService.apply():
     # that method only runs once the job executes, which could be arbitrarily
     # later (or never observed by this request at all) -- a caller retrying
@@ -121,8 +146,14 @@ def apply_change_plan(
     if JobRepository(session).has_active(JobType.APPLY_CHANGE, device_id=plan.device_id):
         raise ChangePlanDeviceLockedError()
     job_input = ChangeApplyJobInput(change_plan_id=change_plan_id)
-    return JobService(session, container.queue).enqueue(
+    job = JobService(session, container.queue).enqueue(
         job_type=JobType.APPLY_CHANGE,
         device_id=plan.device_id,
         input_data=job_input.model_dump(mode="json"),
     )
+    # Counted only once the apply is actually queued, so a plan rejected by
+    # the checks above does not burn part of the operator's allowance.
+    if chat_session is not None:
+        AssistantSessionRepository(session).record_auto_apply(chat_session)
+        session.commit()
+    return job

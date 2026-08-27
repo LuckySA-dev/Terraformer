@@ -6,6 +6,8 @@ interface ChatTranscriptProps {
   entries: AssistantTranscriptEntry[];
   onApplyPlan: (planId: string) => void;
   applyingPlanId?: string | undefined;
+  /** Which plan the last apply failed on, and why. */
+  applyFailure?: { planId: string; message: string } | undefined;
   sessionId: string;
   onOpenInventory: () => void;
 }
@@ -25,6 +27,7 @@ export function ChatTranscript({
   entries,
   onApplyPlan,
   applyingPlanId,
+  applyFailure,
   sessionId,
   onOpenInventory,
 }: ChatTranscriptProps) {
@@ -58,6 +61,9 @@ export function ChatTranscript({
                 }}
                 onApply={onApplyPlan}
                 applyBusy={applyingPlanId === entry.plan.plan_id}
+                {...(applyFailure?.planId === entry.plan.plan_id
+                  ? { applyError: applyFailure.message }
+                  : {})}
                 applySuccess={false}
               />
             </div>
@@ -76,6 +82,14 @@ export function ChatTranscript({
                   onOpenInventory={onOpenInventory}
                 />
               ))}
+            </div>
+          );
+        }
+        if (entry.role === 'tool') {
+          return (
+            <div key={entry.id} className="chat-transcript__entry chat-transcript__entry--tool">
+              <span className="chat-transcript__tool-name">{entry.toolName ?? 'tool'}</span>
+              {entry.toolPayload ? <pre>{JSON.stringify(entry.toolPayload, null, 2)}</pre> : null}
             </div>
           );
         }

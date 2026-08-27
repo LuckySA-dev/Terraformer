@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass
 from enum import StrEnum
 from typing import Any, Literal, Never, Protocol
 
-from app.changes.types import ChangeStepIntent, RenderedChange
+from app.changes.types import ChangeStepIntent, RenderedChange, same_interface
 from app.core.errors import UnsupportedCapabilityError
 from app.models import SafetyLevel, SSHCompatibility, Vendor
 
@@ -127,6 +127,45 @@ class InterfaceFacts:
     speed_mbps: int | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class VlanFacts:
+    """One row of the device's VLAN database.
+
+    `ports` is the access-port membership the device itself reports, which is
+    what makes a single `show vlan brief` enough to answer both "what is this
+    VLAN called" and "which VLAN is this port in".
+    """
+
+    vlan_id: int
+    name: str
+    status: str
+    ports: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ChangeContext:
+    """The device state a change is rendered and validated against.
+
+    An interface alone stopped being enough once VLANs arrived: renaming a
+    VLAN targets the VLAN database and touches no interface, while moving an
+    access port needs both the port and the VLAN table it moves between.
+    `interface` is therefore optional, and each renderer asserts what it needs.
+    """
+
+    interface: InterfaceFacts | None = None
+    vlans: tuple[VlanFacts, ...] = ()
+
+    def access_vlan_of(self, interface_name: str) -> VlanFacts | None:
+        """Which VLAN currently holds this access port, per the device."""
+        for vlan in self.vlans:
+            if any(same_interface(port, interface_name) for port in vlan.ports):
+                return vlan
+        return None
+
+    def vlan(self, vlan_id: int) -> VlanFacts | None:
+        return next((vlan for vlan in self.vlans if vlan.vlan_id == vlan_id), None)
+
+
 type NeighborProtocol = Literal["cdp", "lldp"]
 
 
@@ -211,12 +250,15 @@ class DeviceDriver(ABC):
         del parameters, target
         self._unsupported(DIAGNOSTIC_CAPABILITIES[action])
 
-    def render_change(self, step: ChangeStepIntent, current: InterfaceFacts) -> RenderedChange:
-        del step, current
+    def get_vlans(self, parameters: ConnectionParameters) -> list[VlanFacts]:
+        self._unsupported(DriverCapability.INTERFACES)
+
+    def render_change(self, step: ChangeStepIntent, context: ChangeContext) -> RenderedChange:
+        del step, context
         self._unsupported(DriverCapability.RENDER)
 
-    def validate_change(self, step: ChangeStepIntent, current: InterfaceFacts) -> list[str]:
-        del step, current
+    def validate_change(self, step: ChangeStepIntent, context: ChangeContext) -> list[str]:
+        del step, context
         self._unsupported(DriverCapability.VALIDATE)
 
     def apply_configuration(self, parameters: ConnectionParameters, commands: list[str]) -> None:

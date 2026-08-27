@@ -1,18 +1,22 @@
 from __future__ import annotations
 
+from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import Authenticated, ContainerDependency, SessionDependency
 from app.assistant.blocklist import contains_blocked_command
+from app.assistant.client import AIProviderConnectionError
+from app.assistant.sanitize import scrub_secret_text
 from app.assistant.service import AssistantChatService, AssistantEvent
 from app.assistant.tools import ToolDispatcher
 from app.changes.service import ChangeService
 from app.container import ApplicationContainer
 from app.core.errors import (
     AIGatewayDisabledError,
+    AppError,
     AutoModeRequiresAcknowledgmentError,
     BlockedCommandError,
 )
@@ -46,7 +50,11 @@ def _session_view(chat_session: AssistantSession) -> AssistantSessionView:
     return AssistantSessionView(
         id=chat_session.id,
         provider_profile_id=chat_session.provider_profile_id,
+        model_id=chat_session.model_id,
+        device_id=chat_session.device_id,
         mode=chat_session.mode,
+        supports_streaming=chat_session.supports_streaming,
+        supports_tool_calling=chat_session.supports_tool_calling,
         auto_apply_count=chat_session.auto_apply_count,
         created_at=chat_session.created_at,
         updated_at=chat_session.updated_at,
@@ -54,19 +62,53 @@ def _session_view(chat_session: AssistantSession) -> AssistantSessionView:
 
 
 @sessions_router.get("", response_model=list[AssistantSessionView])
-def list_sessions(_auth: Authenticated, session: SessionDependency, container: ContainerDependency):
-    return [_session_view(s) for s in AssistantSessionRepository(session).list()]
+def list_sessions(
+    _auth: Authenticated,
+    session: SessionDependency,
+    container: ContainerDependency,
+    device_id: UUID | None = None,
+    scope: Literal["all", "device", "workspace"] = "all",
+):
+    # A device's inspector must not see another device's conversations, and
+    # the workspace view must not be cluttered by every device chat -- so the
+    # caller says which slice it wants instead of filtering client-side.
+    repository = AssistantSessionRepository(session)
+    if scope == "device":
+        sessions = repository.list(device_id=device_id, device_scoped=True)
+    elif scope == "workspace":
+        sessions = repository.list(device_id=None, device_scoped=True)
+    else:
+        sessions = repository.list()
+    return [_session_view(s) for s in sessions]
 
 
 @sessions_router.post("", response_model=AssistantSessionView, status_code=status.HTTP_201_CREATED)
-def create_session(
+async def create_session(
     request: AssistantSessionCreate,
     _auth: Authenticated,
     session: SessionDependency,
     container: ContainerDependency,
 ):
+    # One provider profile is just a connection (base_url + key) that can
+    # legitimately serve many models, so capability support is probed here,
+    # against the specific model this session picked -- not cached on the
+    # profile, where it could only ever be right for one model at a time.
+    profile = ProviderProfileRepository(session).get(request.provider_profile_id)
+    material = container.provider_key_vault.decrypt(profile)
+    try:
+        capabilities = await container.ai_client_for(profile.provider_type).probe_capabilities(
+            base_url=profile.base_url, api_key=material.api_key, model_id=request.model_id
+        )
+    except AIProviderConnectionError as exc:
+        raise HTTPException(
+            status_code=502, detail="Could not reach the configured endpoint"
+        ) from exc
     chat_session = AssistantSessionRepository(session).add(
-        provider_profile_id=request.provider_profile_id
+        provider_profile_id=request.provider_profile_id,
+        model_id=request.model_id,
+        device_id=request.device_id,
+        supports_streaming=capabilities.supports_streaming,
+        supports_tool_calling=capabilities.supports_tool_calling,
     )
     session.commit()
     return _session_view(chat_session)
@@ -183,13 +225,14 @@ async def assistant_chat(websocket: WebSocket, session_id: str) -> None:
         )
         service = AssistantChatService(
             db_session,
-            provider_client=container.ai_provider_client,
+            provider_client_for=container.ai_client_for,
             sessions=AssistantSessionRepository(db_session),
             messages=AssistantMessageRepository(db_session),
             profiles=ProviderProfileRepository(db_session),
             vault=container.provider_key_vault,
             tools=_build_tool_dispatcher(db_session, container, devices),
             changes=changes,
+            devices=devices,
         )
         try:
             while True:
@@ -206,8 +249,31 @@ async def assistant_chat(websocket: WebSocket, session_id: str) -> None:
                             }
                         )
                         continue
-                    async for event in service.handle_user_message(session_uuid, content):
-                        await websocket.send_json(_event_to_frame(event))
+                    # A provider failure is the most likely thing to go wrong
+                    # here -- a mistyped key, an expired one, no credit, a
+                    # rate limit, a model name the provider does not have.
+                    # Letting it propagate tore down the socket, so the chat
+                    # went silent with nothing but "Disconnected" to explain
+                    # it. Report it and keep the conversation open instead.
+                    try:
+                        async for event in service.handle_user_message(session_uuid, content):
+                            await websocket.send_json(_event_to_frame(event))
+                    except AIProviderConnectionError as exc:
+                        await websocket.send_json(
+                            {
+                                "type": "error",
+                                "code": "provider_unreachable",
+                                "message": (
+                                    "Could not reach the AI provider. Check the profile's API "
+                                    "key, model name and endpoint. "
+                                    f"({scrub_secret_text(str(exc))[:400]})"
+                                ),
+                            }
+                        )
+                    except AppError as exc:
+                        await websocket.send_json(
+                            {"type": "error", "code": exc.code, "message": str(exc)}
+                        )
                 elif message_type == "set_mode":
                     mode_value = message.get("mode")
                     risk_acknowledged = bool(message.get("risk_acknowledged", False))

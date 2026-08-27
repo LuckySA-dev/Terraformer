@@ -69,6 +69,8 @@ class AIProviderClient(Protocol):
         self, *, base_url: str, api_key: str | None, model_id: str
     ) -> ProviderCapabilities: ...
 
+    async def list_models(self, *, base_url: str, api_key: str | None) -> list[str]: ...
+
     def stream_chat(
         self,
         *,
@@ -142,6 +144,16 @@ class OpenAICompatibleClient:
         except (APIConnectionError, APIStatusError) as exc:
             raise AIProviderConnectionError(str(exc)) from exc
         return ProviderCapabilities(supports_streaming=True, supports_tool_calling=False)
+
+    async def list_models(self, *, base_url: str, api_key: str | None) -> list[str]:
+        client = self._client(base_url=base_url, api_key=api_key)
+        try:
+            models = [model.id async for model in client.models.list()]
+        except APIConnectionError as exc:
+            raise AIProviderConnectionError(str(exc)) from exc
+        except APIStatusError as exc:
+            raise AIProviderConnectionError(str(exc)) from exc
+        return sorted(models)
 
     async def stream_chat(
         self,

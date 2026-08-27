@@ -75,10 +75,11 @@ def test_ai_generated_change_plan_is_tagged_and_applies_through_the_normal_pipel
 
     profile_id = authenticated_client.post(
         "/api/provider-profiles",
-        json={"name": "Fake", "base_url": "http://fake/v1", "model_id": "test-model"},
+        json={"name": "Fake", "base_url": "http://fake/v1"},
     ).json()["id"]
     session_id = authenticated_client.post(
-        "/api/assistant-sessions", json={"provider_profile_id": profile_id}
+        "/api/assistant-sessions",
+        json={"provider_profile_id": profile_id, "model_id": "test-model"},
     ).json()["id"]
 
     with authenticated_client.websocket_connect(

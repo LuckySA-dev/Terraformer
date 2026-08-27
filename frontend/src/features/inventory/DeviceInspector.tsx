@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Activity,
+  Bot,
   Braces,
   Check,
   ChevronRight,
@@ -52,6 +53,11 @@ import { EventTimeline } from './EventTimeline';
 const TerminalPanel = lazy(() =>
   import('./TerminalPanel').then((module) => ({ default: module.TerminalPanel })),
 );
+const AssistantChatPanel = lazy(() =>
+  import('../assistant/AssistantChatPanel').then((module) => ({
+    default: module.AssistantChatPanel,
+  })),
+);
 
 type InspectorTab =
   | 'overview'
@@ -61,7 +67,8 @@ type InspectorTab =
   | 'terminal'
   | 'snapshots'
   | 'configure'
-  | 'activity';
+  | 'activity'
+  | 'assistant';
 
 interface DeviceInspectorProps {
   device: Device | null;
@@ -576,23 +583,64 @@ function ConfigureTab({ device }: { device: Device }) {
         >
           <option value="interface_description">Interface description</option>
           <option value="interface_admin_state">Interface admin state</option>
+          <option value="vlan_name">VLAN name (creates it if missing)</option>
+          <option value="interface_access_vlan">Access port VLAN</option>
         </SelectField>
-        <SelectField
-          label="Interface"
-          value={target}
-          onChange={(event) => {
-            setTarget(event.target.value);
-            resetPlan();
-          }}
-        >
-          <option value="">Select an interface</option>
-          {(interfaces.data ?? []).map((iface) => (
-            <option key={iface.id} value={iface.name}>
-              {iface.name}
-            </option>
-          ))}
-        </SelectField>
-        {changeType === 'interface_admin_state' ? (
+        {changeType === 'vlan_name' ? (
+          // A VLAN rename targets the VLAN database, so the target is an id
+          // rather than one of this device's interfaces.
+          <InputField
+            label="VLAN id"
+            inputMode="numeric"
+            value={target}
+            onChange={(event) => {
+              setTarget(event.target.value);
+              resetPlan();
+            }}
+            placeholder="10"
+            hint="1-4094, excluding the 1002-1005 range IOS reserves."
+          />
+        ) : (
+          <SelectField
+            label="Interface"
+            value={target}
+            onChange={(event) => {
+              setTarget(event.target.value);
+              resetPlan();
+            }}
+          >
+            <option value="">Select an interface</option>
+            {(interfaces.data ?? []).map((iface) => (
+              <option key={iface.id} value={iface.name}>
+                {iface.name}
+              </option>
+            ))}
+          </SelectField>
+        )}
+        {changeType === 'vlan_name' ? (
+          <InputField
+            label="VLAN name"
+            value={desiredValue}
+            onChange={(event) => {
+              setDesiredValue(event.target.value);
+              resetPlan();
+            }}
+            placeholder="USERS"
+            hint="Letters, digits, hyphen and underscore only."
+          />
+        ) : changeType === 'interface_access_vlan' ? (
+          <InputField
+            label="Access VLAN id"
+            inputMode="numeric"
+            value={desiredValue}
+            onChange={(event) => {
+              setDesiredValue(event.target.value);
+              resetPlan();
+            }}
+            placeholder="20"
+            hint="The VLAN must already exist on this switch -- create it first if it does not."
+          />
+        ) : changeType === 'interface_admin_state' ? (
           <SelectField
             label="Desired admin state"
             value={desiredValue}
@@ -761,6 +809,7 @@ export function DeviceInspector({ device, onClose, onEdit, onDelete }: DeviceIns
       { id: 'snapshots' as const, label: 'Snapshots', icon: FileLock2 },
       { id: 'configure' as const, label: 'Configure', icon: Settings2 },
       { id: 'activity' as const, label: 'Activity', icon: Activity },
+      { id: 'assistant' as const, label: 'Assistant', icon: Bot },
     ],
     [],
   );
@@ -913,6 +962,23 @@ export function DeviceInspector({ device, onClose, onEdit, onDelete }: DeviceIns
         ) : null}
         {tab === 'configure' ? <ConfigureTab device={device} /> : null}
         {tab === 'activity' ? <ActivityTab device={device} /> : null}
+        {tab === 'assistant' ? (
+          <Suspense
+            fallback={
+              <AppState
+                kind="loading"
+                title="Loading assistant"
+                message="Preparing this device's chat…"
+                compact
+              />
+            }
+          >
+            <AssistantChatPanel
+              deviceId={device.id}
+              scopeHint={`This conversation is only about ${device.name}, and is kept separate from every other device's chat. The assistant already knows which device this is, so you can just ask -- it can read facts, interfaces, neighbors, snapshots and events, and draft a Change Plan for you to review.`}
+            />
+          </Suspense>
+        ) : null}
       </div>
       <footer className="inspector__footer">
         <ShieldCheck size={14} /> Structured writes require explicit preview and apply · Terminal is Direct Mode

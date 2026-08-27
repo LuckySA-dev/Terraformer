@@ -6,6 +6,7 @@ from redis import Redis
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.analysis.client import AnalysisBackend, build_backend
+from app.assistant.anthropic_client import AnthropicClient
 from app.assistant.client import AIProviderClient, OpenAICompatibleClient
 from app.core.config import Settings, get_settings
 from app.core.database import create_database_engine, create_session_factory
@@ -19,6 +20,7 @@ from app.core.storage import EncryptedSnapshotStore
 from app.drivers import CiscoIOSXEDriver, DriverRegistry, GenericReadOnlyDriver
 from app.drivers.transport import ScrapliGenericTransportFactory, ScrapliTransportFactory
 from app.jobs.queue import JobQueue, RQJobQueue
+from app.models import ProviderType
 from app.services.connection_gate import RedisConnectionGate
 from app.services.credentials import CredentialVault
 from app.services.provider_profiles import ProviderKeyVault
@@ -130,6 +132,16 @@ class ApplicationContainer:
         if self._ai_provider_client is not None:
             return self._ai_provider_client
         return OpenAICompatibleClient()
+
+    @cached_property
+    def anthropic_provider_client(self) -> AIProviderClient:
+        return AnthropicClient()
+
+    def ai_client_for(self, provider_type: ProviderType) -> AIProviderClient:
+        """Pick the adapter that speaks this profile's wire format."""
+        if provider_type is ProviderType.ANTHROPIC:
+            return self.anthropic_provider_client
+        return self.ai_provider_client
 
     @cached_property
     def session_tokens(self) -> SessionTokenService:

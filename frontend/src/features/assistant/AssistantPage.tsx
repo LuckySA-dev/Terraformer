@@ -1,89 +1,36 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { KeyRound, Send } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { KeyRound } from 'lucide-react';
+import { useState } from 'react';
 import { ApiError } from '../../api/client';
 import { api } from '../../api/network';
 import { AppState, InlineNotice, QueryErrorState } from '../../components/ui/AppState';
 import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
-import { SelectField } from '../../components/ui/FormField';
 import type { ProviderProfile, ProviderProfileInput } from '../../types/api';
-import { ChatTranscript } from './ChatTranscript';
-import { ModeToggle } from './ModeToggle';
 import { ProviderProfileForm } from './ProviderProfileForm';
 import { ProviderProfileList } from './ProviderProfileList';
-import { useAssistantChat } from './useAssistantChat';
+import type { ProviderProfileTestResult } from './ProviderProfileList';
 
-type ProviderDialog =
-  | { mode: 'list' }
-  | { mode: 'create' }
-  | { mode: 'edit'; profile: ProviderProfile }
-  | null;
+type ProviderDialog = { mode: 'create' } | { mode: 'edit'; profile: ProviderProfile } | null;
 
-// ponytail: session-lifetime in-memory cap, not server-enforced yet -- fine
-// for a single-user local app where the operator watching the chat *is*
-// the trust boundary; upgrade to a server-checked AssistantSession.auto_apply_count
-// (already a column) if this ever needs to hold across tabs/restarts.
-const MAX_AUTO_APPLIES_PER_SESSION = 5;
-
-interface AssistantPageProps {
-  onOpenInventory?: () => void;
-}
-
-export function AssistantPage({ onOpenInventory }: AssistantPageProps) {
+/**
+ * Key management only.
+ *
+ * The chat itself lives where the work is -- a device's inspector, the
+ * topology view -- so a conversation is always about something concrete.
+ * This page exists so there is one place to put an API key, and one place to
+ * check whether the endpoint behind it still answers.
+ */
+export function AssistantPage() {
   const queryClient = useQueryClient();
   const [providerDialog, setProviderDialog] = useState<ProviderDialog>(null);
   const [deleteTarget, setDeleteTarget] = useState<ProviderProfile>();
-  const [selectedProfileId, setSelectedProfileId] = useState('');
-  const [activeSessionId, setActiveSessionId] = useState<string>();
-  const [draft, setDraft] = useState('');
-  const autoAppliedPlanIds = useRef(new Set<string>());
-  const [applyingPlanId, setApplyingPlanId] = useState<string>();
 
   const profiles = useQuery({
     queryKey: ['provider-profiles'],
     queryFn: api.providerProfiles,
     retry: false,
   });
-  const sessions = useQuery({
-    queryKey: ['assistant-sessions'],
-    queryFn: api.assistantSessions,
-    retry: false,
-  });
-
-  const chat = useAssistantChat(activeSessionId);
-
-  const createSession = useMutation({
-    mutationFn: (providerProfileId: string) => api.createAssistantSession(providerProfileId),
-    onSuccess: async (created) => {
-      setActiveSessionId(created.id);
-      await queryClient.invalidateQueries({ queryKey: ['assistant-sessions'] });
-    },
-  });
-
-  const applyChangePlan = useMutation({
-    mutationFn: (planId: string) => api.applyChangePlan(planId),
-    onSettled: () => setApplyingPlanId(undefined),
-  });
-
-  useEffect(() => {
-    if (chat.mode !== 'auto') return;
-    const unapplied = chat.transcript.filter(
-      (entry) => entry.role === 'change_plan' && entry.plan !== undefined,
-    );
-    for (const entry of unapplied) {
-      const planId = entry.plan?.plan_id;
-      if (planId === undefined || autoAppliedPlanIds.current.has(planId)) continue;
-      if (autoAppliedPlanIds.current.size >= MAX_AUTO_APPLIES_PER_SESSION) {
-        chat.setMode('confirm', false);
-        break;
-      }
-      autoAppliedPlanIds.current.add(planId);
-      setApplyingPlanId(planId);
-      applyChangePlan.mutate(planId);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- chat.setMode/transcript identity changes every render; re-running on mode alone is the intent
-  }, [chat.mode, chat.transcript]);
 
   const saveProfile = useMutation({
     mutationFn: ({
@@ -98,7 +45,7 @@ export function AssistantPage({ onOpenInventory }: AssistantPageProps) {
         : api.createProviderProfile({
             name: input.name ?? '',
             base_url: input.base_url ?? '',
-            model_id: input.model_id ?? '',
+            ...(input.provider_type !== undefined ? { provider_type: input.provider_type } : {}),
             ...(input.api_key !== undefined ? { api_key: input.api_key } : {}),
           }),
     onSuccess: async () => {
@@ -115,164 +62,96 @@ export function AssistantPage({ onOpenInventory }: AssistantPageProps) {
     },
   });
 
-  // Without this, supports_tool_calling stays false forever and the assistant
-  // never receives a single tool -- no device reads, no change proposals.
-  const probeProfile = useMutation({
-    mutationFn: (profile: ProviderProfile) => api.probeProviderProfile(profile.id),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['provider-profiles'] });
-    },
+  const testProfile = useMutation({
+    mutationFn: (profile: ProviderProfile) => api.providerProfileModels(profile.id),
   });
+  const profileTestResult: ProviderProfileTestResult | undefined =
+    testProfile.variables === undefined
+      ? undefined
+      : testProfile.isSuccess
+        ? {
+            profileId: testProfile.variables.id,
+            ok: true,
+            message:
+              testProfile.data.models.length > 0
+                ? `Reachable -- ${String(testProfile.data.models.length)} model(s) available.`
+                : 'Reachable, but the provider returned no models.',
+          }
+        : testProfile.isError
+          ? {
+              profileId: testProfile.variables.id,
+              ok: false,
+              message: 'Could not reach that endpoint.',
+            }
+          : undefined;
 
   const gatewayDisabled =
-    (profiles.error instanceof ApiError && profiles.error.code === 'ai_gateway_disabled_by_policy') ||
-    (sessions.error instanceof ApiError && sessions.error.code === 'ai_gateway_disabled_by_policy');
-
-  if (gatewayDisabled) {
-    return (
-      <div className="assistant-page">
-        <header className="assistant-page__header">
-          <h1>Assistant</h1>
-        </header>
-        <AppState
-          kind="unsupported"
-          title="The assistant is turned off"
-          message="This local deployment has AI_GATEWAY_ENABLED=false (the default). Set it to true in .env and restart the stack to turn on chat, read-only device tools, and AI-drafted Change Plans -- the assistant never runs or bundles a model itself, it proxies to a provider you configure once this is on."
-        />
-      </div>
-    );
-  }
+    profiles.error instanceof ApiError && profiles.error.code === 'ai_gateway_disabled_by_policy';
 
   return (
-    <div className="assistant-page">
-      <header className="assistant-page__header">
-        <h1>Assistant</h1>
-        <Button onClick={() => setProviderDialog({ mode: 'list' })}>
-          <KeyRound size={16} /> Provider profile
-        </Button>
+    <main className="activity-page provider-keys-page">
+      <header className="page-header">
+        <div>
+          <span className="eyebrow">PHASE 4 / BYOK ASSISTANT</span>
+          <h1>AI provider keys</h1>
+          <p>
+            Add a key here once, then use the assistant from a device, the topology, or anywhere
+            else it appears. This app never runs or bundles a model.
+          </p>
+        </div>
+        {gatewayDisabled ? null : (
+          <div className="page-header__actions">
+            <Button variant="primary" onClick={() => setProviderDialog({ mode: 'create' })}>
+              <KeyRound size={16} /> Add provider
+            </Button>
+          </div>
+        )}
       </header>
 
-      {sessions.isPending || profiles.isPending ? (
-        <AppState kind="loading" title="Loading assistant" message="Reading assistant session metadata…" compact />
-      ) : sessions.isError ? (
-        <QueryErrorState error={sessions.error} onRetry={() => void sessions.refetch()} compact />
-      ) : profiles.isError ? (
-        <QueryErrorState error={profiles.error} onRetry={() => void profiles.refetch()} compact />
-      ) : activeSessionId === undefined ? (
-        profiles.data.length === 0 ? (
+      <section className="activity-panel provider-keys-panel">
+        {gatewayDisabled ? (
           <AppState
-            kind="empty"
-            title="No provider profiles yet"
-            message="Add a provider profile before starting a chat."
+            kind="unsupported"
+            title="The assistant is turned off"
+            message="This local deployment has AI_GATEWAY_ENABLED=false (the default). Set it to true in .env and restart the stack to turn on chat, read-only device tools, and AI-drafted Change Plans -- the assistant never runs or bundles a model itself, it proxies to a provider you configure once this is on."
           />
+        ) : profiles.isPending ? (
+          <AppState
+            kind="loading"
+            title="Loading profiles"
+            message="Reading provider profile metadata…"
+          />
+        ) : profiles.isError ? (
+          <QueryErrorState error={profiles.error} onRetry={() => void profiles.refetch()} />
         ) : (
-          <div className="assistant-page__new-chat">
-            <SelectField
-              label="Provider profile"
-              value={selectedProfileId}
-              onChange={(event) => setSelectedProfileId(event.target.value)}
-            >
-              <option value="">Choose a profile…</option>
-              {profiles.data.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name}
-                </option>
-              ))}
-            </SelectField>
-            <Button
-              variant="primary"
-              busy={createSession.isPending}
-              disabled={selectedProfileId === ''}
-              onClick={() => createSession.mutate(selectedProfileId)}
-            >
-              New chat
-            </Button>
-            {createSession.error === null ? null : (
-              <div className="form-error" role="alert">
-                {createSession.error.message}
-              </div>
-            )}
-          </div>
-        )
-      ) : (
-        <div className="assistant-page__chat">
-          <ModeToggle mode={chat.mode} onRequestChange={chat.setMode} />
-          {chat.connectionState === 'closed' ? (
-            <InlineNotice tone="warning" title="Disconnected">
-              The assistant connection closed. Start a new chat to keep going -- this conversation
-              is saved and will reload.
+          <>
+            <InlineNotice tone="safe" title="Where the assistant appears">
+              Every device inspector has an Assistant tab with its own separate conversation, and
+              the topology view has a workspace-wide one. A device chat never mixes with another
+              device&apos;s history.
             </InlineNotice>
-          ) : null}
-          {chat.pendingModeError === undefined ? null : (
-            <div className="form-error" role="alert">
-              {chat.pendingModeError}
-            </div>
-          )}
-          <ChatTranscript
-            entries={chat.transcript}
-            onApplyPlan={(planId) => {
-              setApplyingPlanId(planId);
-              applyChangePlan.mutate(planId);
-            }}
-            applyingPlanId={applyingPlanId}
-            sessionId={activeSessionId}
-            onOpenInventory={onOpenInventory ?? (() => undefined)}
-          />
-          <form
-            className="assistant-page__composer"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (draft.trim() === '') return;
-              chat.sendMessage(draft);
-              setDraft('');
-            }}
-          >
-            <input
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              aria-label="Message"
-              placeholder="Ask about a device, or request a change..."
-            />
-            <Button type="submit">
-              <Send size={16} /> Send
-            </Button>
-          </form>
-        </div>
-      )}
-
-      <Modal
-        open={providerDialog !== null}
-        title={
-          providerDialog?.mode === 'edit'
-            ? 'Edit provider profile'
-            : providerDialog?.mode === 'create'
-              ? 'New provider profile'
-              : 'Provider profiles'
-        }
-        description={
-          providerDialog?.mode === 'list'
-            ? 'BYOK endpoints this application proxies to. No model runs in this application.'
-            : 'Point at any OpenAI-compatible endpoint -- OpenAI itself, a self-hosted Ollama, or another compatible server.'
-        }
-        onClose={() => setProviderDialog(null)}
-      >
-        {providerDialog?.mode === 'list' ? (
-          profiles.isPending ? (
-            <AppState kind="loading" title="Loading profiles" message="Reading provider profile metadata…" compact />
-          ) : profiles.isError ? (
-            <QueryErrorState error={profiles.error} onRetry={() => void profiles.refetch()} compact />
-          ) : (
             <ProviderProfileList
               profiles={profiles.data}
               onCreate={() => setProviderDialog({ mode: 'create' })}
               onEdit={(profile) => setProviderDialog({ mode: 'edit', profile })}
               onDelete={setDeleteTarget}
-              onProbe={(profile) => probeProfile.mutate(profile)}
-              probingProfileId={probeProfile.isPending ? probeProfile.variables.id : undefined}
-              probeError={probeProfile.error?.message}
+              onTest={(profile) => testProfile.mutate(profile)}
+              testingProfileId={testProfile.isPending ? testProfile.variables.id : undefined}
+              testResult={profileTestResult}
             />
-          )
-        ) : providerDialog?.mode === 'create' || providerDialog?.mode === 'edit' ? (
+          </>
+        )}
+      </section>
+
+      <Modal
+        open={providerDialog !== null}
+        title={
+          providerDialog?.mode === 'edit' ? 'Edit provider profile' : 'New provider profile'
+        }
+        description="Pick your provider and paste its API key -- the base URL is filled in for you."
+        onClose={() => setProviderDialog(null)}
+      >
+        {providerDialog === null ? null : (
           <ProviderProfileForm
             {...(providerDialog.mode === 'edit' ? { profile: providerDialog.profile } : {})}
             onCancel={() => setProviderDialog(null)}
@@ -286,7 +165,7 @@ export function AssistantPage({ onOpenInventory }: AssistantPageProps) {
             }
             error={saveProfile.error?.message}
           />
-        ) : null}
+        )}
       </Modal>
 
       <Modal
@@ -324,6 +203,6 @@ export function AssistantPage({ onOpenInventory }: AssistantPageProps) {
           </div>
         )}
       </Modal>
-    </div>
+    </main>
   );
 }

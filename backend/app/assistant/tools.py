@@ -81,10 +81,13 @@ READ_ONLY_TOOLS: tuple[ToolSchema, ...] = (
 PROPOSE_CHANGE_PLAN_TOOL = ToolSchema(
     name="propose_change_plan",
     description=(
-        "Propose a Change Plan for a registered Cisco IOS/IOS-XE device's "
-        "interface description or admin state. This only drafts and "
-        "validates a plan for human review -- it never touches the device. "
-        "A human must separately apply it before anything changes."
+        "Propose a Change Plan for a registered Cisco IOS/IOS-XE device. "
+        "This only drafts and validates a plan for human review -- it never "
+        "touches the device. A human must separately apply it before "
+        "anything changes. One plan covers exactly one change on one device: "
+        "to change several things, or several devices, propose several plans. "
+        "To put a port in a VLAN that does not exist yet, propose the "
+        "vlan_name plan first, then the interface_access_vlan plan."
     ),
     parameters={
         "type": "object",
@@ -92,9 +95,27 @@ PROPOSE_CHANGE_PLAN_TOOL = ToolSchema(
             "device_id": {"type": "string", "format": "uuid"},
             "change_type": {
                 "type": "string",
-                "enum": ["interface_description", "interface_admin_state"],
+                "enum": [
+                    "interface_description",
+                    "interface_admin_state",
+                    "vlan_name",
+                    "interface_access_vlan",
+                ],
+                "description": (
+                    "interface_description: target is an interface, desired_value is free text. "
+                    "interface_admin_state: target is an interface, desired_value is 'up' or "
+                    "'down'. vlan_name: target is a VLAN id, desired_value is the VLAN name "
+                    "(creates the VLAN if it does not exist). interface_access_vlan: target is "
+                    "an interface, desired_value is the VLAN id to move that access port into."
+                ),
             },
-            "target": {"type": "string", "description": "Interface name, e.g. GigabitEthernet0/1"},
+            "target": {
+                "type": "string",
+                "description": (
+                    "An interface name such as GigabitEthernet0/1, or a VLAN id such as 10 "
+                    "when change_type is vlan_name."
+                ),
+            },
             "desired_value": {"type": "string"},
         },
         "required": ["device_id", "change_type", "target", "desired_value"],

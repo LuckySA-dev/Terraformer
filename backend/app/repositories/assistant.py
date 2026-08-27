@@ -15,13 +15,29 @@ from app.models import (
     AssistantSessionMode,
 )
 
+# Auto mode is the operator accepting that changes land without a per-change
+# prompt. This cap is what keeps "accepted the risk" from meaning "unbounded".
+# It is counted in the database rather than the browser so that reloading the
+# page cannot silently hand out a fresh allowance.
+MAX_AUTO_APPLIES_PER_SESSION = 5
+
 
 class AssistantSessionRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    def list(self) -> list[AssistantSession]:
+    def list(
+        self, *, device_id: UUID | None = None, device_scoped: bool = False
+    ) -> list[AssistantSession]:
+        """List sessions, optionally narrowed to one device's own chats.
+
+        `device_scoped` distinguishes "every session" from "the workspace-wide
+        sessions only" -- without it, `device_id=None` could not ask for the
+        unscoped chats without also returning every device's chat.
+        """
         statement = select(AssistantSession).order_by(AssistantSession.created_at.desc())
+        if device_scoped:
+            statement = statement.where(AssistantSession.device_id == device_id)
         return list(self._session.scalars(statement))
 
     def get(self, session_id: UUID, *, for_update: bool = False) -> AssistantSession:
@@ -36,8 +52,24 @@ class AssistantSessionRepository:
             )
         return chat_session
 
-    def add(self, *, provider_profile_id: UUID) -> AssistantSession:
-        chat_session = AssistantSession(provider_profile_id=provider_profile_id)
+    def add(
+        self,
+        *,
+        provider_profile_id: UUID,
+        model_id: str,
+        device_id: UUID | None = None,
+        context_limit_override: int | None = None,
+        supports_streaming: bool = False,
+        supports_tool_calling: bool = False,
+    ) -> AssistantSession:
+        chat_session = AssistantSession(
+            provider_profile_id=provider_profile_id,
+            model_id=model_id,
+            device_id=device_id,
+            context_limit_override=context_limit_override,
+            supports_streaming=supports_streaming,
+            supports_tool_calling=supports_tool_calling,
+        )
         self._session.add(chat_session)
         self._session.flush()
         return chat_session

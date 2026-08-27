@@ -24,10 +24,12 @@ from app.core.errors import (
 from app.core.logging import sanitize_text
 from app.core.time import utc_now
 from app.drivers import DeviceDriver, DriverRegistry
+from app.drivers.base import ChangeContext
 from app.models import (
     ChangePlan,
     ChangePlanSource,
     ChangePlanStatus,
+    ChangeStep,
     ChangeType,
     Device,
     SSHCompatibility,
@@ -40,6 +42,50 @@ from app.services.devices import DeviceService
 from app.services.snapshots import SnapshotService
 
 _SUPPORTED_VENDORS = frozenset({Vendor.CISCO_IOSXE})
+
+_VLAN_AWARE_CHANGES = frozenset({ChangeType.VLAN_NAME, ChangeType.INTERFACE_ACCESS_VLAN})
+
+
+def _needs_vlans(change_type: ChangeType) -> bool:
+    return change_type in _VLAN_AWARE_CHANGES
+
+
+def _post_check_ok(step: ChangeStep, context: ChangeContext) -> bool:
+    """Re-reads the device and confirms the change is actually in place.
+
+    A command the device accepted is not the same as a change that took --
+    a rejected sub-command, a VLAN that stayed inactive, or a port that never
+    left dynamic mode all return a clean prompt. Failing here is what drives
+    the rollback.
+    """
+    if step.change_type is ChangeType.VLAN_NAME:
+        vlan = context.vlan(int(step.target))
+        return vlan is not None and vlan.name == step.desired_value
+    if step.change_type is ChangeType.INTERFACE_ACCESS_VLAN:
+        assigned = context.access_vlan_of(step.target)
+        return assigned is not None and assigned.vlan_id == int(step.desired_value)
+    interface = context.interface
+    if interface is None:
+        return False
+    if step.change_type is ChangeType.INTERFACE_DESCRIPTION:
+        return interface.description == step.desired_value
+    return interface.admin_up == (step.desired_value == "up")
+
+
+def _previous_value(change_type: ChangeType, target: str, context: ChangeContext) -> str | None:
+    """What the device held before this change -- shown as the diff's left side."""
+    if change_type is ChangeType.VLAN_NAME:
+        existing = context.vlan(int(target))
+        return existing.name if existing is not None else None
+    if change_type is ChangeType.INTERFACE_ACCESS_VLAN:
+        previous = context.access_vlan_of(target)
+        return str(previous.vlan_id) if previous is not None else None
+    interface = context.interface
+    if interface is None:
+        return None
+    if change_type is ChangeType.INTERFACE_DESCRIPTION:
+        return interface.description
+    return "up" if interface.admin_up else "down"
 
 
 class ChangeService:
@@ -87,13 +133,21 @@ class ChangeService:
             operation=ConnectionOperation.STRUCTURED_READ,
         ) as parameters:
             interfaces = driver.get_interfaces(parameters)
+            # Only read the VLAN database when a VLAN change needs it: it is
+            # an extra command on the device, and an interface description
+            # has no use for it.
+            vlans = tuple(driver.get_vlans(parameters)) if _needs_vlans(change_type) else ()
+
+        # A VLAN rename targets the VLAN database, not a port, so there is no
+        # interface to look up and its absence is not an error.
         current = next((iface for iface in interfaces if iface.name == target), None)
-        if current is None:
+        if current is None and change_type is not ChangeType.VLAN_NAME:
             raise NotFoundError(f"Interface {target} was not found on this device")
 
+        context = ChangeContext(interface=current, vlans=vlans)
         step = ChangeStepIntent(change_type=change_type, target=target, desired_value=desired_value)
-        rendered = driver.render_change(step, current)
-        issues = driver.validate_change(step, current)
+        rendered = driver.render_change(step, context)
+        issues = driver.validate_change(step, context)
         if issues:
             # 422, not the bare AppError's 500: these are all rejections of
             # what the operator typed, not a server fault.
@@ -101,15 +155,11 @@ class ChangeService:
 
         pre_snapshot = self._snapshots.capture(device.id)
 
-        previous_value = (
-            current.description
-            if change_type is ChangeType.INTERFACE_DESCRIPTION
-            else ("up" if current.admin_up else "down")
-        )
+        previous_value = _previous_value(change_type, target, context)
         risk = classify_risk(
             change_type,
-            current_admin_up=current.admin_up,
-            current_oper_up=current.oper_up,
+            current_admin_up=current.admin_up if current else None,
+            current_oper_up=current.oper_up if current else None,
             desired_value=desired_value,
         )
 
@@ -166,18 +216,13 @@ class ChangeService:
             ) as parameters:
                 driver.apply_configuration(parameters, rendered_commands)
                 interfaces = driver.get_interfaces(parameters)
+                vlans = (
+                    tuple(driver.get_vlans(parameters))
+                    if _needs_vlans(step.change_type)
+                    else ()
+                )
             current = next((iface for iface in interfaces if iface.name == step.target), None)
-            post_check_ok = current is not None and (
-                (
-                    step.change_type is ChangeType.INTERFACE_DESCRIPTION
-                    and current.description == step.desired_value
-                )
-                or (
-                    step.change_type is ChangeType.INTERFACE_ADMIN_STATE
-                    and current.admin_up == (step.desired_value == "up")
-                )
-            )
-            if not post_check_ok:
+            if not _post_check_ok(step, ChangeContext(interface=current, vlans=vlans)):
                 raise AppError("Post-check did not confirm the applied change")
         except AppError as error:
             return self._attempt_rollback(plan, device, driver, inverse_commands, error.code)

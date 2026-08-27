@@ -22,6 +22,40 @@ export interface ManualTopologyLink {
   targetDeviceId: string;
 }
 
+/** What to draw a node as. Mirrors how EVE-NG/GNS3 label a lab topology. */
+export type DeviceRole = 'router' | 'switch' | 'firewall' | 'endpoint';
+
+// Matched against model/platform strings, most specific first. A switch that
+// also says "Router" in its platform banner (Catalyst L3 does) must still
+// come out a switch, so the switch families are tested before the generic
+// router words.
+// No trailing \b on the model-prefix families: a real platform string is
+// "ISR4331/K9" or "ASA5516", where the family runs straight into a digit and
+// a word boundary never occurs.
+const ROLE_PATTERNS: readonly (readonly [RegExp, DeviceRole])[] = [
+  [/\b(?:asa|firepower|fortigate|fortiwifi|palo\s?alto|pan-?os|srx)/i, 'firewall'],
+  [/\bfirewall\b/i, 'firewall'],
+  [/\b(?:catalyst|nexus|ws-c|c9[2-6]\d{2}|c3[57]\d{2}|me-\d|sg\d{3})/i, 'switch'],
+  [/\bswitch\b/i, 'switch'],
+  [/\b(?:isr|asr|csr|ncs|iosv|vios)/i, 'router'],
+  [/\brouter\b/i, 'router'],
+];
+
+/**
+ * Best-effort role from whatever identifying text a device reported.
+ *
+ * Deliberately a guess, and only ever drives the icon: nothing about safety,
+ * reachability or capability keys off it, so a wrong guess costs a wrong
+ * picture and nothing else.
+ */
+export function classifyDeviceRole(...hints: (string | null | undefined)[]): DeviceRole {
+  const haystack = hints.filter((hint): hint is string => Boolean(hint)).join(' ');
+  for (const [pattern, role] of ROLE_PATTERNS) {
+    if (pattern.test(haystack)) return role;
+  }
+  return 'endpoint';
+}
+
 export type TopologyElement =
   | {
       group: 'nodes';
@@ -29,6 +63,7 @@ export type TopologyElement =
         id: string;
         label: string;
         kind: 'registered' | 'observed';
+        role: DeviceRole;
         status: Device['status'] | 'observed';
       };
       position?: TopologyPosition;
@@ -40,7 +75,12 @@ export type TopologyElement =
         source: string;
         target: string;
         label: string;
+        /** Port at each end, drawn beside the node it belongs to. */
+        sourcePort: string;
+        targetPort: string;
         protocol: DeviceNeighbor['protocol'] | 'manual';
+        /** Both ends are registered devices, not a one-sided sighting. */
+        verified: boolean;
       };
     };
 
@@ -90,6 +130,7 @@ export function buildTopologyElements(
         id,
         label: device.facts.hostname ?? device.name,
         kind: 'registered',
+        role: classifyDeviceRole(device.facts.model, device.facts.vendor, device.vendor),
         status: device.status,
       },
       ...(positions[id] === undefined ? {} : { position: positions[id] }),
@@ -114,6 +155,9 @@ export function buildTopologyElements(
             id: targetId,
             label: shortenDeviceLabel(neighbor.remote_device_name),
             kind: 'observed',
+            // A neighbour is only ever known by what it advertised, so its
+            // platform banner is the only hint available.
+            role: classifyDeviceRole(neighbor.platform),
             status: 'observed',
           },
           ...(positions[targetId] === undefined ? {} : { position: positions[targetId] }),
@@ -126,7 +170,10 @@ export function buildTopologyElements(
           source: `device:${deviceId}`,
           target: targetId,
           label: `${abbreviateInterface(neighbor.local_interface)} → ${abbreviateInterface(neighbor.remote_interface)}`,
+          sourcePort: abbreviateInterface(neighbor.local_interface),
+          targetPort: abbreviateInterface(neighbor.remote_interface),
           protocol: neighbor.protocol,
+          verified: registeredTarget !== undefined,
         },
       });
     }
@@ -145,7 +192,11 @@ export function buildTopologyElements(
         source: `device:${link.sourceDeviceId}`,
         target: `device:${link.targetDeviceId}`,
         label: 'UNVERIFIED',
+        sourcePort: '',
+        targetPort: '',
         protocol: 'manual',
+        // Operator-drawn: asserted, never observed, so never "verified".
+        verified: false,
       },
     });
   }

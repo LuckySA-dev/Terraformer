@@ -341,7 +341,13 @@ export type ChangePlanStatus =
   | 'rolled_back'
   | 'rollback_failed';
 export type ChangeRisk = 'low' | 'high';
-export type ChangeType = 'interface_description' | 'interface_admin_state';
+export type ChangeType =
+  | 'interface_description'
+  | 'interface_admin_state'
+  /** Targets a VLAN id; creates the VLAN when it does not exist yet. */
+  | 'vlan_name'
+  /** Targets an interface; moves that access port into a VLAN. */
+  | 'interface_access_vlan';
 export type SafetyLevel = 'D' | 'C';
 export type ChangePlanSource = 'manual' | 'ai_generated';
 
@@ -369,26 +375,29 @@ export interface ChangePlan {
   updated_at: string;
 }
 
+/**
+ * Which wire format a provider speaks, which selects the backend adapter.
+ * Everything OpenAI-compatible (OpenAI, OpenRouter, Gemini's compat endpoint,
+ * Ollama, LM Studio) differs only by base URL; Anthropic's own API does not.
+ */
+export type ProviderType = 'openai_compatible' | 'anthropic';
+
 export interface ProviderProfile {
   id: string;
   name: string;
+  provider_type: ProviderType;
   base_url: string;
-  model_id: string;
   has_api_key: boolean;
-  context_limit_override: number | null;
-  supports_streaming: boolean;
-  supports_tool_calling: boolean;
   created_at: string;
   updated_at: string;
 }
 
 export interface ProviderProfileInput {
   name: string;
+  provider_type?: ProviderType;
   base_url: string;
-  model_id: string;
   api_key?: string;
   clear_api_key?: boolean;
-  context_limit_override?: number;
 }
 
 export interface AssistantMessage {
@@ -406,7 +415,12 @@ export type AssistantSessionMode = 'confirm' | 'auto';
 export interface AssistantSession {
   id: string;
   provider_profile_id: string;
+  model_id: string;
+  /** null means a workspace-wide chat rather than one pinned to a device. */
+  device_id: string | null;
   mode: AssistantSessionMode;
+  supports_streaming: boolean;
+  supports_tool_calling: boolean;
   auto_apply_count: number;
   created_at: string;
   updated_at: string;

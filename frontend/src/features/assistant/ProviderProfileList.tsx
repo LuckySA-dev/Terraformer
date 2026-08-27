@@ -1,17 +1,22 @@
 import { Pencil, Plus, PlugZap, Trash2 } from 'lucide-react';
 import type { ProviderProfile } from '../../types/api';
 import { AppState } from '../../components/ui/AppState';
-import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
+
+export interface ProviderProfileTestResult {
+  profileId: string;
+  ok: boolean;
+  message: string;
+}
 
 interface ProviderProfileListProps {
   profiles: ProviderProfile[];
   onCreate: () => void;
   onEdit: (profile: ProviderProfile) => void;
   onDelete: (profile: ProviderProfile) => void;
-  onProbe: (profile: ProviderProfile) => void;
-  probingProfileId?: string | undefined;
-  probeError?: string | undefined;
+  onTest: (profile: ProviderProfile) => void;
+  testingProfileId?: string | undefined;
+  testResult?: ProviderProfileTestResult | undefined;
 }
 
 export function ProviderProfileList({
@@ -19,9 +24,9 @@ export function ProviderProfileList({
   onCreate,
   onEdit,
   onDelete,
-  onProbe,
-  probingProfileId,
-  probeError,
+  onTest,
+  testingProfileId,
+  testResult,
 }: ProviderProfileListProps) {
   return (
     <div className="credential-list-stack">
@@ -44,23 +49,22 @@ export function ProviderProfileList({
             <div key={profile.id} className="credential-row">
               <div>
                 <strong>{profile.name}</strong>
-                <small>
-                  {profile.model_id} · {profile.base_url}
-                </small>
-                <div className="credential-row__badges">
-                  {profile.supports_tool_calling ? (
-                    <Badge tone="success">Device tools enabled</Badge>
-                  ) : (
-                    <Badge tone="warning">Not tested — no device tools</Badge>
-                  )}
-                </div>
+                <small>{profile.base_url}</small>
+                {testResult?.profileId === profile.id ? (
+                  <span
+                    className={`mini-result ${testResult.ok ? 'mini-result--success' : 'mini-result--error'}`}
+                    role="status"
+                  >
+                    {testResult.message}
+                  </span>
+                ) : null}
               </div>
               <div className="credential-row__actions">
                 <Button
                   size="small"
                   variant="ghost"
-                  busy={probingProfileId === profile.id}
-                  onClick={() => onProbe(profile)}
+                  busy={testingProfileId === profile.id}
+                  onClick={() => onTest(profile)}
                   aria-label={`Test connection for ${profile.name}`}
                 >
                   <PlugZap size={14} /> Test
@@ -88,14 +92,9 @@ export function ProviderProfileList({
           ))}
         </div>
       )}
-      {probeError === undefined ? null : (
-        <div className="form-error" role="alert">
-          {probeError}
-        </div>
-      )}
-      <p className="field-hint">
-        Until a profile passes a connection test, the assistant cannot read devices or draft
-        changes — it can only chat.
+      <p className="field__hint">
+        A profile is just a connection -- you pick the model, and the assistant checks it can
+        read devices, each time you start a new chat.
       </p>
     </div>
   );

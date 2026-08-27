@@ -100,6 +100,38 @@ async def test_probe_capabilities_reports_tool_calling_support() -> None:
     assert capabilities.supports_tool_calling is True
 
 
+async def test_list_models_returns_sorted_model_ids() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "object": "list",
+                "data": [
+                    {"id": "llama3.2", "object": "model", "created": 1, "owned_by": "local"},
+                    {"id": "llama3.1", "object": "model", "created": 1, "owned_by": "local"},
+                ],
+            },
+        )
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = OpenAICompatibleClient(http_client=http_client)
+
+    models = await client.list_models(base_url="http://fake/v1", api_key=None)
+
+    assert models == ["llama3.1", "llama3.2"]
+
+
+async def test_list_models_raises_connection_error_on_network_failure() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused")
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = OpenAICompatibleClient(http_client=http_client)
+
+    with pytest.raises(AIProviderConnectionError):
+        await client.list_models(base_url="http://fake/v1", api_key=None)
+
+
 async def test_probe_capabilities_falls_back_when_tools_param_rejected() -> None:
     call_count = 0
 

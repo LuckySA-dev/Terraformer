@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Literal, cast
 from uuid import UUID
@@ -26,9 +26,11 @@ from app.models import (
     AssistantSessionMode,
     ChangePlanSource,
     ChangeType,
+    ProviderType,
 )
 from app.repositories.assistant import AssistantMessageRepository, AssistantSessionRepository
 from app.repositories.provider_profiles import ProviderProfileRepository
+from app.services.devices import DeviceService
 from app.services.provider_profiles import ProviderKeyVault
 
 _MAX_TOOL_ROUNDS_PER_TURN = 5
@@ -101,22 +103,24 @@ class AssistantChatService:
         self,
         session: Session,
         *,
-        provider_client: AIProviderClient,
+        provider_client_for: Callable[[ProviderType], AIProviderClient],
         sessions: AssistantSessionRepository,
         messages: AssistantMessageRepository,
         profiles: ProviderProfileRepository,
         vault: ProviderKeyVault,
         tools: ToolDispatcher,
         changes: ChangeService | None = None,
+        devices: DeviceService | None = None,
     ) -> None:
         self._session = session
-        self._provider_client = provider_client
+        self._provider_client_for = provider_client_for
         self._sessions = sessions
         self._messages = messages
         self._profiles = profiles
         self._vault = vault
         self._tools = tools
         self._changes = changes
+        self._devices = devices
 
     async def handle_user_message(
         self, session_id: UUID, content: str
@@ -129,10 +133,11 @@ class AssistantChatService:
         self._session.commit()
 
         history = _trim_to_context_limit(
-            self._build_history(session_id), profile.context_limit_override
+            self._build_history(session_id, chat_session.device_id),
+            chat_session.context_limit_override,
         )
         tool_schemas: list[ToolSchema] | None = (
-            list(READ_ONLY_TOOLS) if profile.supports_tool_calling else None
+            list(READ_ONLY_TOOLS) if chat_session.supports_tool_calling else None
         )
         if tool_schemas is not None and self._changes is not None:
             tool_schemas = [*tool_schemas, PROPOSE_CHANGE_PLAN_TOOL]
@@ -140,10 +145,10 @@ class AssistantChatService:
         for _round in range(_MAX_TOOL_ROUNDS_PER_TURN):
             reply_text = ""
             pending_tool_calls: list[ToolCallRequest] = []
-            async for chunk in self._provider_client.stream_chat(
+            async for chunk in self._provider_client_for(profile.provider_type).stream_chat(
                 base_url=profile.base_url,
                 api_key=material.api_key,
-                model_id=profile.model_id,
+                model_id=chat_session.model_id,
                 messages=history,
                 tools=tool_schemas,
             ):
@@ -273,22 +278,46 @@ class AssistantChatService:
             )
         return ChatMessage(role=message.role.value, content=message.content)
 
-    def _build_history(self, session_id: UUID) -> list[ChatMessage]:
-        stored = self._messages.list_for_session(session_id)
-        system = ChatMessage(
-            role="system",
-            content=(
-                "You are a read-only network assistant. You can inspect "
-                "registered devices with the provided tools and propose a "
-                "Change Plan with propose_change_plan, but you can never "
-                "apply anything yourself -- a human always reviews and "
-                "confirms every change. When you suggest a command for a "
-                "human to run in a device's console terminal, always put "
-                "it in a fenced code block (```) by itself, with no other "
-                "text inside the fence."
-            ),
+    def _device_context(self, device_id: UUID) -> str:
+        """Name the device this conversation is pinned to.
+
+        Without it a device-scoped chat is useless in practice: every tool
+        takes a device_id, and the operator would have to paste a UUID into
+        the chat to ask about the device whose page they are already on.
+        """
+        header = f'This conversation is about the device with device_id "{device_id}".'
+        if self._devices is None:
+            return header
+        try:
+            device = self._devices.get(device_id)
+        except AppError:
+            # The device was removed mid-conversation. The chat itself is
+            # still readable, so degrade to the id rather than failing.
+            return header
+        return (
+            f"{header} It is named {device.name}, a {device.vendor.value} device at "
+            f"{device.management_address}. Use that device_id for tool calls unless "
+            "the operator names a different device."
         )
-        return [system, *(self._replay(m) for m in stored)]
+
+    def _build_history(self, session_id: UUID, device_id: UUID | None = None) -> list[ChatMessage]:
+        stored = self._messages.list_for_session(session_id)
+        instructions = (
+            "You are a read-only network assistant. You can inspect "
+            "registered devices with the provided tools and propose a "
+            "Change Plan with propose_change_plan, but you can never "
+            "apply anything yourself -- a human always reviews and "
+            "confirms every change. When you suggest a command for a "
+            "human to run in a device's console terminal, always put "
+            "it in a fenced code block (```) by itself, with no other "
+            "text inside the fence."
+        )
+        if device_id is not None:
+            instructions = f"{instructions}\n\n{self._device_context(device_id)}"
+        return [
+            ChatMessage(role="system", content=instructions),
+            *(self._replay(m) for m in stored),
+        ]
 
     def set_mode(
         self, session_id: UUID, mode: AssistantSessionMode, *, risk_acknowledged: bool

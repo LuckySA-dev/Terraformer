@@ -12,12 +12,18 @@ from app.schemas.common import APIModel
 
 class AssistantSessionCreate(APIModel):
     provider_profile_id: UUID
+    model_id: str = Field(min_length=1, max_length=200)
+    device_id: UUID | None = None
 
 
 class AssistantSessionView(APIModel):
     id: UUID
     provider_profile_id: UUID
+    model_id: str
+    device_id: UUID | None
     mode: AssistantSessionMode
+    supports_streaming: bool
+    supports_tool_calling: bool
     auto_apply_count: int
     created_at: datetime
     updated_at: datetime

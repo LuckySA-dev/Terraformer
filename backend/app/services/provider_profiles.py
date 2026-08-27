@@ -73,9 +73,8 @@ class ProviderProfileService:
         profile = ProviderProfile(
             id=profile_id,
             name=request.name,
+            provider_type=request.provider_type,
             base_url=request.base_url,
-            model_id=request.model_id,
-            context_limit_override=request.context_limit_override,
             encrypted_api_key=self._vault.encrypt(profile_id, ProviderKeyMaterial(api_key=api_key)),
         )
         try:
@@ -95,12 +94,10 @@ class ProviderProfileService:
             if existing is not None and existing.id != profile.id:
                 raise ConflictError("A provider profile with this name already exists")
             profile.name = name
+        if "provider_type" in changes and request.provider_type is not None:
+            profile.provider_type = request.provider_type
         if "base_url" in changes and request.base_url is not None:
             profile.base_url = request.base_url
-        if "model_id" in changes and request.model_id is not None:
-            profile.model_id = request.model_id
-        if "context_limit_override" in changes:
-            profile.context_limit_override = request.context_limit_override
         if request.clear_api_key:
             profile.encrypted_api_key = None
         elif "api_key" in changes and request.api_key is not None:
@@ -118,15 +115,7 @@ class ProviderProfileService:
         self._profiles.delete(profile)
         self._session.commit()
 
-    async def probe_capabilities(
-        self, profile_id: UUID, client: AIProviderClient
-    ) -> ProviderProfile:
-        profile = self._profiles.get(profile_id, for_update=True)
+    async def list_models(self, profile_id: UUID, client: AIProviderClient) -> list[str]:
+        profile = self._profiles.get(profile_id)
         material = self._vault.decrypt(profile)
-        capabilities = await client.probe_capabilities(
-            base_url=profile.base_url, api_key=material.api_key, model_id=profile.model_id
-        )
-        profile.supports_streaming = capabilities.supports_streaming
-        profile.supports_tool_calling = capabilities.supports_tool_calling
-        self._session.commit()
-        return profile
+        return await client.list_models(base_url=profile.base_url, api_key=material.api_key)

@@ -5,6 +5,11 @@ description = "Local-first network automation backend"
 requires-python = ">=3.12,<3.14"
 dependencies = [
   "alembic==1.16.4",
+  # Anthropic's own API is a different wire format, not just a different base
+  # URL, so the OpenAI-compatible client below cannot reach Claude models with
+  # a direct Anthropic key. This is the second provider adapter, not a
+  # replacement -- see app/assistant/anthropic_client.py.
+  "anthropic==1.1.0",
   "argon2-cffi==25.1.0",
   "asyncssh==2.23.1",
   "cryptography==45.0.5",

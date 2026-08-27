@@ -110,6 +110,11 @@ class ChangeRisk(StrEnum):
 class ChangeType(StrEnum):
     INTERFACE_DESCRIPTION = "interface_description"
     INTERFACE_ADMIN_STATE = "interface_admin_state"
+    # Names or creates a VLAN in the device's VLAN database. Targets the VLAN
+    # id; carries no port membership of its own.
+    VLAN_NAME = "vlan_name"
+    # Moves one access port into a VLAN. Targets the interface.
+    INTERFACE_ACCESS_VLAN = "interface_access_vlan"
 
 
 class JobState(StrEnum):
@@ -129,6 +134,19 @@ class EventSeverity(StrEnum):
 class ChangePlanSource(StrEnum):
     MANUAL = "manual"
     AI_GENERATED = "ai_generated"
+
+
+class ProviderType(StrEnum):
+    """Which wire format a provider profile speaks.
+
+    Not cosmetic: it selects the client adapter. Everything that speaks the
+    OpenAI Chat Completions format -- OpenAI, OpenRouter, Gemini's compat
+    endpoint, Ollama, LM Studio -- shares one adapter and differs only by
+    base URL. Anthropic's own API does not, so it needs its own.
+    """
+
+    OPENAI_COMPATIBLE = "openai_compatible"
+    ANTHROPIC = "anthropic"
 
 
 class AssistantSessionMode(StrEnum):
@@ -180,12 +198,13 @@ class ProviderProfile(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "provider_profiles"
 
     name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    provider_type: Mapped[ProviderType] = mapped_column(
+        enum_type(ProviderType, "provider_type"),
+        nullable=False,
+        default=ProviderType.OPENAI_COMPATIBLE,
+    )
     base_url: Mapped[str] = mapped_column(String(500), nullable=False)
-    model_id: Mapped[str] = mapped_column(String(200), nullable=False)
     encrypted_api_key: Mapped[bytes | None] = mapped_column(LargeBinary)
-    context_limit_override: Mapped[int | None] = mapped_column(Integer)
-    supports_streaming: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    supports_tool_calling: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
 class Device(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -602,6 +621,18 @@ class AssistantSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=False,
         index=True,
     )
+    # Scopes a conversation to one device. NULL is a workspace-wide chat.
+    # Deliberately part of the session rather than a filter applied at read
+    # time: a device chat must not surface another device's history, and the
+    # model's context is built from this session's messages alone.
+    device_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("devices.id", ondelete="CASCADE"),
+        index=True,
+    )
+    model_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    context_limit_override: Mapped[int | None] = mapped_column(Integer)
+    supports_streaming: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    supports_tool_calling: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     mode: Mapped[AssistantSessionMode] = mapped_column(
         enum_type(AssistantSessionMode, "assistant_session_mode"),
         nullable=False,

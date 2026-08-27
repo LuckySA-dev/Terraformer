@@ -37,6 +37,7 @@ from app.drivers import (
     GenericReadOnlyDriver,
     InterfaceFacts,
 )
+from app.drivers.base import ChangeContext
 from app.drivers.cisco_iosxe import (
     parse_cdp_neighbors,
     parse_lldp_neighbors,
@@ -134,7 +135,7 @@ def test_cisco_driver_renders_interface_description_change(
         target="GigabitEthernet1",
         desired_value="uplink-to-lab-core-2",
     )
-    rendered = driver.render_change(step, target)
+    rendered = driver.render_change(step, ChangeContext(interface=target))
 
     assert rendered.commands == (
         "interface GigabitEthernet1",
@@ -160,7 +161,7 @@ def test_cisco_driver_renders_interface_description_inverse_as_no_description_wh
         target="GigabitEthernet2",
         desired_value="new description",
     )
-    rendered = driver.render_change(step, target)
+    rendered = driver.render_change(step, ChangeContext(interface=target))
 
     assert rendered.inverse_commands == ("interface GigabitEthernet2", "no description")
 
@@ -173,7 +174,7 @@ def test_cisco_driver_renders_admin_state_change_both_directions() -> None:
 
     down = driver.render_change(
         ChangeStepIntent(ChangeType.INTERFACE_ADMIN_STATE, "GigabitEthernet1", "down"),
-        current_up,
+        ChangeContext(interface=current_up),
     )
     assert down.commands == ("interface GigabitEthernet1", "shutdown")
     assert down.inverse_commands == ("interface GigabitEthernet1", "no shutdown")
@@ -183,7 +184,7 @@ def test_cisco_driver_renders_admin_state_change_both_directions() -> None:
     )
     up = driver.render_change(
         ChangeStepIntent(ChangeType.INTERFACE_ADMIN_STATE, "GigabitEthernet1", "up"),
-        current_down,
+        ChangeContext(interface=current_down),
     )
     assert up.commands == ("interface GigabitEthernet1", "no shutdown")
     assert up.inverse_commands == ("interface GigabitEthernet1", "shutdown")
@@ -194,7 +195,7 @@ def test_cisco_driver_validate_change_rejects_a_description_over_240_characters(
     current = InterfaceFacts(name="GigabitEthernet1", description=None, admin_up=True, oper_up=True)
     step = ChangeStepIntent(ChangeType.INTERFACE_DESCRIPTION, "GigabitEthernet1", "x" * 241)
 
-    issues = driver.validate_change(step, current)
+    issues = driver.validate_change(step, ChangeContext(interface=current))
 
     assert issues == ["description must be 240 characters or fewer"]
 
@@ -204,7 +205,7 @@ def test_cisco_driver_validate_change_accepts_a_valid_description() -> None:
     current = InterfaceFacts(name="GigabitEthernet1", description=None, admin_up=True, oper_up=True)
     step = ChangeStepIntent(ChangeType.INTERFACE_DESCRIPTION, "GigabitEthernet1", "fine")
 
-    assert driver.validate_change(step, current) == []
+    assert driver.validate_change(step, ChangeContext(interface=current)) == []
 
 
 def test_cisco_driver_validate_change_rejects_a_description_carrying_extra_commands() -> None:
@@ -219,7 +220,7 @@ def test_cisco_driver_validate_change_rejects_a_description_carrying_extra_comma
     current = InterfaceFacts(name="GigabitEthernet1", description=None, admin_up=True, oper_up=True)
     step = ChangeStepIntent(ChangeType.INTERFACE_DESCRIPTION, "GigabitEthernet1", "ok\nshutdown")
 
-    assert driver.validate_change(step, current) == [
+    assert driver.validate_change(step, ChangeContext(interface=current)) == [
         "description must be a single line of printable characters"
     ]
 
@@ -229,7 +230,7 @@ def test_cisco_driver_validate_change_rejects_an_empty_description() -> None:
     current = InterfaceFacts(name="GigabitEthernet1", description=None, admin_up=True, oper_up=True)
     step = ChangeStepIntent(ChangeType.INTERFACE_DESCRIPTION, "GigabitEthernet1", "   ")
 
-    assert driver.validate_change(step, current) == [
+    assert driver.validate_change(step, ChangeContext(interface=current)) == [
         "description must not be empty; clear it with a separate change instead"
     ]
 

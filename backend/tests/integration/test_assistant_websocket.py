@@ -10,11 +10,11 @@ def _enable_ai_gateway(settings):
 
 
 def test_assistant_chat_streams_a_reply(authenticated_client: TestClient, container) -> None:
-    from app.assistant.client import ChatChunk
+    from app.assistant.client import ChatChunk, ProviderCapabilities
 
     class _FakeClient:
         async def probe_capabilities(self, **_kwargs):
-            raise AssertionError("not used")
+            return ProviderCapabilities(supports_streaming=True, supports_tool_calling=True)
 
         async def stream_chat(self, **_kwargs):
             yield ChatChunk(type="token", content="Hello")
@@ -24,10 +24,11 @@ def test_assistant_chat_streams_a_reply(authenticated_client: TestClient, contai
 
     profile_id = authenticated_client.post(
         "/api/provider-profiles",
-        json={"name": "Local", "base_url": "http://localhost:11434/v1", "model_id": "llama3.1"},
+        json={"name": "Local", "base_url": "http://localhost:11434/v1"},
     ).json()["id"]
     chat_session_id = authenticated_client.post(
-        "/api/assistant-sessions", json={"provider_profile_id": profile_id}
+        "/api/assistant-sessions",
+        json={"provider_profile_id": profile_id, "model_id": "llama3.1"},
     ).json()["id"]
 
     with authenticated_client.websocket_connect(
@@ -43,11 +44,11 @@ def test_assistant_chat_streams_a_reply(authenticated_client: TestClient, contai
 def test_assistant_websocket_rejects_missing_origin(
     authenticated_client: TestClient, container
 ) -> None:
-    from app.assistant.client import ChatChunk
+    from app.assistant.client import ChatChunk, ProviderCapabilities
 
     class _FakeClient:
         async def probe_capabilities(self, **_kwargs):
-            raise AssertionError("not used")
+            return ProviderCapabilities(supports_streaming=True, supports_tool_calling=True)
 
         async def stream_chat(self, **_kwargs):
             yield ChatChunk(type="done")
@@ -56,10 +57,11 @@ def test_assistant_websocket_rejects_missing_origin(
 
     profile_id = authenticated_client.post(
         "/api/provider-profiles",
-        json={"name": "Local", "base_url": "http://localhost:11434/v1", "model_id": "llama3.1"},
+        json={"name": "Local", "base_url": "http://localhost:11434/v1"},
     ).json()["id"]
     chat_session_id = authenticated_client.post(
-        "/api/assistant-sessions", json={"provider_profile_id": profile_id}
+        "/api/assistant-sessions",
+        json={"provider_profile_id": profile_id, "model_id": "llama3.1"},
     ).json()["id"]
 
     from starlette.websockets import WebSocketDisconnect

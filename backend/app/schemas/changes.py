@@ -40,3 +40,14 @@ class ChangePlanView(APIModel):
 
 class ChangeApplyJobInput(APIModel):
     change_plan_id: UUID
+
+
+class ChangeApplyRequest(APIModel):
+    """Optional body on apply.
+
+    Present only when Auto mode fired the apply, so the server can charge it
+    against that chat's allowance. A human clicking Apply sends no body and
+    is never rate-limited.
+    """
+
+    assistant_session_id: UUID | None = None

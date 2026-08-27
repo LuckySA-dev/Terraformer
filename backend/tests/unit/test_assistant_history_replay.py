@@ -38,7 +38,7 @@ class _ReplayMessages:
 def _service_with(stored: list[_StoredMessage]) -> AssistantChatService:
     return AssistantChatService(
         session=None,  # type: ignore[arg-type]
-        provider_client=None,  # type: ignore[arg-type]
+        provider_client_for=None,  # type: ignore[arg-type]
         sessions=None,  # type: ignore[arg-type]
         messages=_ReplayMessages(stored),  # type: ignore[arg-type]
         profiles=None,  # type: ignore[arg-type]

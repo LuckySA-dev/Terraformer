@@ -146,7 +146,7 @@ export function AppShell({ health, onLogout }: AppShellProps) {
             aria-current={view === 'assistant' ? 'page' : undefined}
           >
             <Bot size={18} />
-            <span>Assistant</span>
+            <span>AI provider keys</span>
           </button>
         </nav>
         <div className="sidebar__spacer" />
@@ -205,7 +205,7 @@ export function AppShell({ health, onLogout }: AppShellProps) {
               <AppState kind="loading" title="Loading assistant" message="Preparing the assistant..." />
             }
           >
-            <AssistantPage onOpenInventory={goToInventory} />
+            <AssistantPage />
           </Suspense>
         ) : (
           <ActivityPage />

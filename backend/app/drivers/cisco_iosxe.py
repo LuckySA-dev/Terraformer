@@ -10,6 +10,7 @@ from typing import cast
 from app.changes.types import ChangeStepIntent, RenderedChange
 from app.core.errors import DriverCommandRejectedError
 from app.drivers.base import (
+    ChangeContext,
     ConfigurableTransport,
     ConnectionParameters,
     ConnectionTestResult,
@@ -23,6 +24,7 @@ from app.drivers.base import (
     NeighborFacts,
     NetworkTransport,
     TransportFactory,
+    VlanFacts,
 )
 from app.drivers.generic_readonly import translate_transport_error
 from app.drivers.ssh_errors import ConnectionPhase
@@ -95,6 +97,15 @@ class CiscoIOSXEDriver(DeviceDriver):
         output = self._command(parameters, "show interfaces")
         return parse_show_interfaces(output)
 
+    def get_vlans(self, parameters: ConnectionParameters) -> list[VlanFacts]:
+        # A router has no VLAN database and rejects the command. That is not
+        # an error worth failing a preview over -- an empty table simply means
+        # "no VLAN facts", and the VLAN change types are refused elsewhere.
+        try:
+            return parse_show_vlan_brief(self._command(parameters, "show vlan brief"))
+        except DriverCommandRejectedError:
+            return []
+
     def get_neighbors(self, parameters: ConnectionParameters) -> list[NeighborFacts]:
         with self._session(parameters) as transport:
             return self._read_neighbors(transport)
@@ -138,8 +149,18 @@ class CiscoIOSXEDriver(DeviceDriver):
         return output.replace("\r\n", "\n")
 
     _DESCRIPTION_MAX_LENGTH = 240
+    _VLAN_NAME_MAX_LENGTH = 32
+    _VLAN_ID_MIN = 1
+    _VLAN_ID_MAX = 4094
 
-    def render_change(self, step: ChangeStepIntent, current: InterfaceFacts) -> RenderedChange:
+    def render_change(self, step: ChangeStepIntent, context: ChangeContext) -> RenderedChange:
+        if step.change_type is ChangeType.VLAN_NAME:
+            return self._render_vlan_name(step, context)
+        if step.change_type is ChangeType.INTERFACE_ACCESS_VLAN:
+            return self._render_access_vlan(step, context)
+        current = context.interface
+        if current is None:
+            self._unsupported(DriverCapability.RENDER)
         if step.change_type is ChangeType.INTERFACE_DESCRIPTION:
             inverse_value = current.description
             inverse = (
@@ -166,9 +187,47 @@ class CiscoIOSXEDriver(DeviceDriver):
             )
         self._unsupported(DriverCapability.RENDER)
 
-    def validate_change(self, step: ChangeStepIntent, current: InterfaceFacts) -> list[str]:
-        del current
+    def _render_vlan_name(self, step: ChangeStepIntent, context: ChangeContext) -> RenderedChange:
+        vlan_id = int(step.target)
+        existing = context.vlan(vlan_id)
+        # Naming a VLAN that does not exist creates it, so the inverse of a
+        # create is a delete -- but only when this change is what created it.
+        # Renaming an existing VLAN must never roll back into deleting it.
+        inverse: tuple[str, ...] = (
+            (f"vlan {vlan_id}", f"name {existing.name}")
+            if existing is not None
+            else (f"no vlan {vlan_id}",)
+        )
+        return RenderedChange(
+            commands=(f"vlan {vlan_id}", f"name {step.desired_value}"),
+            inverse_commands=inverse,
+        )
+
+    def _render_access_vlan(self, step: ChangeStepIntent, context: ChangeContext) -> RenderedChange:
+        previous = context.access_vlan_of(step.target)
+        inverse: tuple[str, ...] = (
+            (f"interface {step.target}", f"switchport access vlan {previous.vlan_id}")
+            if previous is not None
+            else (f"interface {step.target}", "no switchport access vlan")
+        )
+        return RenderedChange(
+            # `switchport mode access` is included because assigning an access
+            # VLAN on a port left in dynamic mode does not reliably take
+            # effect -- the port has to actually be an access port first.
+            commands=(
+                f"interface {step.target}",
+                "switchport mode access",
+                f"switchport access vlan {int(step.desired_value)}",
+            ),
+            inverse_commands=inverse,
+        )
+
+    def validate_change(self, step: ChangeStepIntent, context: ChangeContext) -> list[str]:
         issues: list[str] = []
+        if step.change_type is ChangeType.VLAN_NAME:
+            return self._validate_vlan_name(step)
+        if step.change_type is ChangeType.INTERFACE_ACCESS_VLAN:
+            return self._validate_access_vlan(step, context)
         if step.change_type is ChangeType.INTERFACE_DESCRIPTION:
             if len(step.desired_value) > self._DESCRIPTION_MAX_LENGTH:
                 issues.append(
@@ -190,6 +249,51 @@ class CiscoIOSXEDriver(DeviceDriver):
             if step.desired_value not in ("up", "down"):
                 issues.append("admin state must be 'up' or 'down'")
         return issues
+
+    def _validate_vlan_name(self, step: ChangeStepIntent) -> list[str]:
+        issues: list[str] = []
+        issues.extend(self._vlan_id_issues(step.target, field="VLAN id"))
+        name = step.desired_value
+        if len(name) > self._VLAN_NAME_MAX_LENGTH:
+            issues.append(f"VLAN name must be {self._VLAN_NAME_MAX_LENGTH} characters or fewer")
+        # Same reasoning as an interface description: this is free-form text
+        # interpolated into a config line that is later split back apart, so a
+        # control character or a space would smuggle a second command into a
+        # batch the operator already reviewed. IOS VLAN names are additionally
+        # restricted to a word, which makes the rule stricter here.
+        if not name.strip():
+            issues.append("VLAN name must not be empty")
+        elif not re.fullmatch(r"[A-Za-z0-9_\-]+", name):
+            issues.append("VLAN name may only contain letters, digits, hyphen and underscore")
+        return issues
+
+    def _validate_access_vlan(self, step: ChangeStepIntent, context: ChangeContext) -> list[str]:
+        issues: list[str] = []
+        issues.extend(self._vlan_id_issues(step.desired_value, field="access VLAN"))
+        if issues:
+            return issues
+        # Assigning a port to a VLAN the switch does not have leaves the port
+        # in an inactive VLAN and black-holes it. Refuse instead: create the
+        # VLAN first, as its own reviewable change.
+        if context.vlans and context.vlan(int(step.desired_value)) is None:
+            issues.append(
+                f"VLAN {step.desired_value} does not exist on this device; "
+                "create it first with a VLAN name change"
+            )
+        return issues
+
+    def _vlan_id_issues(self, raw: str, *, field: str) -> list[str]:
+        try:
+            vlan_id = int(raw)
+        except ValueError:
+            return [f"{field} must be a number"]
+        if not self._VLAN_ID_MIN <= vlan_id <= self._VLAN_ID_MAX:
+            return [f"{field} must be between {self._VLAN_ID_MIN} and {self._VLAN_ID_MAX}"]
+        # 1002-1005 are reserved by IOS for legacy FDDI/Token Ring and cannot
+        # be renamed or freely assigned.
+        if 1002 <= vlan_id <= 1005:
+            return [f"{field} {vlan_id} is reserved by IOS"]
+        return []
 
     def apply_configuration(self, parameters: ConnectionParameters, commands: list[str]) -> None:
         self._config(parameters, commands)
@@ -296,6 +400,49 @@ def parse_show_interfaces(output: str) -> list[InterfaceFacts]:
             )
         )
     return interfaces
+
+
+# "10   USERS    active    Gi1/0/1, Gi1/0/2"
+_VLAN_ROW = re.compile(r"(?m)^(?P<id>\d{1,4})\s+(?P<name>\S+)\s+(?P<status>\S+)\s*(?P<ports>.*)$")
+
+
+def parse_show_vlan_brief(output: str) -> list[VlanFacts]:
+    """Parses `show vlan brief`, including its wrapped port continuation lines.
+
+    A VLAN with more ports than fit the column continues on following lines
+    that carry only ports. Dropping those would under-report membership,
+    which is exactly what the access-VLAN inverse command depends on.
+    """
+    vlans: list[VlanFacts] = []
+    for line in output.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("-") or stripped.lower().startswith("vlan "):
+            continue
+        match = _VLAN_ROW.match(line.rstrip())
+        if match is None:
+            # A continuation line: ports only, belonging to the VLAN above.
+            if vlans and re.fullmatch(r"[A-Za-z0-9/,\.\s-]+", stripped):
+                previous = vlans[-1]
+                vlans[-1] = VlanFacts(
+                    vlan_id=previous.vlan_id,
+                    name=previous.name,
+                    status=previous.status,
+                    ports=previous.ports + _split_ports(stripped),
+                )
+            continue
+        vlans.append(
+            VlanFacts(
+                vlan_id=int(match.group("id")),
+                name=match.group("name"),
+                status=match.group("status"),
+                ports=_split_ports(match.group("ports")),
+            )
+        )
+    return vlans
+
+
+def _split_ports(raw: str) -> tuple[str, ...]:
+    return tuple(port.strip() for port in raw.split(",") if port.strip())
 
 
 def parse_cdp_neighbors(output: str) -> list[NeighborFacts]:

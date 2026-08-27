@@ -26,6 +26,7 @@ import type {
   PathCheckResult,
   ProviderProfile,
   ProviderProfileInput,
+  ProviderType,
   SessionStatus,
   SetupStatus,
 } from '../types/api';
@@ -195,8 +196,15 @@ export const api = {
   }) => apiRequest<ChangePlan>('/change-plans', { method: 'POST', body: json(input) }),
   listChangePlans: (deviceId: string) =>
     apiRequest<ChangePlan[]>(`/change-plans?device_id=${encodeURIComponent(deviceId)}`),
-  applyChangePlan: (id: string) =>
-    apiRequest<Job>(`/change-plans/${encodeURIComponent(id)}/apply`, { method: 'POST' }),
+  applyChangePlan: (id: string, assistantSessionId?: string) =>
+    apiRequest<Job>(`/change-plans/${encodeURIComponent(id)}/apply`, {
+      method: 'POST',
+      // Sent only for an Auto-mode apply, which the server counts against
+      // that chat's allowance. A human-clicked apply sends no body.
+      ...(assistantSessionId === undefined
+        ? {}
+        : { body: json({ assistant_session_id: assistantSessionId }) }),
+    }),
 
   providerProfiles: () => apiRequest<ProviderProfile[]>('/provider-profiles'),
   createProviderProfile: (input: ProviderProfileInput) =>
@@ -209,19 +217,34 @@ export const api = {
   deleteProviderProfile: async (id: string): Promise<void> => {
     await apiRequest<unknown>(`/provider-profiles/${encodeURIComponent(id)}`, { method: 'DELETE' });
   },
-  probeProviderProfile: (id: string) =>
-    apiRequest<ProviderProfile>(`/provider-profiles/${encodeURIComponent(id)}/probe`, {
+  providerProfileModels: (id: string) =>
+    apiRequest<{ models: string[] }>(`/provider-profiles/${encodeURIComponent(id)}/models`),
+  listProviderModels: (
+    baseUrl: string,
+    apiKey: string | undefined,
+    providerType: ProviderType = 'openai_compatible',
+  ) =>
+    apiRequest<{ models: string[] }>('/provider-profiles/list-models', {
       method: 'POST',
+      body: json({ base_url: baseUrl, api_key: apiKey ?? null, provider_type: providerType }),
     }),
-  assistantSessions: () => apiRequest<AssistantSession[]>('/assistant-sessions'),
+  assistantSessions: (scope: 'all' | 'device' | 'workspace' = 'all', deviceId?: string) => {
+    const params = new URLSearchParams({ scope });
+    if (deviceId !== undefined) params.set('device_id', deviceId);
+    return apiRequest<AssistantSession[]>(`/assistant-sessions?${params.toString()}`);
+  },
   assistantMessages: (sessionId: string) =>
     apiRequest<AssistantMessage[]>(
       `/assistant-sessions/${encodeURIComponent(sessionId)}/messages`,
     ),
-  createAssistantSession: (providerProfileId: string) =>
+  createAssistantSession: (providerProfileId: string, modelId: string, deviceId?: string) =>
     apiRequest<AssistantSession>('/assistant-sessions', {
       method: 'POST',
-      body: json({ provider_profile_id: providerProfileId }),
+      body: json({
+        provider_profile_id: providerProfileId,
+        model_id: modelId,
+        device_id: deviceId ?? null,
+      }),
     }),
   stageCommand: (sessionId: string, command: string) =>
     apiRequest<{ allowed: boolean }>(

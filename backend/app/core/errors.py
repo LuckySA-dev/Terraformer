@@ -221,6 +221,15 @@ class AutoModeRequiresAcknowledgmentError(AppError):
     default_message = "Confirm the risk before enabling Auto mode"
 
 
+class AutoApplyLimitReachedError(AppError):
+    code = "auto_apply_limit_reached"
+    status_code = 409
+    default_message = (
+        "This chat reached its Auto-mode apply limit. Switch back to Confirm and "
+        "apply the remaining changes yourself, or start a new chat."
+    )
+
+
 class BlockedCommandError(AppError):
     code = "blocked_command"
     status_code = 422

@@ -3,8 +3,8 @@ import cytoscape from 'cytoscape';
 import type { LayoutOptions, PresetLayoutOptions, StylesheetJson } from 'cytoscape';
 import fcose from 'cytoscape-fcose';
 import type { FcoseLayoutOptions } from 'cytoscape-fcose';
-import { Network, RefreshCw, Trash2 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { Bot, Network, RefreshCw, Trash2 } from 'lucide-react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { api } from '../../api/network';
 import { AppState, QueryErrorState } from '../../components/ui/AppState';
 import { Badge } from '../../components/ui/Badge';
@@ -18,6 +18,13 @@ import {
   TOPOLOGY_POSITIONS_KEY,
 } from './topology';
 import type { TopologyElement } from './topology';
+import { DEVICE_ROLES, deviceIcon } from './deviceIcons';
+
+const AssistantChatPanel = lazy(() =>
+  import('../assistant/AssistantChatPanel').then((module) => ({
+    default: module.AssistantChatPanel,
+  })),
+);
 
 cytoscape.use(fcose);
 
@@ -29,83 +36,103 @@ cytoscape.use(fcose);
 function buildTopologyStyle(dark: boolean): StylesheetJson {
   const c = dark
     ? {
-        node: '#8b9c97',
-        nodeBorder: '#151f22',
         text: '#e6ecea',
         textBg: '#151f22',
         registered: '#3fbfa5',
         unreachable: '#f08a8f',
-        observed: '#151f22',
-        observedBorder: '#7d8b90',
-        edge: '#4a5c57',
+        observedFill: '#5c6b70',
+        observedBorder: '#9aa8ad',
+        iconInk: '#0d1416',
+        edge: '#5b706b',
         edgeText: '#9aa8ad',
         edgeTextBg: '#111a1c',
         lldp: '#8891c9',
         manual: '#d99a3f',
       }
     : {
-        node: '#71817d',
-        nodeBorder: '#ffffff',
         text: '#24312f',
         textBg: '#ffffff',
-        registered: '#196b5b',
+        registered: '#1c8a74',
         unreachable: '#ba4650',
-        observed: '#ffffff',
-        observedBorder: '#7c8d89',
-        edge: '#8fa6a0',
+        observedFill: '#9fb0ab',
+        observedBorder: '#5f716c',
+        iconInk: '#ffffff',
+        edge: '#7e968f',
         edgeText: '#556762',
         edgeTextBg: '#f7faf9',
         lldp: '#7180b9',
         manual: '#b17b24',
       };
+  // One image per role x tint. Built once per theme rather than per node so a
+  // 200-node graph does not re-encode the same SVG 200 times.
+  const iconFor = (tint: string) =>
+    Object.fromEntries(
+      DEVICE_ROLES.map((role) => [role, deviceIcon(role, tint, c.iconInk)]),
+    ) as Record<(typeof DEVICE_ROLES)[number], string>;
+  const registeredIcons = iconFor(c.registered);
+  const unreachableIcons = iconFor(c.unreachable);
+  const observedIcons = iconFor(c.observedFill);
+
+  const roleRules = (
+    icons: Record<(typeof DEVICE_ROLES)[number], string>,
+    qualifier: string,
+  ): StylesheetJson =>
+    DEVICE_ROLES.map((role) => ({
+      selector: `node[role = "${role}"]${qualifier}`,
+      style: { 'background-image': icons[role] },
+    }));
+
   return [
     {
       selector: 'node',
       style: {
         label: 'data(label)',
-        'background-color': c.node,
-        'border-color': c.nodeBorder,
-        'border-width': 3,
+        // The glyph is the node; the box behind it stays out of the way so
+        // the silhouette reads the way it does in EVE-NG or GNS3.
+        'background-color': 'transparent',
+        'background-opacity': 0,
+        'background-fit': 'contain',
+        'background-clip': 'none',
+        'background-image-containment': 'over',
+        'border-width': 0,
+        shape: 'rectangle',
         color: c.text,
         'font-size': 10,
         'font-weight': 700,
         'text-background-color': c.textBg,
-        'text-background-opacity': 0.9,
+        'text-background-opacity': 0.92,
         'text-background-padding': '3px',
-        'text-margin-y': 10,
+        'text-background-shape': 'roundrectangle',
+        'text-margin-y': 6,
         'text-valign': 'bottom',
         'text-wrap': 'wrap',
-        'text-max-width': '80px',
-        height: 34,
-        width: 34,
+        'text-max-width': '92px',
+        height: 40,
+        width: 52,
       },
     },
-    {
-      selector: 'node[kind = "registered"]',
-      style: {
-        'background-color': c.registered,
-        height: 42,
-        width: 42,
-      },
-    },
-    {
-      selector: 'node[status = "unreachable"]',
-      style: { 'background-color': c.unreachable },
-    },
+    ...roleRules(registeredIcons, '[kind = "registered"]'),
+    ...roleRules(observedIcons, '[kind = "observed"]'),
+    // Ordered after the kind rules so an unreachable registered device wins.
+    ...roleRules(unreachableIcons, '[status = "unreachable"]'),
     {
       selector: 'node[kind = "observed"]',
       style: {
-        'background-color': c.observed,
-        'border-color': c.observedBorder,
-        'border-style': 'dashed',
-        'border-width': 2,
+        // Evidence, not inventory: dimmer and italic-feeling, so it never
+        // reads as a device the operator actually registered.
+        opacity: 0.85,
+        color: c.observedBorder,
       },
     },
     {
       selector: 'node.is-selected',
       style: {
+        'border-width': 3,
         'border-color': c.manual,
-        'border-width': 5,
+        'border-opacity': 1,
+        shape: 'roundrectangle',
+        'background-color': c.manual,
+        'background-opacity': 0.14,
         'font-size': 12,
         'z-index': 20,
       },
@@ -113,36 +140,62 @@ function buildTopologyStyle(dark: boolean): StylesheetJson {
     {
       selector: 'edge',
       style: {
-        label: 'data(label)',
-        width: 2,
+        width: 2.5,
         'line-color': c.edge,
-        'target-arrow-color': c.edge,
-        'target-arrow-shape': 'triangle',
+        // A cable between two boxes, not an arrow: CDP/LLDP adjacency is
+        // mutual, and the arrowhead implied a direction that does not exist.
+        'target-arrow-shape': 'none',
+        'source-arrow-shape': 'none',
         'curve-style': 'bezier',
+        // Port names sit at the end of the cable they belong to -- which is
+        // how a patch schedule reads, and it stops two ports being mistaken
+        // for one label floating mid-span.
+        'source-label': 'data(sourcePort)',
+        'target-label': 'data(targetPort)',
+        'source-text-offset': 26,
+        'target-text-offset': 26,
         color: c.edgeText,
-        'font-size': 8,
+        'font-size': 7,
+        'font-weight': 600,
         'text-background-color': c.edgeTextBg,
-        'text-background-opacity': 1,
+        'text-background-opacity': 0.95,
         'text-background-padding': '2px',
+        'text-background-shape': 'roundrectangle',
         'text-rotation': 'autorotate',
-        // Drop link labels once they would render too small to read, so a
+        // Drop port labels once they would render too small to read, so a
         // zoomed-out view shows topology shape instead of a wall of text.
         'min-zoomed-font-size': 7,
       },
     },
     {
       selector: 'edge[protocol = "lldp"]',
-      style: {
-        'line-color': c.lldp,
-        'target-arrow-color': c.lldp,
-      },
+      style: { 'line-color': c.lldp, 'line-style': 'dashed', 'line-dash-pattern': [7, 3] },
     },
     {
       selector: 'edge[protocol = "manual"]',
       style: {
         'line-color': c.manual,
-        'line-style': 'dashed',
-        'target-arrow-color': c.manual,
+        'line-style': 'dotted',
+        width: 2,
+        label: 'data(label)',
+        'text-rotation': 'autorotate',
+      },
+    },
+    {
+      // Both ends registered means the link is corroborated from inventory on
+      // each side, so it earns a heavier line than a one-sided sighting.
+      // Expressed as a data selector rather than a class applied after build:
+      // it then survives a rebuild with no extra imperative pass.
+      selector: 'edge[?verified]',
+      style: { width: 3.5 },
+    },
+    {
+      selector: 'edge.is-incident',
+      style: {
+        'line-color': c.manual,
+        'z-index': 15,
+        width: 4,
+        'font-size': 9,
       },
     },
   ];
@@ -156,8 +209,8 @@ function graphSignature(elements: TopologyElement[]): string {
   return elements
     .map((element) =>
       element.group === 'nodes'
-        ? `n:${element.data.id}:${element.data.label}:${element.data.kind}:${element.data.status}`
-        : `e:${element.data.id}:${element.data.source}:${element.data.target}:${element.data.label}`,
+        ? `n:${element.data.id}:${element.data.label}:${element.data.kind}:${element.data.role}:${element.data.status}`
+        : `e:${element.data.id}:${element.data.source}:${element.data.target}:${element.data.label}:${String(element.data.verified)}`,
     )
     .join('|');
 }
@@ -214,8 +267,18 @@ function TopologyCanvas({
           // effect — it's what actually keeps labels from overlapping.
           quality: 'proof',
           nodeDimensionsIncludeLabels: true,
-          nodeSeparation: 90,
-          idealEdgeLength: 100,
+          // Roomier than the defaults: the icons are wider than the old dots
+          // and each cable now carries a port label at both ends, so a tight
+          // layout put text on top of text.
+          nodeSeparation: 140,
+          idealEdgeLength: 170,
+          // Keeps access-layer nodes from being flung far from their uplink,
+          // which is what made the old graph read as a ring rather than a
+          // hierarchy.
+          gravity: 0.4,
+          gravityRange: 3.2,
+          nestingFactor: 0.2,
+          numIter: 3500,
         };
     const graph = cytoscape({
       container: container.current,
@@ -261,9 +324,14 @@ function TopologyCanvas({
   useEffect(() => {
     const graph = graphRef.current;
     if (graph === null) return;
+    graph.elements('.is-incident').removeClass('is-incident');
     graph.nodes('.is-selected').removeClass('is-selected');
     if (selectedDeviceId !== undefined) {
-      graph.getElementById(`device:${selectedDeviceId}`).addClass('is-selected');
+      const node = graph.getElementById(`device:${selectedDeviceId}`);
+      node.addClass('is-selected');
+      // Light up that device's cables too: on a dense graph, finding which
+      // links belong to the node you just tapped is the actual question.
+      node.connectedEdges().addClass('is-incident');
     }
   }, [selectedDeviceId, signature]);
 
@@ -291,6 +359,7 @@ export function TopologyPage({ onFocusDevice }: TopologyPageProps) {
   const [showLldp, setShowLldp] = useState(true);
   const [registeredOnly, setRegisteredOnly] = useState(false);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>();
+  const [assistantOpen, setAssistantOpen] = useState(false);
   const refreshInterval = refreshSeconds === 0 ? false : refreshSeconds * 1_000;
   const devices = useQuery({
     queryKey: ['devices'],
@@ -420,6 +489,7 @@ export function TopologyPage({ onFocusDevice }: TopologyPageProps) {
                 <span><i className="topology-line topology-line--cdp" /> CDP</span>
                 <span><i className="topology-line topology-line--lldp" /> LLDP</span>
                 <span><i className="topology-line topology-line--manual" /> Unverified link</span>
+                <span className="topology-legend__note">Thicker line = seen from both ends</span>
               </div>
               <div className="topology-filters">
                 <label className="usb-console-echo">
@@ -516,6 +586,33 @@ export function TopologyPage({ onFocusDevice }: TopologyPageProps) {
             Drag nodes to save positions in this browser. Observed nodes remain evidence, not inventory records.
             Manual links stay local and are always labeled UNVERIFIED.
           </p>
+        </section>
+        <section className="topology-panel topology-assistant">
+          <div className="topology-toolbar">
+            <div>
+              <h2>Ask about the whole network</h2>
+              <span>Workspace-wide chat -- separate from every per-device conversation</span>
+            </div>
+            <Button size="small" onClick={() => setAssistantOpen(!assistantOpen)}>
+              <Bot size={13} /> {assistantOpen ? 'Hide assistant' : 'Open assistant'}
+            </Button>
+          </div>
+          {assistantOpen ? (
+            <div className="topology-assistant__body">
+              <Suspense
+                fallback={
+                  <AppState
+                    kind="loading"
+                    title="Loading assistant"
+                    message="Preparing the workspace chat…"
+                    compact
+                  />
+                }
+              >
+                <AssistantChatPanel scopeHint="This chat spans the whole workspace, so you can ask it to compare devices or reason across the topology. It is kept separate from the per-device conversations in each device's Assistant tab. Ask it to look a device up by name and it will find the right one." />
+              </Suspense>
+            </div>
+          ) : null}
         </section>
       </main>
       {selectedDevice === null ? null : (

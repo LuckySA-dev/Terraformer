@@ -18,12 +18,19 @@ import type { Device, DeviceNeighbor } from '../src/types/api';
 const graph = vi.hoisted(() => {
   // Array-like so the drag handler's .map() works, with the class helpers the
   // selection effect calls on a cytoscape collection.
-  const collection = () =>
-    Object.assign([] as unknown[], { addClass: vi.fn(), removeClass: vi.fn() });
+  const collection = (): unknown =>
+    Object.assign([] as unknown[], {
+      addClass: vi.fn(),
+      removeClass: vi.fn(),
+      // Selecting a device also highlights its cables, so the double has to
+      // offer the same traversal the real collection does.
+      connectedEdges: vi.fn(() => collection()),
+    });
   return {
     create: vi.fn(),
     destroy: vi.fn(),
     nodes: vi.fn(() => collection()),
+    elements: vi.fn(() => collection()),
     getElementById: vi.fn(() => collection()),
     on: vi.fn(),
   };
@@ -97,6 +104,7 @@ describe('TopologyPage read-only projection', () => {
     graph.create.mockReturnValue({
       destroy: graph.destroy,
       nodes: graph.nodes,
+      elements: graph.elements,
       on: graph.on,
       getElementById: graph.getElementById,
     });

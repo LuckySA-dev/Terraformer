@@ -347,7 +347,9 @@ export type ChangeType =
   /** Targets a VLAN id; creates the VLAN when it does not exist yet. */
   | 'vlan_name'
   /** Targets an interface; moves that access port into a VLAN. */
-  | 'interface_access_vlan';
+  | 'interface_access_vlan'
+  /** Global: renames the device. `target` carries no meaning for it. */
+  | 'hostname';
 export type SafetyLevel = 'D' | 'C';
 export type ChangePlanSource = 'manual' | 'ai_generated';
 

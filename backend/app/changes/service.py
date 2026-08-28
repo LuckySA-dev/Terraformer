@@ -58,6 +58,8 @@ def _post_check_ok(step: ChangeStep, context: ChangeContext) -> bool:
     left dynamic mode all return a clean prompt. Failing here is what drives
     the rollback.
     """
+    if step.change_type is ChangeType.HOSTNAME:
+        return context.hostname == step.desired_value
     if step.change_type is ChangeType.VLAN_NAME:
         vlan = context.vlan(int(step.target))
         return vlan is not None and vlan.name == step.desired_value
@@ -132,7 +134,11 @@ class ChangeService:
             ),
             operation=ConnectionOperation.STRUCTURED_READ,
         ) as parameters:
-            interfaces = driver.get_interfaces(parameters)
+            is_global = change_type is ChangeType.HOSTNAME
+            # A global change touches no port, so reading every interface for
+            # it would be an extra command on the device for nothing.
+            interfaces = [] if is_global else driver.get_interfaces(parameters)
+            current_hostname = driver.get_facts(parameters).hostname if is_global else None
             # Only read the VLAN database when a VLAN change needs it: it is
             # an extra command on the device, and an interface description
             # has no use for it.
@@ -141,10 +147,10 @@ class ChangeService:
         # A VLAN rename targets the VLAN database, not a port, so there is no
         # interface to look up and its absence is not an error.
         current = next((iface for iface in interfaces if iface.name == target), None)
-        if current is None and change_type is not ChangeType.VLAN_NAME:
+        if current is None and change_type not in (ChangeType.VLAN_NAME, ChangeType.HOSTNAME):
             raise NotFoundError(f"Interface {target} was not found on this device")
 
-        context = ChangeContext(interface=current, vlans=vlans)
+        context = ChangeContext(interface=current, vlans=vlans, hostname=current_hostname)
         step = ChangeStepIntent(change_type=change_type, target=target, desired_value=desired_value)
         rendered = driver.render_change(step, context)
         issues = driver.validate_change(step, context)
@@ -215,14 +221,21 @@ class ChangeService:
                 operation=ConnectionOperation.STRUCTURED_WRITE,
             ) as parameters:
                 driver.apply_configuration(parameters, rendered_commands)
-                interfaces = driver.get_interfaces(parameters)
+                is_global = step.change_type is ChangeType.HOSTNAME
+                # A global change touches no port, so reading every interface
+                # back for it would be an extra command on the device for
+                # nothing. Its post-check reads the hostname instead.
+                interfaces = [] if is_global else driver.get_interfaces(parameters)
+                post_hostname = driver.get_facts(parameters).hostname if is_global else None
                 vlans = (
                     tuple(driver.get_vlans(parameters))
                     if _needs_vlans(step.change_type)
                     else ()
                 )
             current = next((iface for iface in interfaces if iface.name == step.target), None)
-            if not _post_check_ok(step, ChangeContext(interface=current, vlans=vlans)):
+            if not _post_check_ok(
+                step, ChangeContext(interface=current, vlans=vlans, hostname=post_hostname)
+            ):
                 raise AppError("Post-check did not confirm the applied change")
         except AppError as error:
             return self._attempt_rollback(plan, device, driver, inverse_commands, error.code)

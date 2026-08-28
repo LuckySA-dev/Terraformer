@@ -3993,3 +3993,105 @@ p {
   max-width: 100%;
   flex: 1 1 150px;
 }
+
+/* Interface table and its editor, inside the config window */
+
+.interface-table-wrap {
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.interface-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10px;
+}
+
+.interface-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 7px 9px;
+  color: var(--muted-2);
+  background: var(--surface-soft);
+  font-size: 7px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-align: left;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border);
+}
+
+.interface-table td {
+  padding: 6px 9px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.interface-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.interface-table tbody tr:hover {
+  background: var(--surface-soft);
+}
+
+.interface-table__empty {
+  color: var(--muted-2);
+}
+
+.interface-editor {
+  display: grid;
+  gap: 11px;
+}
+
+.interface-editor__head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--border);
+}
+
+.interface-editor__head strong {
+  font-size: 12px;
+}
+
+/* Each field previews on its own, so the button belongs on the field's row
+   rather than at the foot of the form. */
+.interface-editor__field {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+}
+
+.interface-editor__field > .field {
+  flex: 1;
+  min-width: 0;
+}
+
+.interface-editor__field > .button {
+  margin-top: 17px;
+  flex: none;
+}
+
+.interface-editor__field--readonly {
+  padding: 9px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.interface-editor__field--readonly p {
+  margin: 3px 0 4px;
+  font-size: 11px;
+}
+
+.field__label-text {
+  display: block;
+  color: var(--ink);
+  font-size: 9px;
+  font-weight: 700;
+}

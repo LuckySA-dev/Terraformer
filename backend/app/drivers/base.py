@@ -154,6 +154,9 @@ class ChangeContext:
 
     interface: InterfaceFacts | None = None
     vlans: tuple[VlanFacts, ...] = ()
+    # What the device currently calls itself. Only a global change needs it,
+    # and it is the sole source for that change's inverse.
+    hostname: str | None = None
 
     def access_vlan_of(self, interface_name: str) -> VlanFacts | None:
         """Which VLAN currently holds this access port, per the device."""

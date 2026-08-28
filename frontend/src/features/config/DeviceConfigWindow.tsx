@@ -8,6 +8,7 @@ import { Button } from '../../components/ui/Button';
 import { InputField, SelectField } from '../../components/ui/FormField';
 import type { ChangePlan, Device } from '../../types/api';
 import { ChangePlanCard } from '../inventory/ChangePlanCard';
+import { InterfaceEditor, type StagedChange } from './InterfaceEditor';
 import {
   CONFIG_SECTIONS,
   FIRST_AVAILABLE_ENTRY,
@@ -53,20 +54,23 @@ export function DeviceConfigWindow({
     retry: false,
   });
   const preview = useMutation({
-    mutationFn: () => {
-      // Unreachable through the UI -- an unavailable entry renders no form --
-      // but the guard keeps that a property of this function rather than of
-      // the markup that happens to call it.
-      if (!entry.available) throw new Error('This capability is not implemented.');
-      return api.previewChange({
+    mutationFn: (staged: StagedChange) =>
+      api.previewChange({
         device_id: device.id,
-        change_type: entry.changeType,
-        target,
-        desired_value: desiredValue,
-      });
-    },
+        change_type: staged.changeType,
+        target: staged.target,
+        desired_value: staged.desiredValue,
+      }),
     onSuccess: setPlan,
   });
+
+  const previewSimple = () => {
+    // Unreachable through the UI -- an unavailable entry renders no form --
+    // but the guard keeps that a property of this function rather than of
+    // the markup that happens to call it.
+    if (!entry.available || entry.kind === 'interface-editor') return;
+    preview.mutate({ changeType: entry.changeType, target, desiredValue });
+  };
   const apply = useMutation({
     mutationFn: (planId: string) => api.applyChangePlan(planId),
     onSuccess: () => {
@@ -103,6 +107,67 @@ export function DeviceConfigWindow({
           title="Structured configuration unavailable"
           message="This driver has no verified apply capability for this vendor yet."
         />
+      );
+    }
+    if (entry.kind === 'interface-editor') {
+      return (
+        <div className="config-window__form">
+          <InterfaceEditor
+            interfaces={interfaces.data ?? []}
+            loading={interfaces.isPending}
+            previewBusy={preview.isPending}
+            onDirty={resetPlan}
+            onPreview={(staged) => preview.mutate(staged)}
+          />
+          {preview.error === null ? null : (
+            <div className="form-error" role="alert">{preview.error.message}</div>
+          )}
+          {plan === null ? null : (
+            <ChangePlanCard
+              plan={plan}
+              onApply={(planId) => apply.mutate(planId)}
+              applyBusy={apply.isPending}
+              applyError={apply.error?.message}
+              applySuccess={apply.isSuccess}
+            />
+          )}
+        </div>
+      );
+    }
+    if (entry.kind === 'global-text') {
+      return (
+        <div className="config-window__form">
+          <InputField
+            label={entry.valueLabel}
+            value={desiredValue}
+            onChange={(event) => {
+              setDesiredValue(event.target.value);
+              resetPlan();
+            }}
+            placeholder={entry.placeholder}
+            hint={entry.hint}
+          />
+          <Button
+            size="small"
+            onClick={previewSimple}
+            busy={preview.isPending}
+            disabled={desiredValue.trim() === ''}
+          >
+            <Settings2 size={14} /> Preview
+          </Button>
+          {preview.error === null ? null : (
+            <div className="form-error" role="alert">{preview.error.message}</div>
+          )}
+          {plan === null ? null : (
+            <ChangePlanCard
+              plan={plan}
+              onApply={(planId) => apply.mutate(planId)}
+              applyBusy={apply.isPending}
+              applyError={apply.error?.message}
+              applySuccess={apply.isSuccess}
+            />
+          )}
+        </div>
       );
     }
     return (
@@ -185,7 +250,7 @@ export function DeviceConfigWindow({
         )}
         <Button
           size="small"
-          onClick={() => preview.mutate()}
+          onClick={previewSimple}
           busy={preview.isPending}
           disabled={target === '' || desiredValue === ''}
         >

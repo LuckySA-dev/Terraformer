@@ -20,6 +20,12 @@ def classify_risk(
 ) -> ChangeRisk:
     if change_type is ChangeType.INTERFACE_ADMIN_STATE and desired_value == "down":
         return ChangeRisk.HIGH
+    # Renaming the device drops no frame. It has to be checked before the
+    # shared "live interface" rule below, because a global change carries no
+    # interface state and would otherwise fall through to whatever the
+    # unrelated `current_*` arguments happen to hold.
+    if change_type is ChangeType.HOSTNAME:
+        return ChangeRisk.LOW
     # Renaming a VLAN is a label change in the VLAN database: it moves no
     # port and drops no frame, so it stays LOW even on a busy switch. Note
     # this covers naming an existing or new VLAN only -- there is no delete.

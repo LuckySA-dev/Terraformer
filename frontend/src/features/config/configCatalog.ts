@@ -26,16 +26,41 @@ export const CONFIG_SECTIONS: readonly ConfigSection[] = [
   { id: 'routing', label: 'Routing' },
 ];
 
-/** An entry the backend can execute today. */
-interface AvailableEntry {
+/** A single change type rendered by the generic target/value form. */
+interface SimpleEntry {
   id: string;
   section: ConfigSectionId;
   label: string;
   available: true;
+  kind?: undefined;
   changeType: ChangeType;
   /** The change targets a named interface rather than a global or VLAN id. */
   targetsInterface: boolean;
 }
+
+/** An entry with a purpose-built screen instead of the generic form. */
+interface CustomEntry {
+  id: string;
+  section: ConfigSectionId;
+  label: string;
+  available: true;
+  kind: 'interface-editor';
+}
+
+/** A change that targets the device itself: one value, no target to pick. */
+interface GlobalTextEntry {
+  id: string;
+  section: ConfigSectionId;
+  label: string;
+  available: true;
+  kind: 'global-text';
+  changeType: ChangeType;
+  valueLabel: string;
+  placeholder: string;
+  hint: string;
+}
+
+type AvailableEntry = SimpleEntry | CustomEntry | GlobalTextEntry;
 
 /** A declared-but-unbuilt entry. Rendered disabled, never submittable. */
 interface UnavailableEntry {
@@ -58,8 +83,29 @@ export const CONFIG_ENTRIES: readonly ConfigEntry[] = [
     id: 'hostname',
     section: 'global',
     label: 'Hostname',
+    available: true,
+    kind: 'global-text',
+    changeType: 'hostname',
+    valueLabel: 'Hostname',
+    placeholder: 'SW2-ACCESS',
+    hint: 'Starts with a letter; letters, digits and hyphens only. Rollback restores the name the device reports now.',
+  },
+  {
+    id: 'save-config',
+    section: 'global',
+    label: 'Save running-config',
     available: false,
-    reason: planned('It needs a global (non-interface) change type in the apply pipeline.'),
+    reason:
+      'Not implemented. Unlike every other entry here it has no inverse -- once startup-config ' +
+      'is overwritten there is nothing to roll back to -- so it does not fit the Level C ' +
+      'preview/apply/rollback pipeline and needs its own decision first.',
+  },
+  {
+    id: 'no-domain-lookup',
+    section: 'global',
+    label: 'Domain lookup',
+    available: false,
+    reason: planned('It is a global toggle rather than a value, so it needs a boolean change shape.'),
   },
   {
     id: 'vlan-database',
@@ -70,38 +116,15 @@ export const CONFIG_ENTRIES: readonly ConfigEntry[] = [
     targetsInterface: false,
   },
   {
-    id: 'interface-description',
+    // Description, port status and access VLAN were three entries that each
+    // opened an empty form, so changing one field meant knowing the current
+    // value and retyping it. They are one screen now: pick the port from the
+    // table, and every field starts on what the device reported.
+    id: 'interfaces',
     section: 'interface',
-    label: 'Description',
+    label: 'Interfaces',
     available: true,
-    changeType: 'interface_description',
-    targetsInterface: true,
-  },
-  {
-    id: 'interface-admin-state',
-    section: 'interface',
-    label: 'Port status',
-    available: true,
-    changeType: 'interface_admin_state',
-    targetsInterface: true,
-  },
-  {
-    id: 'interface-access-vlan',
-    section: 'interface',
-    label: 'Access VLAN',
-    available: true,
-    changeType: 'interface_access_vlan',
-    targetsInterface: true,
-  },
-  {
-    id: 'interface-ip',
-    section: 'interface',
-    label: 'IP address / SVI',
-    available: false,
-    reason: planned(
-      'Changing the address a device is managed on can cut the session that is applying it, ' +
-      'so it needs its own guard before it is offered.',
-    ),
+    kind: 'interface-editor',
   },
   {
     id: 'interface-trunk',

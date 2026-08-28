@@ -25,8 +25,14 @@ const STAGE_LABELS: Record<Stage, string> = {
 // Extra guidance for causes whose generic message sends operators down the
 // wrong path. Keyed by the backend error code.
 const EXTRA_GUIDANCE: Record<string, string> = {
+  // Two different failures share this code, and only one of them has a fix on
+  // this side. Raising the mode is useless once the device is already on Very
+  // Old SSH, and the real floor is 768 bits, not 1024: OpenSSH 9.1+ refuses a
+  // smaller RSA host key and will not accept RequiredRSASize below 768, so a
+  // 512-bit key (Catalyst 2960/2960-X, ISR 1941) cannot be reached by any
+  // client setting. That one has to be fixed on the device.
   legacy_ssh_negotiation_failed:
-    'This is not a password problem. The device offers only algorithms this client disables by default. Raise the SSH compatibility mode, and if it is a Catalyst 2960/2960-X or ISR 1941, check whether its RSA host key is smaller than 1024 bits.',
+    'This is not a password problem. Either the device offers only algorithms this client disables by default -- raise the SSH compatibility mode -- or its RSA host key is too small for this SSH client. Below 768 bits no client setting can help: on the device run "crypto key generate rsa modulus 2048" (it replaces the key, so the pin has to be re-inspected afterwards).',
   device_connection_refused:
     'Nothing is listening on that port. On GNS3/EVE-NG the console port is usually not 22, and SSH often has to be enabled on the node first.',
   device_name_resolution_failed:

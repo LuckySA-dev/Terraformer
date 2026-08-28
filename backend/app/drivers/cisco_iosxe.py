@@ -153,7 +153,12 @@ class CiscoIOSXEDriver(DeviceDriver):
     _VLAN_ID_MIN = 1
     _VLAN_ID_MAX = 4094
 
+    _HOSTNAME_MAX_LENGTH = 63
+    _HOSTNAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9-]*$")
+
     def render_change(self, step: ChangeStepIntent, context: ChangeContext) -> RenderedChange:
+        if step.change_type is ChangeType.HOSTNAME:
+            return self._render_hostname(step, context)
         if step.change_type is ChangeType.VLAN_NAME:
             return self._render_vlan_name(step, context)
         if step.change_type is ChangeType.INTERFACE_ACCESS_VLAN:
@@ -186,6 +191,18 @@ class CiscoIOSXEDriver(DeviceDriver):
                 ),
             )
         self._unsupported(DriverCapability.RENDER)
+
+    def _render_hostname(self, step: ChangeStepIntent, context: ChangeContext) -> RenderedChange:
+        previous = context.hostname
+        # Without a readable current hostname there is no inverse to roll back
+        # to, and a Level C change with no inverse is not one this pipeline is
+        # allowed to stage.
+        if not previous:
+            self._unsupported(DriverCapability.RENDER)
+        return RenderedChange(
+            commands=(f"hostname {step.desired_value}",),
+            inverse_commands=(f"hostname {previous}",),
+        )
 
     def _render_vlan_name(self, step: ChangeStepIntent, context: ChangeContext) -> RenderedChange:
         vlan_id = int(step.target)
@@ -224,6 +241,8 @@ class CiscoIOSXEDriver(DeviceDriver):
 
     def validate_change(self, step: ChangeStepIntent, context: ChangeContext) -> list[str]:
         issues: list[str] = []
+        if step.change_type is ChangeType.HOSTNAME:
+            return self._validate_hostname(step)
         if step.change_type is ChangeType.VLAN_NAME:
             return self._validate_vlan_name(step)
         if step.change_type is ChangeType.INTERFACE_ACCESS_VLAN:
@@ -248,6 +267,22 @@ class CiscoIOSXEDriver(DeviceDriver):
         elif step.change_type is ChangeType.INTERFACE_ADMIN_STATE:
             if step.desired_value not in ("up", "down"):
                 issues.append("admin state must be 'up' or 'down'")
+        return issues
+
+    def _validate_hostname(self, step: ChangeStepIntent) -> list[str]:
+        issues: list[str] = []
+        name = step.desired_value
+        if len(name) > self._HOSTNAME_MAX_LENGTH:
+            issues.append(f"hostname must be {self._HOSTNAME_MAX_LENGTH} characters or fewer")
+        # Same reasoning as a description: this is interpolated into one config
+        # line that is split back apart at apply time, so anything outside a
+        # bare word could smuggle a second command into a vetted batch. IOS is
+        # stricter than that anyway -- a hostname starts with a letter and
+        # carries only letters, digits and hyphens.
+        if not self._HOSTNAME_PATTERN.match(name):
+            issues.append(
+                "hostname must start with a letter and contain only letters, digits and hyphens"
+            )
         return issues
 
     def _validate_vlan_name(self, step: ChangeStepIntent) -> list[str]:

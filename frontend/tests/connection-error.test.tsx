@@ -32,7 +32,11 @@ describe('ConnectionError', () => {
     );
 
     expect(screen.getByText(/not a password problem/)).toBeVisible();
-    expect(screen.getByText(/RSA host key is smaller than 1024 bits/)).toBeVisible();
+    // Names the floor a client setting cannot get under, and the device-side
+    // fix -- telling an operator already on Very Old SSH to "raise the mode"
+    // sent them down a path with no end.
+    expect(screen.getByText(/Below 768 bits no client setting can help/)).toBeVisible();
+    expect(screen.getByText(/crypto key generate rsa modulus 2048/)).toBeVisible();
   });
 
   it('shows the backend recommended action verbatim', () => {

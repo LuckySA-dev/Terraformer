@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Lock, Settings2, Terminal, Undo2, X } from 'lucide-react';
+import { Check, Lock, Save, Settings2, Terminal, Undo2, X } from 'lucide-react';
 import { useState } from 'react';
 import { api } from '../../api/network';
 import { AppState, InlineNotice } from '../../components/ui/AppState';
@@ -68,7 +68,10 @@ export function DeviceConfigWindow({
     // Unreachable through the UI -- an unavailable entry renders no form --
     // but the guard keeps that a property of this function rather than of
     // the markup that happens to call it.
-    if (!entry.available || entry.kind === 'interface-editor') return;
+    // Both the generic target/value form and the global one-value form go
+    // through here; the interface editor and save action stage their own.
+    if (!entry.available) return;
+    if (entry.kind !== undefined && entry.kind !== 'global-text') return;
     preview.mutate({ changeType: entry.changeType, target, desiredValue });
   };
   const apply = useMutation({
@@ -76,6 +79,10 @@ export function DeviceConfigWindow({
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['change-plans', device.id] });
     },
+  });
+
+  const saveConfig = useMutation({
+    mutationFn: () => api.saveRunningConfig(device.id),
   });
 
   const canApply = device.capabilities.some((item) => item.name === 'apply' && item.supported);
@@ -130,6 +137,35 @@ export function DeviceConfigWindow({
               applyError={apply.error?.message}
               applySuccess={apply.isSuccess}
             />
+          )}
+        </div>
+      );
+    }
+    if (entry.kind === 'save-config') {
+      return (
+        <div className="config-window__form">
+          <InlineNotice tone="warning" title="No preview, and no way back">
+            This writes the running configuration over startup-config. It changes nothing that is
+            running now -- what it changes is that the current state survives a reload, which is
+            the recovery path you would otherwise still have. The previous startup-config is gone
+            once this succeeds, so there is nothing to roll back and no plan to review first.
+          </InlineNotice>
+          <Button
+            size="small"
+            variant="danger"
+            busy={saveConfig.isPending}
+            onClick={() => saveConfig.mutate()}
+          >
+            <Save size={14} /> Write to startup-config
+          </Button>
+          {saveConfig.error === null ? null : (
+            <div className="form-error" role="alert">{saveConfig.error.message}</div>
+          )}
+          {!saveConfig.isSuccess ? null : (
+            <div className="mini-result mini-result--success" role="status">
+              <Check size={14} />
+              <span>The device confirmed the save.</span>
+            </div>
           )}
         </div>
       );

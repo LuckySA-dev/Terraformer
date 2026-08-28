@@ -28,6 +28,11 @@ class DriverCapability(StrEnum):
     APPLY = "apply"
     POST_CHECK = "post_check"
     ROLLBACK = "rollback"
+    # Persists running-config to startup-config. A write, but not a change:
+    # it alters no running state, has no inverse, and is an exec command
+    # rather than a configuration one -- so it is its own capability instead
+    # of a ChangeType.
+    SAVE_CONFIG = "save_config"
 
 
 class DiagnosticAction(StrEnum):
@@ -55,6 +60,7 @@ WRITE_CAPABILITIES = frozenset(
         DriverCapability.APPLY,
         DriverCapability.POST_CHECK,
         DriverCapability.ROLLBACK,
+        DriverCapability.SAVE_CONFIG,
     }
 )
 
@@ -267,6 +273,10 @@ class DeviceDriver(ABC):
     def apply_configuration(self, parameters: ConnectionParameters, commands: list[str]) -> None:
         del parameters, commands
         self._unsupported(DriverCapability.APPLY)
+
+    def save_configuration(self, parameters: ConnectionParameters) -> str:
+        """Persist running-config to startup-config; returns the device's reply."""
+        self._unsupported(DriverCapability.SAVE_CONFIG)
 
     def rollback(self, parameters: ConnectionParameters, commands: list[str]) -> None:
         del parameters, commands

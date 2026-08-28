@@ -69,6 +69,7 @@ class CiscoIOSXEDriver(DeviceDriver):
                     DriverCapability.APPLY,
                     DriverCapability.POST_CHECK,
                     DriverCapability.ROLLBACK,
+                    DriverCapability.SAVE_CONFIG,
                 }
             ),
             safety_level=SafetyLevel.BEST_EFFORT,
@@ -332,6 +333,23 @@ class CiscoIOSXEDriver(DeviceDriver):
 
     def apply_configuration(self, parameters: ConnectionParameters, commands: list[str]) -> None:
         self._config(parameters, commands)
+
+    # IOS answers a successful save with "[OK]" and reports any failure with a
+    # line starting "%". Both are checked: a save that silently did nothing is
+    # the failure mode that matters, since the operator would otherwise
+    # believe the configuration survives a reload.
+    _SAVE_OK = "[OK]"
+
+    def save_configuration(self, parameters: ConnectionParameters) -> str:
+        # `write memory` is an exec command, not a configuration one, so it
+        # cannot go through _config()'s `configure terminal` wrapper.
+        output = self._command(parameters, "write memory")
+        cleaned = output.replace("\r\n", "\n")
+        if any(line.lstrip().startswith("%") for line in cleaned.splitlines()):
+            raise ValueError("The device rejected the save command")
+        if self._SAVE_OK not in cleaned:
+            raise ValueError("The device did not confirm the save")
+        return cleaned
 
     def rollback(self, parameters: ConnectionParameters, commands: list[str]) -> None:
         self._config(parameters, commands)

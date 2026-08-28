@@ -20,11 +20,12 @@ from app.core.errors import (
     ChangeValidationError,
     ChangeVendorUnsupportedError,
     NotFoundError,
+    UnsupportedCapabilityError,
 )
 from app.core.logging import sanitize_text
 from app.core.time import utc_now
 from app.drivers import DeviceDriver, DriverRegistry
-from app.drivers.base import ChangeContext
+from app.drivers.base import ChangeContext, DriverCapability
 from app.models import (
     ChangePlan,
     ChangePlanSource,
@@ -107,6 +108,53 @@ class ChangeService:
         self._snapshots = snapshots
         self._changes = ChangeRepository(session)
         self._devices = DeviceRepository(session)
+
+    def save_running_config(self, device_id: UUID) -> dict[str, object]:
+        """Persist running-config to startup-config on one device.
+
+        Deliberately not a ChangeType. A Change Plan's safety story is that
+        every step carries the commands that undo it, and this has no inverse:
+        once startup-config is overwritten the previous one is gone. It also
+        alters no running state -- what it changes is whether the current
+        state survives a reload, which is exactly the recovery path an
+        operator would otherwise still have. So it is its own explicit
+        operation, confirmed on its own, rather than a step that could ride
+        along inside a plan.
+
+        Verification is the device's own acknowledgement of the command, not
+        an independent read-back of startup-config: IOS prints "[OK]" and
+        reports failures with "%". That is weaker than the post-check a
+        Change Plan gets, and is why this is reported rather than rolled back.
+        """
+        device = self._devices.get(device_id)
+        if device.vendor not in _SUPPORTED_VENDORS:
+            raise ChangeVendorUnsupportedError()
+        driver = self._drivers.get(device.vendor)
+        if not driver.capabilities.supports(DriverCapability.SAVE_CONFIG):
+            raise UnsupportedCapabilityError(
+                "This driver cannot save the running configuration",
+                details={"vendor": device.vendor.value},
+            )
+        with self._device_service.admitted_connection(
+            device_id=device.id,
+            host=device.management_address,
+            port=device.port,
+            profile_id=device.credential_profile_id,
+            vendor=device.vendor,
+            compatibility=device.ssh_compatibility,
+            group1_risk_acknowledged=(
+                device.ssh_compatibility is SSHCompatibility.CISCO_LEGACY_GROUP1
+            ),
+            operation=ConnectionOperation.STRUCTURED_WRITE,
+        ) as parameters:
+            try:
+                driver.save_configuration(parameters)
+            except ValueError as error:
+                # The device's own words are not echoed back: they can quote
+                # configuration text. Only the fact of the failure travels.
+                raise AppError("The device did not confirm the save") from error
+
+        return {"device_id": str(device.id), "saved": True}
 
     def preview(
         self,

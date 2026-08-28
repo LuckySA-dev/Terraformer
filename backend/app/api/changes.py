@@ -87,6 +87,22 @@ def preview_change(
     )
 
 
+@router.post("/save-config/{device_id}")
+def save_running_config(
+    device_id: UUID,
+    _auth: Authenticated,
+    session: SessionDependency,
+    container: ContainerDependency,
+):
+    """Persist running-config to startup-config.
+
+    On this router because it shares the structured-writes kill switch, but
+    it creates no Change Plan: there is nothing to preview and nothing to
+    roll back. See ChangeService.save_running_config.
+    """
+    return _service(session, container).save_running_config(device_id)
+
+
 @router.get("/{change_plan_id}", response_model=ChangePlanView)
 def get_change_plan(
     change_plan_id: UUID,

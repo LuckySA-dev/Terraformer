@@ -60,7 +60,16 @@ interface GlobalTextEntry {
   hint: string;
 }
 
-type AvailableEntry = SimpleEntry | CustomEntry | GlobalTextEntry;
+/** An action that runs on its own, with no plan to preview first. */
+interface ActionEntry {
+  id: string;
+  section: ConfigSectionId;
+  label: string;
+  available: true;
+  kind: 'save-config';
+}
+
+type AvailableEntry = SimpleEntry | CustomEntry | GlobalTextEntry | ActionEntry;
 
 /** A declared-but-unbuilt entry. Rendered disabled, never submittable. */
 interface UnavailableEntry {
@@ -94,11 +103,8 @@ export const CONFIG_ENTRIES: readonly ConfigEntry[] = [
     id: 'save-config',
     section: 'global',
     label: 'Save running-config',
-    available: false,
-    reason:
-      'Not implemented. Unlike every other entry here it has no inverse -- once startup-config ' +
-      'is overwritten there is nothing to roll back to -- so it does not fit the Level C ' +
-      'preview/apply/rollback pipeline and needs its own decision first.',
+    available: true,
+    kind: 'save-config',
   },
   {
     id: 'no-domain-lookup',

@@ -12,6 +12,7 @@ vi.mock('../src/api/network', () => ({
     interfaces: vi.fn(),
     previewChange: vi.fn(),
     applyChangePlan: vi.fn(),
+    saveRunningConfig: vi.fn(),
   },
 }));
 
@@ -317,15 +318,36 @@ describe('Global configuration', () => {
     expect(await screen.findByLabelText('Rollback commands')).toHaveTextContent('hostname SW2');
   });
 
-  it('keeps saving the running-config declared rather than offered', async () => {
+  it('saves the running-config as its own action, with no plan to preview', async () => {
     const user = userEvent.setup();
+    vi.mocked(api.saveRunningConfig).mockResolvedValue({ device_id: device.id, saved: true });
     renderWindow();
 
     await user.click(screen.getByRole('button', { name: /Save running-config/ }));
 
-    // It is the one entry with no inverse, so it cannot go through a pipeline
-    // whose safety story is "we can put it back".
-    expect(await screen.findByText(/no inverse/)).toBeVisible();
-    expect(screen.queryByRole('button', { name: /Preview/ })).not.toBeInTheDocument();
+    // It has no inverse, so it must not pretend to be a reviewable plan.
+    expect(await screen.findByText(/nothing to roll back/)).toBeVisible();
+    expect(screen.queryByRole('button', { name: /^Preview/ })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /Write to startup-config/ }));
+    await waitFor(() => expect(api.saveRunningConfig).toHaveBeenCalledWith(device.id));
+    expect(api.previewChange).not.toHaveBeenCalled();
+    expect(await screen.findByText('The device confirmed the save.')).toBeVisible();
+  });
+
+  it('reports a save the device did not confirm instead of showing success', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.saveRunningConfig).mockRejectedValue(
+      new Error('The device did not confirm the save'),
+    );
+    renderWindow();
+
+    await user.click(screen.getByRole('button', { name: /Save running-config/ }));
+    await user.click(screen.getByRole('button', { name: /Write to startup-config/ }));
+
+    // Believing a silent failure is exactly the outcome that matters here:
+    // the operator would think the config survives a reload.
+    expect(await screen.findByRole('alert')).toHaveTextContent('did not confirm');
+    expect(screen.queryByText('The device confirmed the save.')).not.toBeInTheDocument();
   });
 });

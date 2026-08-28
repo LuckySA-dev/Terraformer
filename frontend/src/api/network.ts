@@ -194,6 +194,12 @@ export const api = {
     target: string;
     desired_value: string;
   }) => apiRequest<ChangePlan>('/change-plans', { method: 'POST', body: json(input) }),
+  /** Persists running-config to startup-config. Creates no Change Plan. */
+  saveRunningConfig: (deviceId: string) =>
+    apiRequest<{ device_id: string; saved: boolean }>(
+      `/change-plans/save-config/${encodeURIComponent(deviceId)}`,
+      { method: 'POST' },
+    ),
   listChangePlans: (deviceId: string) =>
     apiRequest<ChangePlan[]>(`/change-plans?device_id=${encodeURIComponent(deviceId)}`),
   applyChangePlan: (id: string, assistantSessionId?: string) =>

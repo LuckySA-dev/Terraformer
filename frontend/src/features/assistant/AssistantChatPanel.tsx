@@ -302,12 +302,17 @@ export function AssistantChatPanel({
         />
       ) : (
         <div className="assistant-panel__blank">
-          <AppState
-            kind="empty"
-            title={hasKey ? 'Ask anything' : 'Add a provider key to start'}
-            message={hasKey ? scopeHint : 'The assistant proxies to a provider you supply. Pick "Manage provider keys" in the model menu below and paste an API key -- this app never runs or bundles a model.'}
-            compact
-          />
+          {/* The card keeps a readable width of its own: the band around it
+              fills the page so the empty state stays centred rather than
+              pinned to the top-left of a wide window. */}
+          <div className="assistant-page__blank-inner">
+            <AppState
+              kind="empty"
+              title={hasKey ? 'Ask anything' : 'Add a provider key to start'}
+              message={hasKey ? scopeHint : 'The assistant proxies to a provider you supply. Pick "Manage provider keys" in the model menu below and paste an API key -- this app never runs or bundles a model.'}
+              compact
+            />
+          </div>
         </div>
       )}
       {createSession.error === null ? null : (

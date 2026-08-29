@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import type { InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from 'react';
 
 interface FieldShellProps {
@@ -35,7 +36,12 @@ interface InputFieldProps extends InputHTMLAttributes<HTMLInputElement> {
 }
 
 export function InputField({ label, error, hint, action, id, className = '', ...props }: InputFieldProps) {
-  const inputId = id ?? props.name ?? label.toLowerCase().replaceAll(' ', '-');
+  // Unique per instance rather than derived from the label. Several config
+  // windows can be open at once, and each renders its own "Hostname" field:
+  // deriving the id put two of them in the document, which is invalid HTML
+  // and made a label focus the other window's input.
+  const generatedId = useId();
+  const inputId = id ?? generatedId;
   return (
     <FieldShell
       label={label}
@@ -72,7 +78,12 @@ export function SelectField({
   children,
   ...props
 }: SelectFieldProps) {
-  const inputId = id ?? props.name ?? label.toLowerCase().replaceAll(' ', '-');
+  // Unique per instance rather than derived from the label. Several config
+  // windows can be open at once, and each renders its own "Hostname" field:
+  // deriving the id put two of them in the document, which is invalid HTML
+  // and made a label focus the other window's input.
+  const generatedId = useId();
+  const inputId = id ?? generatedId;
   return (
     <FieldShell
       label={label}

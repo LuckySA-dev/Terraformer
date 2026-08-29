@@ -52,6 +52,8 @@ vi.mock('../src/api/network', () => ({
     interfaces: vi.fn(),
     snapshots: vi.fn(),
     events: vi.fn(),
+    // The config window polls this for the outcome of an apply.
+    listChangePlans: vi.fn(),
   },
 }));
 
@@ -126,6 +128,7 @@ describe('TopologyPage read-only projection', () => {
     vi.mocked(api.interfaces).mockResolvedValue([]);
     vi.mocked(api.snapshots).mockResolvedValue([]);
     vi.mocked(api.events).mockResolvedValue([]);
+    vi.mocked(api.listChangePlans).mockResolvedValue([]);
   });
 
   const tapNode = (nodeId: string) => {
@@ -378,8 +381,15 @@ describe('TopologyPage read-only projection', () => {
   });
 
   describe('configuring several devices at once', () => {
+    // The shared fixture advertises no capabilities, so its config window would
+    // only ever render "no verified apply capability" and never a form.
+    const configurable = {
+      capabilities: [{ name: 'apply', supported: true, safety_level: 'C' as const }],
+    };
+    const first: Device = { ...device, ...configurable };
     const second: Device = {
       ...device,
+      ...configurable,
       id: '5f7837b9-4bf2-49ab-8205-c9acbf15a31d',
       name: 'SW2',
       management_address: '192.0.2.11',
@@ -399,7 +409,7 @@ describe('TopologyPage read-only projection', () => {
     };
 
     const openBoth = async () => {
-      vi.mocked(api.devices).mockResolvedValue([device, second]);
+      vi.mocked(api.devices).mockResolvedValue([first, second]);
       vi.mocked(api.neighbors).mockResolvedValue([]);
       render(<TopologyPage />, { wrapper: TestProviders });
       expect(await screen.findByRole('heading', { name: 'Network topology' })).toBeVisible();
@@ -439,6 +449,110 @@ describe('TopologyPage read-only projection', () => {
       const first = screen.getByRole('dialog', { name: `Configure ${device.name}` });
       const latest = screen.getByRole('dialog', { name: 'Configure SW2' });
       expect(Number(first.style.zIndex)).toBeGreaterThan(Number(latest.style.zIndex));
+    });
+
+    it('keeps each window reading only its own device', async () => {
+      await openBoth();
+
+      // Two windows share a query cache. A key that collided would show one
+      // device's change history and interfaces under the other's name.
+      expect(api.listChangePlans).toHaveBeenCalledWith(device.id);
+      expect(api.listChangePlans).toHaveBeenCalledWith(second.id);
+      expect(api.interfaces).toHaveBeenCalledWith(device.id);
+      expect(api.interfaces).toHaveBeenCalledWith(second.id);
+    });
+
+    it('stops opening windows once the cap is reached, dropping the oldest', async () => {
+      const many = Array.from({ length: 8 }, (_, index) => ({
+        ...device,
+        id: `9f1d3a2b-0000-4000-8000-0000000001${String(index).padStart(2, '0')}`,
+        name: `SW${String(index)}`,
+      }));
+      vi.mocked(api.devices).mockResolvedValue(many);
+      vi.mocked(api.neighbors).mockResolvedValue([]);
+      render(<TopologyPage />, { wrapper: TestProviders });
+      expect(await screen.findByRole('heading', { name: 'Network topology' })).toBeVisible();
+
+      for (const item of many) await openWindowFor(item.id);
+
+      // Unbounded, the cascade walks off screen and the stacking order climbs
+      // into the layer the menus use.
+      const open = screen.getAllByRole('dialog', { name: /^Configure SW/ });
+      expect(open).toHaveLength(6);
+      // The two least recently opened are the ones gone.
+      expect(screen.queryByRole('dialog', { name: 'Configure SW0' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('dialog', { name: 'Configure SW1' })).not.toBeInTheDocument();
+      expect(screen.getByRole('dialog', { name: 'Configure SW7' })).toBeVisible();
+      for (const dialog of open) {
+        expect(Number(dialog.style.zIndex)).toBeLessThan(70);
+      }
+    });
+
+    it('re-focusing an old window saves it from being dropped', async () => {
+      const many = Array.from({ length: 6 }, (_, index) => ({
+        ...device,
+        id: `9f1d3a2b-0000-4000-8000-0000000002${String(index).padStart(2, '0')}`,
+        name: `SW${String(index)}`,
+      }));
+      const extra = { ...device, id: '9f1d3a2b-0000-4000-8000-000000000299', name: 'SW9' };
+      vi.mocked(api.devices).mockResolvedValue([...many, extra]);
+      vi.mocked(api.neighbors).mockResolvedValue([]);
+      render(<TopologyPage />, { wrapper: TestProviders });
+      expect(await screen.findByRole('heading', { name: 'Network topology' })).toBeVisible();
+
+      for (const item of many) await openWindowFor(item.id);
+      // Touching the oldest makes it the newest, so the next one over the cap
+      // takes the window that has actually been idle longest instead.
+      await act(async () => {
+        fireEvent.pointerDown(screen.getByRole('dialog', { name: 'Configure SW0' }));
+        await Promise.resolve();
+      });
+      await openWindowFor(extra.id);
+
+      expect(screen.getByRole('dialog', { name: 'Configure SW0' })).toBeVisible();
+      expect(screen.queryByRole('dialog', { name: 'Configure SW1' })).not.toBeInTheDocument();
+    });
+
+    it('keeps what is typed in a window when another one is raised', async () => {
+      const user = userEvent.setup();
+      await openBoth();
+
+      const first = await screen.findByRole('dialog', { name: `Configure ${device.name}` });
+      await user.click(within(first).getByRole('button', { name: /Hostname/ }));
+      await user.type(within(first).getByLabelText('Hostname'), 'SW1-CORE');
+
+      // Raising reorders the list, which re-renders every window. Unkeyed,
+      // React would match them by position and hand one window's state to
+      // another -- the half-typed change would move or vanish.
+      const other = screen.getByRole('dialog', { name: 'Configure SW2' });
+      await act(async () => {
+        fireEvent.pointerDown(other);
+        await Promise.resolve();
+      });
+
+      const stillFirst = screen.getByRole('dialog', { name: `Configure ${device.name}` });
+      expect(within(stillFirst).getByLabelText('Hostname')).toHaveValue('SW1-CORE');
+      // SW2 opens on the same entry, so it has a Hostname field of its own --
+      // it must be empty. Both windows rendered a field whose id was derived
+      // from the label, so the document held two elements with the same id and
+      // a label bound to whichever came first.
+      expect(within(other).getByLabelText('Hostname')).toHaveValue('');
+    });
+
+    it('does not move a window when the stacking order changes', async () => {
+      await openBoth();
+      const first = await screen.findByRole('dialog', { name: `Configure ${device.name}` });
+      const before = { left: first.style.left, top: first.style.top };
+
+      await act(async () => {
+        fireEvent.pointerDown(first);
+        await Promise.resolve();
+      });
+
+      // Windows cascade by their position in the list, so a window that got
+      // reordered would jump across the screen under the pointer.
+      const after = screen.getByRole('dialog', { name: `Configure ${device.name}` });
+      expect({ left: after.style.left, top: after.style.top }).toEqual(before);
     });
 
     it('closes one window without touching the other', async () => {

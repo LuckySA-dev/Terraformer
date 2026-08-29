@@ -26,6 +26,15 @@ const AssistantSidebar = lazy(() =>
   })),
 );
 
+/**
+ * How many device config windows may be open at once.
+ *
+ * Chosen so the cascade stays on screen and the stacking order (60 + index)
+ * stays below the 70 the menus use and the 100 the modals use. Generous enough
+ * that reaching it is a deliberate act rather than an accident.
+ */
+const MAX_CONFIG_WINDOWS = 6;
+
 const DeviceConfigWindow = lazy(() =>
   import('../config/DeviceConfigWindow').then((module) => ({
     default: module.DeviceConfigWindow,
@@ -504,10 +513,13 @@ export function TopologyPage({ onFocusDevice }: TopologyPageProps) {
   );
   /** Opens a window, or raises the one already open for that device. */
   const openConfigWindow = (deviceId: string) => {
-    setConfiguringDeviceIds((current) => [
-      ...current.filter((id) => id !== deviceId),
-      deviceId,
-    ]);
+    setConfiguringDeviceIds((current) =>
+      // Least recently focused goes when the cap is reached. Unbounded, a
+      // handful of double-clicks put windows off the side of the screen, gave
+      // each one its own poller and a terminal, and walked the stacking order
+      // (60 + index) up into the layer the menus and dialogs use.
+      [...current.filter((id) => id !== deviceId), deviceId].slice(-MAX_CONFIG_WINDOWS),
+    );
   };
   const raiseConfigWindow = (deviceId: string) => {
     setConfiguringDeviceIds((current) =>

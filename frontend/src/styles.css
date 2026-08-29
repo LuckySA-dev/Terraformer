@@ -3655,6 +3655,48 @@ p {
   height: 100%;
 }
 
+/* Packet Tracer splits a device between a Config screen and a CLI; these are
+   those two screens. The CLI is not a change type, so it sits beside the
+   category tree rather than inside it. */
+.config-window__tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-soft);
+}
+
+.config-window__tabs > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.config-window__tabs > button:hover {
+  color: var(--ink);
+}
+
+.config-window__tabs > button.is-active {
+  color: var(--teal-dark);
+  border-bottom-color: var(--teal);
+}
+
+.config-window__cli {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 16px 16px;
+}
+
 .config-window__mode {
   padding: 0 16px 10px;
 }

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { api } from '../src/api/network';
@@ -27,6 +27,7 @@ const graph = vi.hoisted(() => {
       connectedEdges: vi.fn(() => collection()),
     });
   return {
+    collection,
     create: vi.fn(),
     destroy: vi.fn(),
     nodes: vi.fn(() => collection()),
@@ -107,6 +108,10 @@ describe('TopologyPage read-only projection', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    // clearAllMocks drops recorded calls but keeps a mockReturnValue, so a test
+    // that swaps `nodes` for a bare array would otherwise strip the collection
+    // helpers from every test that ran after it.
+    graph.nodes.mockImplementation(() => graph.collection());
     graph.create.mockReturnValue({
       destroy: graph.destroy,
       nodes: graph.nodes,
@@ -370,5 +375,83 @@ describe('TopologyPage read-only projection', () => {
 
     expect(links).toEqual([manual]);
     expect(edge?.data).toMatchObject({ label: 'UNVERIFIED', protocol: 'manual' });
+  });
+
+  describe('configuring several devices at once', () => {
+    const second: Device = {
+      ...device,
+      id: '5f7837b9-4bf2-49ab-8205-c9acbf15a31d',
+      name: 'SW2',
+      management_address: '192.0.2.11',
+    };
+
+    /** Fires the node double-tap the page registers on the graph. */
+    const openWindowFor = async (deviceId: string) => {
+      const registration = graph.on.mock.calls.find(
+        (call) => call[0] === 'dbltap' && call[1] === 'node',
+      );
+      if (registration === undefined) throw new Error('no dbltap handler was registered');
+      const handler = registration[2] as (event: unknown) => void;
+      await act(async () => {
+        handler({ target: { id: () => `device:${deviceId}` } });
+        await Promise.resolve();
+      });
+    };
+
+    const openBoth = async () => {
+      vi.mocked(api.devices).mockResolvedValue([device, second]);
+      vi.mocked(api.neighbors).mockResolvedValue([]);
+      render(<TopologyPage />, { wrapper: TestProviders });
+      expect(await screen.findByRole('heading', { name: 'Network topology' })).toBeVisible();
+      await openWindowFor(device.id);
+      await openWindowFor(second.id);
+    };
+
+    it('keeps both windows open rather than replacing the first', async () => {
+      await openBoth();
+      // Packet Tracer lets several devices be configured side by side, so
+      // opening SW2 must not close the window already on the first device.
+      expect(
+        await screen.findByRole('dialog', { name: `Configure ${device.name}` }),
+      ).toBeVisible();
+      expect(await screen.findByRole('dialog', { name: 'Configure SW2' })).toBeVisible();
+    });
+
+    it('raises the window that was pressed last', async () => {
+      await openBoth();
+      const first = await screen.findByRole('dialog', { name: `Configure ${device.name}` });
+      const latest = await screen.findByRole('dialog', { name: 'Configure SW2' });
+      // Opened second, so it starts on top.
+      expect(Number(latest.style.zIndex)).toBeGreaterThan(Number(first.style.zIndex));
+
+      await act(async () => {
+        fireEvent.pointerDown(first);
+        await Promise.resolve();
+      });
+      expect(Number(first.style.zIndex)).toBeGreaterThan(Number(latest.style.zIndex));
+    });
+
+    it('re-opening a device already on screen raises it instead of duplicating it', async () => {
+      await openBoth();
+      await openWindowFor(device.id);
+
+      expect(screen.getAllByRole('dialog', { name: `Configure ${device.name}` })).toHaveLength(1);
+      const first = screen.getByRole('dialog', { name: `Configure ${device.name}` });
+      const latest = screen.getByRole('dialog', { name: 'Configure SW2' });
+      expect(Number(first.style.zIndex)).toBeGreaterThan(Number(latest.style.zIndex));
+    });
+
+    it('closes one window without touching the other', async () => {
+      const user = userEvent.setup();
+      await openBoth();
+
+      const latest = await screen.findByRole('dialog', { name: 'Configure SW2' });
+      await user.click(
+        within(latest).getByRole('button', { name: 'Close configuration window' }),
+      );
+
+      expect(screen.queryByRole('dialog', { name: 'Configure SW2' })).not.toBeInTheDocument();
+      expect(screen.getByRole('dialog', { name: `Configure ${device.name}` })).toBeVisible();
+    });
   });
 });

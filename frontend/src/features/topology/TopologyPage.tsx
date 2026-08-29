@@ -403,7 +403,13 @@ export function TopologyPage({ onFocusDevice }: TopologyPageProps) {
   const [showLldp, setShowLldp] = useState(true);
   const [registeredOnly, setRegisteredOnly] = useState(false);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>();
-  const [configuringDeviceId, setConfiguringDeviceId] = useState<string>();
+  /**
+   * Every device with a config window open, oldest first. Packet Tracer lets
+   * several devices be configured at once, so this is a list rather than one
+   * id -- and its order is the stacking order, so the window last pressed is
+   * the one on top.
+   */
+  const [configuringDeviceIds, setConfiguringDeviceIds] = useState<string[]>([]);
   const [assistantOpen, setAssistantOpen] = useState(false);
 
   // One right rail, shared: the inspector and the assistant are mutually
@@ -492,8 +498,24 @@ export function TopologyPage({ onFocusDevice }: TopologyPageProps) {
     localStorage.setItem(TOPOLOGY_MANUAL_LINKS_KEY, JSON.stringify(links));
   };
   const selectedDevice = devices.data.find((device) => device.id === selectedDeviceId) ?? null;
-  const configuringDevice =
-    devices.data.find((device) => device.id === configuringDeviceId) ?? null;
+  // Windows for devices that have since been deleted drop out on their own.
+  const configuringDevices = configuringDeviceIds.flatMap(
+    (id) => devices.data.find((device) => device.id === id) ?? [],
+  );
+  /** Opens a window, or raises the one already open for that device. */
+  const openConfigWindow = (deviceId: string) => {
+    setConfiguringDeviceIds((current) => [
+      ...current.filter((id) => id !== deviceId),
+      deviceId,
+    ]);
+  };
+  const raiseConfigWindow = (deviceId: string) => {
+    setConfiguringDeviceIds((current) =>
+      current.at(-1) === deviceId
+        ? current
+        : [...current.filter((id) => id !== deviceId), deviceId],
+    );
+  };
   // Editing or deleting isn't built for this page — hand off to Inventory,
   // which already owns the device mutation and safety-gate wiring, rather
   // than duplicating it here for a second entry point.
@@ -637,7 +659,7 @@ export function TopologyPage({ onFocusDevice }: TopologyPageProps) {
               setAssistantOpen(false);
               setSelectedDeviceId(id);
             }}
-            onNodeConfigure={setConfiguringDeviceId}
+            onNodeConfigure={openConfigWindow}
             selectedDeviceId={selectedDeviceId}
           />
           <p className="topology-note">
@@ -675,15 +697,20 @@ export function TopologyPage({ onFocusDevice }: TopologyPageProps) {
           onDelete={focusInInventory}
         />
       )}
-      {configuringDevice === null ? null : (
-        <Suspense fallback={null}>
+      {configuringDevices.map((device, index) => (
+        <Suspense key={device.id} fallback={null}>
           <DeviceConfigWindow
-            key={configuringDevice.id}
-            device={configuringDevice}
-            onClose={() => setConfiguringDeviceId(undefined)}
+            device={device}
+            // Cascaded so a second window does not land exactly on the first.
+            initialPosition={{ x: 132 + index * 28, y: 78 + index * 28 }}
+            zIndex={60 + index}
+            onFocus={() => raiseConfigWindow(device.id)}
+            onClose={() =>
+              setConfiguringDeviceIds((current) => current.filter((id) => id !== device.id))
+            }
           />
         </Suspense>
-      )}
+      ))}
     </div>
   );
 }

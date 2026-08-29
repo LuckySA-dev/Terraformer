@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Lock, Save, Settings2, ShieldCheck, Terminal, Undo2, X, Zap } from 'lucide-react';
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import { api } from '../../api/network';
 import { AppState, InlineNotice } from '../../components/ui/AppState';
 import { Badge, type BadgeTone } from '../../components/ui/Badge';
@@ -18,6 +18,14 @@ import {
   type ConfigEntry,
 } from './configCatalog';
 import { useDraggableWindow } from './useDraggableWindow';
+
+// Direct Mode already is a real CLI against the device, warning gate and
+// all, so the CLI tab mounts the same panel the inspector uses rather than
+// growing a second way to reach a shell. Lazy because it pulls the terminal
+// bundle, which a window opened only to change a VLAN never needs.
+const TerminalPanel = lazy(() =>
+  import('../inventory/TerminalPanel').then((module) => ({ default: module.TerminalPanel })),
+);
 
 /**
  * Auto sends the change the moment it renders; Confirm stages the plan and
@@ -75,6 +83,13 @@ interface DeviceConfigWindowProps {
   onClose: () => void;
   /** Overridable so a test can place the window deterministically. */
   initialPosition?: { x: number; y: number };
+  /**
+   * Stacking order among the open windows. Several devices can be configured
+   * side by side, so the one last interacted with has to paint on top.
+   */
+  zIndex?: number;
+  /** Raises this window above the others. Fired on any pointer press in it. */
+  onFocus?: () => void;
 }
 
 /** Splits the stored newline-joined command text into displayable lines. */
@@ -88,6 +103,8 @@ export function DeviceConfigWindow({
   device,
   onClose,
   initialPosition,
+  zIndex,
+  onFocus,
 }: DeviceConfigWindowProps) {
   const queryClient = useQueryClient();
   const [entryId, setEntryId] = useState(FIRST_AVAILABLE_ENTRY.id);
@@ -95,6 +112,10 @@ export function DeviceConfigWindow({
   const [desiredValue, setDesiredValue] = useState('');
   const [plan, setPlan] = useState<ChangePlan | null>(null);
   const [applyMode, setApplyMode] = useState<ApplyMode>('auto');
+  // Packet Tracer splits a device between a Config screen and a CLI; this is
+  // that split. The CLI is not a change type, so it belongs beside the tree
+  // rather than inside it.
+  const [tab, setTab] = useState<'config' | 'cli'>('config');
   const { position, frameRef, dragHandlers } = useDraggableWindow(
     initialPosition ?? { x: 132, y: 78 },
   );
@@ -430,7 +451,8 @@ export function DeviceConfigWindow({
     <div
       ref={frameRef as React.RefObject<HTMLDivElement>}
       className="config-window"
-      style={{ left: position.x, top: position.y }}
+      style={{ left: position.x, top: position.y, ...(zIndex === undefined ? {} : { zIndex }) }}
+      onPointerDown={onFocus}
       role="dialog"
       aria-label={`Configure ${device.name}`}
     >
@@ -449,6 +471,47 @@ export function DeviceConfigWindow({
           <X size={15} />
         </button>
       </header>
+
+      <div className="config-window__tabs" role="tablist" aria-label="Device screens">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'config'}
+          className={tab === 'config' ? 'is-active' : ''}
+          onClick={() => setTab('config')}
+        >
+          <Settings2 size={12} /> Config
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'cli'}
+          className={tab === 'cli' ? 'is-active' : ''}
+          onClick={() => setTab('cli')}
+        >
+          <Terminal size={12} /> CLI
+        </button>
+      </div>
+
+      {tab === 'cli' ? (
+        <div className="config-window__cli">
+          <Suspense fallback={<AppState
+                kind="loading"
+                title="Loading terminal"
+                message="Fetching the Direct Mode console."
+                compact
+              />}>
+            <TerminalPanel
+              deviceId={device.id}
+              {...(device.ssh_compatibility === undefined
+                ? {}
+                : { sshCompatibility: device.ssh_compatibility })}
+              consoleTransport={device.console_transport}
+            />
+          </Suspense>
+        </div>
+      ) : (
+      <>
 
       <div className="mode-toggle config-window__mode">
         <span className="mode-toggle__label">On submit</span>
@@ -546,6 +609,8 @@ export function DeviceConfigWindow({
           </>
         )}
       </footer>
+      </>
+      )}
     </div>
   );
 }

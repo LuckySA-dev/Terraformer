@@ -7,6 +7,14 @@ import { DeviceConfigWindow } from '../src/features/config/DeviceConfigWindow';
 import { CONFIG_ENTRIES } from '../src/features/config/configCatalog';
 import type { ChangePlan, Device, Job } from '../src/types/api';
 
+// The terminal itself is covered by terminal-panel.test.tsx; here the subject
+// is the window's tab, so the panel is stubbed to keep xterm out of it.
+vi.mock('../src/features/inventory/TerminalPanel', () => ({
+  TerminalPanel: ({ deviceId }: { deviceId: string }) => (
+    <div data-testid="terminal-panel">{`terminal for ${deviceId}`}</div>
+  ),
+}));
+
 vi.mock('../src/api/network', () => ({
   api: {
     interfaces: vi.fn(),
@@ -384,6 +392,32 @@ describe('Packet Tracer-style device config window', () => {
     for (const entry of CONFIG_ENTRIES.filter((item) => item.section === 'routing')) {
       expect(entry.available).toBe(true);
     }
+  });
+
+  it('opens a CLI on the same device, on its own tab', async () => {
+    const user = userEvent.setup();
+    renderWindow();
+
+    // Packet Tracer splits a device between a Config screen and a CLI. The CLI
+    // is not a change type, so it is a tab rather than a tree entry.
+    await user.click(screen.getByRole('tab', { name: /CLI/ }));
+
+    expect(await screen.findByTestId('terminal-panel')).toHaveTextContent(device.id);
+    // The change-plan surfaces belong to the Config screen and must not sit
+    // behind the terminal.
+    expect(screen.queryByLabelText('Configuration categories')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Equivalent IOS commands')).not.toBeInTheDocument();
+  });
+
+  it('returns to the config screen with its tree intact', async () => {
+    const user = userEvent.setup();
+    renderWindow();
+
+    await user.click(screen.getByRole('tab', { name: /CLI/ }));
+    await user.click(screen.getByRole('tab', { name: /Config/ }));
+
+    expect(screen.getByLabelText('Configuration categories')).toBeVisible();
+    expect(screen.queryByTestId('terminal-panel')).not.toBeInTheDocument();
   });
 
   it('offers no way to send a capability that is not implemented', async () => {

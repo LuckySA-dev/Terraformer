@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { api } from '../src/api/network';
 import { DeviceConfigWindow } from '../src/features/config/DeviceConfigWindow';
 import { CONFIG_ENTRIES } from '../src/features/config/configCatalog';
@@ -9,11 +9,16 @@ import { CHANGE_TYPES } from '../src/types/api';
 import type { ChangePlan, Device, Job } from '../src/types/api';
 
 // The terminal itself is covered by terminal-panel.test.tsx; here the subject
-// is the window's tab, so the panel is stubbed to keep xterm out of it.
+// is the window's tab, so the panel is stubbed to keep xterm out of it. The
+// stub counts mounts, because a remount is a dropped SSH session.
+const terminalMounts = vi.hoisted(() => ({ count: 0 }));
 vi.mock('../src/features/inventory/TerminalPanel', () => ({
-  TerminalPanel: ({ deviceId }: { deviceId: string }) => (
-    <div data-testid="terminal-panel">{`terminal for ${deviceId}`}</div>
-  ),
+  TerminalPanel: ({ deviceId }: { deviceId: string }) => {
+    useEffect(() => {
+      terminalMounts.count += 1;
+    }, []);
+    return <div data-testid="terminal-panel">{`terminal for ${deviceId}`}</div>;
+  },
 }));
 
 vi.mock('../src/api/network', () => ({
@@ -421,7 +426,9 @@ describe('Packet Tracer-style device config window', () => {
     await user.click(screen.getByRole('tab', { name: /Config/ }));
 
     expect(screen.getByLabelText('Configuration categories')).toBeVisible();
-    expect(screen.queryByTestId('terminal-panel')).not.toBeInTheDocument();
+    // The terminal stays mounted so its session survives, but it is out of the
+    // way -- the Config screen is what is on show.
+    expect(screen.getByTestId('terminal-panel')).not.toBeVisible();
   });
 
   it('does not carry the values of one protocol into another', async () => {
@@ -545,6 +552,23 @@ describe('Packet Tracer-style device config window', () => {
     await user.click(screen.getByRole('button', { name: /Hostname/ }));
     await user.keyboard('{Escape}');
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('does not drop the shell when the operator looks at the Config tab', async () => {
+    const user = userEvent.setup();
+    terminalMounts.count = 0;
+    renderWindow();
+
+    await user.click(screen.getByRole('tab', { name: /CLI/ }));
+    expect(await screen.findByTestId('terminal-panel')).toBeVisible();
+
+    await user.click(screen.getByRole('tab', { name: /Config/ }));
+    await user.click(screen.getByRole('tab', { name: /CLI/ }));
+
+    // Unmounting the panel closes the SSH session, so glancing at Config would
+    // lose the shell, anything half-typed in it, and require accepting the
+    // Direct Mode warning again.
+    expect(terminalMounts.count).toBe(1);
   });
 
   it('offers no way to send a capability that is not implemented', async () => {

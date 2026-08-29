@@ -362,6 +362,25 @@ describe('Direct Mode terminal', () => {
     expect(socket.sent).toContain(JSON.stringify({ type: 'resize', columns: 80, rows: 24 }));
   });
 
+  it('does not send a size for a session that is hidden', async () => {
+    const user = userEvent.setup();
+    render(<TerminalPanel deviceId="2ad0db14-5a87-4147-a4e7-c98f88322464" />);
+    await user.click(screen.getByRole('button', { name: 'I understand — open Direct Mode' }));
+    const socket = FakeWebSocket.instances[0];
+    if (socket === undefined) throw new Error('Expected an SSH WebSocket.');
+    socket.readyState = FakeWebSocket.OPEN;
+
+    // Opening a second terminal hides the first, and the config window hides
+    // its CLI whenever the Config screen is on show. A hidden terminal has no
+    // layout box, so fitting to it computes a degenerate size that would then
+    // be sent to the device as its PTY window size.
+    await user.click(screen.getByRole('button', { name: /New terminal/ }));
+    socket.sent.length = 0;
+    fireEvent(window, new Event('resize'));
+
+    expect(socket.sent.filter((frame) => frame.includes('"resize"'))).toEqual([]);
+  });
+
   it.each([
     ['malformed message', (socket: FakeWebSocket) => socket.onmessage?.({ data: 'raw socket detail' }),
       'The terminal server returned an invalid message.'],

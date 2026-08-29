@@ -697,6 +697,8 @@ class AssistantSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 class AssistantMessage(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "assistant_messages"
+    # Replay reads one conversation in order, which is exactly this index.
+    __table_args__ = (Index("ix_assistant_messages_session_sequence", "session_id", "sequence"),)
 
     session_id: Mapped[UUID] = mapped_column(
         ForeignKey("assistant_sessions.id", ondelete="CASCADE"),
@@ -708,6 +710,12 @@ class AssistantMessage(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=False,
     )
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    # Position within its own conversation. Replay order has to be exact --
+    # a tool result ahead of the assistant turn that announced it is rejected
+    # by the provider APIs -- and created_at cannot provide it: its resolution
+    # is coarse enough that consecutive inserts routinely share a value, and
+    # SQL leaves tied rows in an unspecified order.
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     tool_calls: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     tool_results: Mapped[dict[str, Any] | None] = mapped_column(JSON)
 

@@ -303,6 +303,13 @@ export function TerminalSession({
       });
       const resize = () => {
         if (token.disposed) return;
+        // A terminal that is hidden has no layout box, so fitting to it
+        // computes a degenerate size -- which then gets sent to the device as
+        // the PTY's window size and wraps its output wrongly once the terminal
+        // is shown again. Both places that hide a session use the `hidden`
+        // attribute: the inspector's inactive terminal tabs, and the config
+        // window while its Config screen is on show.
+        if (container.current?.closest('[hidden]') !== null) return;
         nextFitAddon.fit();
         transport.resize(nextTerminal.cols, nextTerminal.rows);
       };

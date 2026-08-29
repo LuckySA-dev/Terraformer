@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.errors import NotFoundError
@@ -140,6 +140,7 @@ class AssistantMessageRepository:
             session_id=session_id,
             role=role,
             content=content,
+            sequence=self._next_sequence(session_id),
             tool_calls=tool_calls,
             tool_results=tool_results,
         )
@@ -147,10 +148,26 @@ class AssistantMessageRepository:
         self._session.flush()
         return message
 
+    def _next_sequence(self, session_id: UUID) -> int:
+        """The next position in this conversation.
+
+        One conversation has one writer -- the websocket handling it -- so
+        reading the maximum and adding one cannot race with itself. Two
+        messages that somehow did collide would tie rather than corrupt, which
+        is where ordering by created_at already was.
+        """
+        highest = self._session.scalar(
+            select(func.coalesce(func.max(AssistantMessage.sequence), 0)).where(
+                AssistantMessage.session_id == session_id
+            )
+        )
+        return int(highest or 0) + 1
+
     def list_for_session(self, session_id: UUID) -> list[AssistantMessage]:
         statement = (
             select(AssistantMessage)
             .where(AssistantMessage.session_id == session_id)
-            .order_by(AssistantMessage.created_at)
+            # By sequence, not by created_at: see AssistantMessage.sequence.
+            .order_by(AssistantMessage.sequence)
         )
         return list(self._session.scalars(statement))

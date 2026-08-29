@@ -126,6 +126,9 @@ export function DeviceConfigWindow({
   // that split. The CLI is not a change type, so it belongs beside the tree
   // rather than inside it.
   const [tab, setTab] = useState<'config' | 'cli'>('config');
+  // Whether the CLI has ever been opened. Once it has, its panel stays mounted
+  // so the session survives a look at the Config tab.
+  const [cliOpened, setCliOpened] = useState(false);
   const { position, frameRef, dragHandlers } = useDraggableWindow(
     initialPosition ?? { x: 132, y: 78 },
   );
@@ -521,14 +524,23 @@ export function DeviceConfigWindow({
           role="tab"
           aria-selected={tab === 'cli'}
           className={tab === 'cli' ? 'is-active' : ''}
-          onClick={() => setTab('cli')}
+          onClick={() => {
+            setCliOpened(true);
+            setTab('cli');
+          }}
         >
           <Terminal size={12} /> CLI
         </button>
       </div>
 
-      {tab === 'cli' ? (
-        <div className="config-window__cli">
+      {/* Hidden rather than unmounted once it has been opened. Unmounting the
+          panel closes the SSH session, so glancing at the Config tab would
+          drop the shell, lose anything half-typed in it, and require accepting
+          the Direct Mode warning again to get back. Still not mounted until
+          the CLI is opened at least once, so a window used only to change a
+          VLAN never opens a session or pulls the terminal bundle. */}
+      {!cliOpened ? null : (
+        <div className="config-window__cli" hidden={tab !== 'cli'}>
           <Suspense fallback={<AppState
                 kind="loading"
                 title="Loading terminal"
@@ -544,7 +556,8 @@ export function DeviceConfigWindow({
             />
           </Suspense>
         </div>
-      ) : (
+      )}
+      {tab === 'cli' ? null : (
       <>
 
       <div className="mode-toggle config-window__mode">

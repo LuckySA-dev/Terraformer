@@ -26,12 +26,13 @@ from app.models import (
     AssistantSessionMode,
     ChangePlanSource,
     ChangeType,
+    ProviderProfile,
     ProviderType,
 )
 from app.repositories.assistant import AssistantMessageRepository, AssistantSessionRepository
 from app.repositories.provider_profiles import ProviderProfileRepository
 from app.services.devices import DeviceService
-from app.services.provider_profiles import ProviderKeyVault
+from app.services.provider_profiles import ProviderKeyMaterial, ProviderKeyVault
 
 # An agent told to investigate before it answers needs more than a couple of
 # round trips: "which ports on SW1 are down" is a list_devices then a read, and
@@ -48,6 +49,33 @@ _MAX_TOOL_CALLS_PER_TURN = 40
 # tokenizer per model family; this is a deliberate approximation used only to
 # decide when to drop the oldest turns, so erring small just trims earlier.
 _CHARS_PER_TOKEN = 4
+# Compaction runs before the conversation is actually too big. Waiting for the
+# hard limit means the turn that crosses it is the turn that fails, and a
+# summary written from an already-overflowing history is written from a
+# truncated one.
+_COMPACT_AT = 0.8
+# The tail kept verbatim through a compaction. The most recent exchanges are
+# what the operator is still talking about, and summarising the sentence they
+# just replied to reads as the assistant losing the thread.
+_KEEP_VERBATIM_MESSAGES = 6
+
+COMPACTION_INSTRUCTIONS = """Summarise this network-operations conversation so it can
+continue without the original messages.
+
+Write for the assistant that will read it, not for a person. Keep, in this order and
+only if present:
+
+1. What the operator is trying to accomplish, and any constraint they gave.
+2. Facts established about the network -- device names and ids, interfaces, VLANs,
+   addresses, what was found to be up or down. Keep exact identifiers verbatim; an
+   approximate interface name is worse than none.
+3. Changes proposed, applied, refused or rolled back, with their outcome.
+4. What was ruled out, and why. This is the part that is most expensive to rediscover.
+5. Anything still open or promised.
+
+Do not include pleasantries, restated questions, or your own commentary. Do not invent
+anything that was not in the conversation. If a fact was uncertain, say it was
+uncertain. Prefer a compact list over prose."""
 
 
 # Written as operating instructions rather than a personality: the difference
@@ -119,8 +147,13 @@ def _trim_to_context_limit(
 ) -> list[ChatMessage]:
     """Drops the oldest turns until the conversation fits the profile's limit.
 
-    Two things are never dropped. The system message, and the newest user
-    message -- the request being answered. A budget smaller than the system
+    Two things are never dropped. The leading system messages, and the newest
+    user message -- the request being answered.
+
+    Plural, because compaction adds one: the summary of the folded-away turns
+    rides at the front beside the instructions. Trimming it would undo the
+    compaction that had just been paid for, dropping the conversation's whole
+    history in the one case where it had been carefully preserved. A budget smaller than the system
     prompt plus that question used to fit nothing at all, so the model was
     asked to reply to instructions with no request attached, and answered a
     question nobody had asked. Going over a limit the operator guessed at is
@@ -135,7 +168,10 @@ def _trim_to_context_limit(
     if limit_tokens is None or not history:
         return history
     budget = limit_tokens * _CHARS_PER_TOKEN
-    system, rest = history[0], history[1:]
+    pinned_count = 0
+    while pinned_count < len(history) and history[pinned_count].role == "system":
+        pinned_count += 1
+    pinned, rest = history[:pinned_count], history[pinned_count:]
     if not rest:
         return history
 
@@ -145,7 +181,7 @@ def _trim_to_context_limit(
     )
     request = rest[request_at]
     turn, earlier = rest[request_at + 1 :], rest[:request_at]
-    used = len(system.content) + len(request.content)
+    used = sum(len(message.content) for message in pinned) + len(request.content)
 
     # This turn's work, newest first. Losing the oldest tool results of a long
     # investigation costs the model detail it has already reasoned over; losing
@@ -172,7 +208,7 @@ def _trim_to_context_limit(
         kept_earlier.reverse()
         kept_earlier = _drop_leading_orphan(kept_earlier)
 
-    return [system, *kept_earlier, request, *kept_turn]
+    return [*pinned, *kept_earlier, request, *kept_turn]
 
 
 def _announced_tool_calls(calls: list[ToolCallRequest]) -> list[dict[str, object]]:
@@ -197,7 +233,15 @@ def _to_openai_tool_calls(announced: list[dict[str, object]]) -> list[dict[str, 
 
 @dataclass(frozen=True, slots=True)
 class AssistantEvent:
-    type: Literal["token", "tool_call", "tool_result", "change_plan_proposed", "done", "error"]
+    type: Literal[
+        "token",
+        "tool_call",
+        "tool_result",
+        "change_plan_proposed",
+        "compacted",
+        "done",
+        "error",
+    ]
     content: str | None = None
     tool_name: str | None = None
     tool_payload: dict[str, object] | None = None
@@ -217,6 +261,9 @@ class AssistantChatService:
         tools: ToolDispatcher,
         changes: ChangeService | None = None,
         devices: DeviceService | None = None,
+        # How much conversation a session may carry before it is compacted,
+        # when the session itself declares no override.
+        context_limit_tokens: int = 32_000,
     ) -> None:
         self._session = session
         self._provider_client_for = provider_client_for
@@ -227,6 +274,7 @@ class AssistantChatService:
         self._tools = tools
         self._changes = changes
         self._devices = devices
+        self._context_limit_tokens = context_limit_tokens
 
     async def handle_user_message(
         self, session_id: UUID, content: str
@@ -238,11 +286,25 @@ class AssistantChatService:
         self._messages.add(session_id=session_id, role=AssistantMessageRole.USER, content=content)
         self._session.commit()
 
+        budget_tokens = chat_session.context_limit_override or self._context_limit_tokens
+        if self._needs_compaction(chat_session, budget_tokens):
+            summarised = await self._compact(chat_session, profile, material)
+            if summarised is not None:
+                yield AssistantEvent(
+                    type="compacted",
+                    content=summarised,
+                    tool_payload={"messages_folded": chat_session.summarised_message_count},
+                )
+
         history = _trim_to_context_limit(
             self._build_history(
-                session_id, chat_session.device_id, chat_session.scope_device_ids
+                session_id,
+                chat_session.device_id,
+                chat_session.scope_device_ids,
+                chat_session.summary,
+                chat_session.summarised_message_count,
             ),
-            chat_session.context_limit_override,
+            budget_tokens,
         )
         tool_schemas: list[ToolSchema] | None = (
             list(READ_ONLY_TOOLS) if chat_session.supports_tool_calling else None
@@ -273,7 +335,7 @@ class AssistantChatService:
             # whole topology can be large. Without this a long investigation
             # walks past the model's context limit mid-turn and the provider
             # rejects the request.
-            history = _trim_to_context_limit(history, chat_session.context_limit_override)
+            history = _trim_to_context_limit(history, budget_tokens)
             reply_text = ""
             pending_tool_calls: list[ToolCallRequest] = []
             async for chunk in self._provider_client_for(profile.provider_type).stream_chat(
@@ -354,6 +416,90 @@ class AssistantChatService:
         # tool calls, which a provider should not do. Ending on `done` keeps
         # the socket contract intact either way.
         yield AssistantEvent(type="done")
+
+    def _needs_compaction(self, chat_session: AssistantSession, budget_tokens: int) -> bool:
+        """Whether this turn should fold the older conversation away first.
+
+        Measured on the replayed conversation rather than a stored counter, so
+        a session compacted once and then grown again compacts again.
+        """
+        pending = self._build_history(
+            chat_session.id,
+            chat_session.device_id,
+            chat_session.scope_device_ids,
+            chat_session.summary,
+            chat_session.summarised_message_count,
+        )
+        used = sum(len(message.content) for message in pending)
+        return used > budget_tokens * _CHARS_PER_TOKEN * _COMPACT_AT
+
+    async def compact(self, session_id: UUID) -> str | None:
+        """Compacts on request, for the operator's own /compact."""
+        chat_session = self._sessions.get(session_id)
+        profile = self._profiles.get(chat_session.provider_profile_id)
+        return await self._compact(chat_session, profile, self._vault.decrypt(profile))
+
+    async def _compact(
+        self,
+        chat_session: AssistantSession,
+        profile: ProviderProfile,
+        material: ProviderKeyMaterial,
+    ) -> str | None:
+        """Folds the older half of the conversation into a summary.
+
+        The newest exchanges stay verbatim: they are what the operator is still
+        talking about, and summarising the sentence they just replied to reads
+        as the assistant losing the thread. Everything before them -- including
+        anything an earlier summary already covered -- is re-summarised
+        together, so summaries do not stack into a chain of summaries of
+        summaries.
+        """
+        stored = self._messages.list_for_session(chat_session.id)
+        fold_through = len(stored) - _KEEP_VERBATIM_MESSAGES
+        if fold_through <= chat_session.summarised_message_count:
+            # Nothing new to fold; compacting again would spend a request to
+            # rewrite the same summary.
+            return None
+
+        transcript = [
+            ChatMessage(role="system", content=COMPACTION_INSTRUCTIONS),
+            *(self._replay(message) for message in stored[:fold_through]),
+        ]
+        if chat_session.summary:
+            transcript.insert(
+                1,
+                ChatMessage(
+                    role="system",
+                    content=f"A previous summary of still older turns:\n\n{chat_session.summary}",
+                ),
+            )
+        transcript.append(
+            ChatMessage(role="user", content="Write the summary now, and nothing else.")
+        )
+
+        summary = ""
+        async for chunk in self._provider_client_for(profile.provider_type).stream_chat(
+            base_url=profile.base_url,
+            api_key=material.api_key,
+            model_id=chat_session.model_id,
+            messages=_trim_to_context_limit(
+                transcript, chat_session.context_limit_override or self._context_limit_tokens
+            ),
+            tools=None,
+        ):
+            if chunk.type == "token" and chunk.content:
+                summary += chunk.content
+        summary = summary.strip()
+        if not summary:
+            # A provider that returned nothing must not blank the summary that
+            # is already carrying the conversation.
+            return None
+
+        self._sessions.set_summary(
+            chat_session, summary=summary, message_count=fold_through
+        )
+        self._session.commit()
+        return summary
 
     @staticmethod
     def _propose_change_plan(
@@ -469,8 +615,10 @@ class AssistantChatService:
         session_id: UUID,
         device_id: UUID | None = None,
         scope_device_ids: list[str] | None = None,
+        summary: str | None = None,
+        summarised_message_count: int = 0,
     ) -> list[ChatMessage]:
-        stored = self._messages.list_for_session(session_id)
+        stored = self._messages.list_for_session(session_id)[summarised_message_count:]
         instructions = SYSTEM_INSTRUCTIONS
         if device_id is not None:
             instructions = f"{instructions}\n\n{self._device_context(device_id)}"
@@ -478,8 +626,26 @@ class AssistantChatService:
             scope = self._scope_context(scope_device_ids)
             if scope:
                 instructions = f"{instructions}\n\n{scope}"
+        # The summary is its own system message rather than being glued onto
+        # the instructions: it is conversation state, and a model reading it
+        # should be able to tell what it was told to do from what it has
+        # already found out.
+        folded = (
+            [
+                ChatMessage(
+                    role="system",
+                    content=(
+                        "Earlier turns of this conversation have been compacted. "
+                        f"What they established:\n\n{summary}"
+                    ),
+                )
+            ]
+            if summary
+            else []
+        )
         return [
             ChatMessage(role="system", content=instructions),
+            *folded,
             *(self._replay(m) for m in stored),
         ]
 

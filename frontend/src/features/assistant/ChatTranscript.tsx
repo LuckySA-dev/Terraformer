@@ -103,6 +103,16 @@ export function ChatTranscript({
             </div>
           );
         }
+        if (entry.role === 'compacted') {
+          return (
+            <details key={entry.id} className="chat-transcript__compacted">
+              <summary>
+                Earlier turns compacted — what they established is carried forward
+              </summary>
+              <p>{entry.content}</p>
+            </details>
+          );
+        }
         if (entry.role === 'tool') {
           return (
             <details key={entry.id} className="chat-transcript__entry chat-transcript__entry--tool">

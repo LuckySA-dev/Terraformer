@@ -94,6 +94,9 @@ class _Session:
     model_id = "test-model"
     supports_tool_calling = True
     context_limit_override = None
+    # Never compacted, which is what every session starts as.
+    summary = None
+    summarised_message_count = 0
     mode = AssistantSessionMode.CONFIRM
 
 

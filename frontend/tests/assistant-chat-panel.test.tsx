@@ -74,6 +74,8 @@ const session: AssistantSession = {
   supports_streaming: false,
   supports_tool_calling: true,
   auto_apply_count: 0,
+  summary: null,
+  summarised_message_count: 0,
   created_at: '2026-08-24T00:00:00Z',
   updated_at: '2026-08-24T00:00:00Z',
 };
@@ -635,5 +637,52 @@ describe('what the transcript shows while the agent works', () => {
     });
 
     expect(await screen.findByText('device_id must be a UUID')).toBeVisible();
+  });
+});
+
+
+describe('compacting a long conversation', () => {
+  const openChat = async (user: ReturnType<typeof userEvent.setup>) => {
+    vi.mocked(api.providerProfiles).mockResolvedValue([profile]);
+    vi.mocked(api.devices).mockResolvedValue([]);
+    vi.mocked(api.assistantSessions).mockResolvedValue([session]);
+    vi.mocked(api.assistantMessages).mockResolvedValue([]);
+    renderPanel(DEVICE_ID);
+    await user.selectOptions(await screen.findByLabelText('Conversation'), session.id);
+    return screen.getByLabelText('Message');
+  };
+
+  it('asks the server to compact on /compact', async () => {
+    const user = userEvent.setup();
+    const input = await openChat(user);
+
+    await user.type(input, '/compact{Enter}');
+
+    const socket = FakeWebSocket.instances.at(-1);
+    await waitFor(() =>
+      expect(
+        socket?.sent.some(
+          (frame) => (JSON.parse(frame) as Record<string, unknown>).type === 'compact',
+        ),
+      ).toBe(true),
+    );
+    // The command never becomes a message the model has to read.
+    expect(socket?.sent.some((frame) => frame.includes('/compact'))).toBe(false);
+  });
+
+  it('marks where the conversation was folded, and keeps what it established', async () => {
+    const user = userEvent.setup();
+    await openChat(user);
+
+    const socket = FakeWebSocket.instances.at(-1);
+    socket?.emitMessage({
+      type: 'compacted',
+      content: 'SW1 Gi1/0/1 was found down; VLAN 10 was ruled out.',
+    });
+
+    // A divider, not a message -- and the summary is readable, because it is
+    // what the model will be working from afterwards.
+    expect(await screen.findByText(/Earlier turns compacted/)).toBeVisible();
+    expect(screen.getByText(/VLAN 10 was ruled out/)).toBeInTheDocument();
   });
 });

@@ -294,6 +294,7 @@ async def assistant_chat(websocket: WebSocket, session_id: str) -> None:
             tools=_build_tool_dispatcher(db_session, container, devices),
             changes=changes,
             devices=devices,
+            context_limit_tokens=container.settings.assistant_context_limit_tokens,
         )
         try:
             while True:
@@ -335,6 +336,45 @@ async def assistant_chat(websocket: WebSocket, session_id: str) -> None:
                         await websocket.send_json(
                             {"type": "error", "code": exc.code, "message": str(exc)}
                         )
+                elif message_type == "compact":
+                    # The operator asking for it directly, rather than waiting
+                    # for the threshold. Same path either way.
+                    try:
+                        summary = await service.compact(session_uuid)
+                    except AIProviderConnectionError as exc:
+                        await websocket.send_json(
+                            {
+                                "type": "error",
+                                "code": "provider_unreachable",
+                                "message": (
+                                    "Could not reach the AI provider to compact this "
+                                    f"conversation. ({scrub_secret_text(str(exc))[:400]})"
+                                ),
+                            }
+                        )
+                        continue
+                    except AppError as exc:
+                        # Same reasoning as the user_message path: letting this
+                        # propagate tears down the socket, so the conversation
+                        # goes silent with nothing but "Disconnected" to
+                        # explain a compaction that simply failed.
+                        await websocket.send_json(
+                            {"type": "error", "code": exc.code, "message": str(exc)}
+                        )
+                        continue
+                    if summary is None:
+                        await websocket.send_json(
+                            {
+                                "type": "error",
+                                "code": "nothing_to_compact",
+                                "message": (
+                                    "This conversation is short enough that there is nothing "
+                                    "to fold away yet."
+                                ),
+                            }
+                        )
+                        continue
+                    await websocket.send_json({"type": "compacted", "content": summary})
                 elif message_type == "set_mode":
                     mode_value = message.get("mode")
                     risk_acknowledged = bool(message.get("risk_acknowledged", False))

@@ -681,6 +681,12 @@ class AssistantSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     auto_mode_acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     auto_apply_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # What the conversation established in the turns that have been folded
+    # away, and how many of the session's oldest messages it stands for. A
+    # count rather than a pointer: messages are only appended, and are deleted
+    # only with their session, so it is stable and cannot dangle.
+    summary: Mapped[str | None] = mapped_column(Text)
+    summarised_message_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     messages: Mapped[list[AssistantMessage]] = relationship(
         back_populates="session",

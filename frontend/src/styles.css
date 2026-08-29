@@ -3823,6 +3823,30 @@ p {
    carries a question, a change request, and a /command. */
 /* A tool call reads as one line of activity, the way a CLI agent reports what
    it is doing; the payload is behind the disclosure triangle. */
+/* A divider rather than a message: the conversation continues past it, and
+   what the folded turns established now rides in the summary. */
+.chat-transcript__compacted {
+  margin: 4px 0;
+  padding: 7px 10px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.chat-transcript__compacted > summary {
+  cursor: pointer;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.chat-transcript__compacted > p {
+  margin: 7px 0 0;
+  color: var(--ink);
+  white-space: pre-wrap;
+}
+
 .chat-transcript__entry--tool > summary {
   display: flex;
   align-items: baseline;

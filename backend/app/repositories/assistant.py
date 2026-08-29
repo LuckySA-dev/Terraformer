@@ -111,6 +111,13 @@ class AssistantSessionRepository:
             chat_session.auto_apply_count = 0
         self._session.flush()
 
+    def set_summary(
+        self, chat_session: AssistantSession, *, summary: str, message_count: int
+    ) -> None:
+        """Records what the folded-away turns established, and how many they were."""
+        chat_session.summary = summary
+        chat_session.summarised_message_count = message_count
+
     def record_auto_apply(self, chat_session: AssistantSession) -> None:
         chat_session.auto_apply_count += 1
         self._session.flush()

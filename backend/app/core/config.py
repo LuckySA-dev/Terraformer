@@ -77,6 +77,16 @@ class Settings(BaseSettings):
     # path able to change a real device outside the explicitly unguarded
     # Direct Mode terminal escape hatches. Intentional defense in depth, not
     # a missing UI shortcut.
+    # How much conversation the assistant may carry before it is compacted.
+    #
+    # No provider reports its model's context length over an OpenAI-compatible
+    # API, so this cannot be discovered and has to be declared. The default is
+    # deliberately below what a hosted model offers: compacting earlier than
+    # strictly necessary costs a little history and keeps every request small,
+    # while compacting later than the model can take fails the request
+    # outright. A session may override it.
+    assistant_context_limit_tokens: int = 32_000
+
     structured_writes_enabled: bool = False
     # AI assistant gateway (BYOK -- this application never runs or bundles a
     # model server). Off by default, same defense-in-depth reasoning as

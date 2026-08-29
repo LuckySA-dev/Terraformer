@@ -463,6 +463,12 @@ export interface AssistantSession {
   supports_streaming: boolean;
   supports_tool_calling: boolean;
   auto_apply_count: number;
+  /**
+   * What earlier turns established, once they were folded away, and how many
+   * messages that stands for. Null until a conversation is first compacted.
+   */
+  summary: string | null;
+  summarised_message_count: number;
   created_at: string;
   updated_at: string;
 }

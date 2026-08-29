@@ -12,7 +12,7 @@ export interface ChangePlanPayload {
 
 export interface AssistantTranscriptEntry {
   id: string;
-  role: 'user' | 'assistant' | 'tool' | 'change_plan';
+  role: 'user' | 'assistant' | 'tool' | 'change_plan' | 'compacted';
   content?: string;
   toolName?: string;
   toolPayload?: Record<string, unknown>;
@@ -24,6 +24,7 @@ type ServerFrame =
   | { type: 'tool_call'; tool: string; payload?: Record<string, unknown> }
   | { type: 'tool_result'; tool: string; payload: Record<string, unknown> }
   | { type: 'change_plan_proposed'; tool: string; payload: ChangePlanPayload }
+  | { type: 'compacted'; content: string }
   | { type: 'done' }
   | { type: 'mode_changed'; mode: AssistantSessionMode }
   | { type: 'error'; code: string; message: string };
@@ -125,6 +126,15 @@ export function useAssistantChat(
           ...current,
           { id: newEntryId(), role: 'tool', toolName: frame.tool, toolPayload: frame.payload },
         ]);
+      } else if (frame.type === 'compacted') {
+        // A divider, not a message: the conversation continues, and what the
+        // folded turns established is now carried by the summary rather than
+        // by the transcript above it.
+        streamingEntryId.current = null;
+        setTranscript((current) => [
+          ...current,
+          { id: newEntryId(), role: 'compacted', content: frame.content },
+        ]);
       } else if (frame.type === 'done') {
         streamingEntryId.current = null;
       } else if (frame.type === 'mode_changed') {
@@ -153,5 +163,17 @@ export function useAssistantChat(
     );
   }, []);
 
-  return { transcript, sendMessage, mode, setMode, connectionState, pendingModeError };
+  const compact = useCallback(() => {
+    socketRef.current?.send(JSON.stringify({ type: 'compact' }));
+  }, []);
+
+  return {
+    transcript,
+    sendMessage,
+    mode,
+    setMode,
+    compact,
+    connectionState,
+    pendingModeError,
+  };
 }

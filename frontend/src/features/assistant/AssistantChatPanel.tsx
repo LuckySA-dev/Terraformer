@@ -38,6 +38,10 @@ interface AssistantChatPanelProps {
 const COMMANDS: { name: string; help: string }[] = [
   { name: '/auto', help: 'Apply changes as soon as they are drafted. You accept the risk.' },
   { name: '/manual', help: 'Ask before every apply. This is the default.' },
+  {
+    name: '/compact',
+    help: 'Fold the older turns into a summary to free up context.',
+  },
   { name: '/model', help: 'Switch model, or add a provider key.' },
   { name: '/clear', help: 'Start a new conversation.' },
   { name: '/help', help: 'List these commands.' },
@@ -265,6 +269,14 @@ export function AssistantChatPanel({
         }
         chat.setMode('confirm', false);
         setCommandOutput('Confirm mode. Every apply waits for you.');
+        return true;
+      case '/compact':
+        if (activeSessionId === undefined) {
+          setCommandOutput('Nothing to compact yet -- this conversation has not started.');
+          return true;
+        }
+        chat.compact();
+        setCommandOutput('Compacting the older turns...');
         return true;
       case '/model':
         setKeysOpen(true);

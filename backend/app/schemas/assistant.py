@@ -41,6 +41,11 @@ class AssistantSessionView(APIModel):
     supports_streaming: bool
     supports_tool_calling: bool
     auto_apply_count: int
+    # What earlier turns established, once they have been folded away, and how
+    # many messages that stands for. The UI marks the point rather than
+    # pretending the conversation was always this short.
+    summary: str | None = None
+    summarised_message_count: int = 0
     created_at: datetime
     updated_at: datetime
 

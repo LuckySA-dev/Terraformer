@@ -190,10 +190,16 @@ async def test_history_is_trimmed_every_round_not_only_before_the_loop() -> None
         )
     ]
 
-    # With a limit the conversation sent to the provider stops growing; with
-    # none it grows every round. The contrast is what proves the trim is
-    # running inside the loop rather than only ahead of it.
-    assert bounded.history_sizes[-1] == bounded.history_sizes[0]
+    # With a limit the conversation stays inside a ceiling of its own; with
+    # none it grows every round. The contrast is what proves the trim runs
+    # inside the loop rather than only ahead of it. The ceiling is the budget
+    # plus the two things trimming may never drop -- the system prompt and the
+    # operator's question.
+    from app.assistant.service import SYSTEM_INSTRUCTIONS
+
+    ceiling = 200 * 4 + len(SYSTEM_INSTRUCTIONS) + len("map the network")
+    assert max(bounded.history_sizes) <= ceiling, bounded.history_sizes
+    assert unbounded.history_sizes[-1] > max(bounded.history_sizes)
     assert unbounded.history_sizes[-1] > unbounded.history_sizes[0]
 
 

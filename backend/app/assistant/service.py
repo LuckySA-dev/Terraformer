@@ -61,9 +61,9 @@ networking -- you are expected to go and look.
 
 Look first. You have read-only tools over everything this application has observed.
 Call them before answering anything about this network; never guess a device name, an
-interface, a VLAN id or an address that a tool could have told you. `list_devices` is
-the root -- every other tool needs a device_id and that is the only way to learn one.
-`get_topology` returns the whole observed graph in one call.
+interface, a VLAN id or an address that a tool could have told you. `list_devices`,
+`get_topology` and `list_change_plans` take no arguments and are where to start:
+the per-device tools need a device_id, and those are the only way to learn one.
 
 Chain tools without asking permission. Reading is free and never touches a device's
 configuration. Stop to ask only when the request is genuinely ambiguous about intent,
@@ -107,31 +107,72 @@ the fence, and say what it does and what it would take to undo it. Never present
 console command as though you had run it."""
 
 
+def _drop_leading_orphan(messages: list[ChatMessage]) -> list[ChatMessage]:
+    """A window may not open on a tool result whose announcing turn is gone."""
+    while messages and messages[0].role == "tool":
+        messages.pop(0)
+    return messages
+
+
 def _trim_to_context_limit(
     history: list[ChatMessage], limit_tokens: int | None
 ) -> list[ChatMessage]:
     """Drops the oldest turns until the conversation fits the profile's limit.
 
-    The system message is never dropped, and the retained window never starts
-    on a tool message -- an orphaned tool result whose announcing assistant
-    turn was trimmed away is exactly what the chat contract rejects.
+    Two things are never dropped. The system message, and the newest user
+    message -- the request being answered. A budget smaller than the system
+    prompt plus that question used to fit nothing at all, so the model was
+    asked to reply to instructions with no request attached, and answered a
+    question nobody had asked. Going over a limit the operator guessed at is
+    recoverable and the provider reports it plainly; sending a conversation
+    with the question removed is neither.
+
+    Everything else is negotiable, newest first: this turn's own tool results
+    before the turns that came before it. A window never opens on a tool
+    result whose announcing assistant turn was trimmed away, which is exactly
+    what the chat contract rejects.
     """
     if limit_tokens is None or not history:
         return history
     budget = limit_tokens * _CHARS_PER_TOKEN
     system, rest = history[0], history[1:]
-    kept: list[ChatMessage] = []
-    used = len(system.content)
-    for message in reversed(rest):
+    if not rest:
+        return history
+
+    request_at = next(
+        (index for index in range(len(rest) - 1, -1, -1) if rest[index].role == "user"),
+        len(rest) - 1,
+    )
+    request = rest[request_at]
+    turn, earlier = rest[request_at + 1 :], rest[:request_at]
+    used = len(system.content) + len(request.content)
+
+    # This turn's work, newest first. Losing the oldest tool results of a long
+    # investigation costs the model detail it has already reasoned over; losing
+    # the newest would cost it the thing it just asked for.
+    kept_turn: list[ChatMessage] = []
+    for message in reversed(turn):
         cost = len(message.content)
         if used + cost > budget:
             break
         used += cost
-        kept.append(message)
-    kept.reverse()
-    while kept and kept[0].role == "tool":
-        kept.pop(0)
-    return [system, *kept]
+        kept_turn.append(message)
+    kept_turn.reverse()
+    kept_turn = _drop_leading_orphan(kept_turn)
+
+    # Earlier turns are only worth carrying once the current one fits whole.
+    kept_earlier: list[ChatMessage] = []
+    if len(kept_turn) == len(turn):
+        for message in reversed(earlier):
+            cost = len(message.content)
+            if used + cost > budget:
+                break
+            used += cost
+            kept_earlier.append(message)
+        kept_earlier.reverse()
+        kept_earlier = _drop_leading_orphan(kept_earlier)
+
+    return [system, *kept_earlier, request, *kept_turn]
 
 
 def _announced_tool_calls(calls: list[ToolCallRequest]) -> list[dict[str, object]]:

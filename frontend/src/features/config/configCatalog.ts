@@ -136,8 +136,9 @@ export const CONFIG_ENTRIES: readonly ConfigEntry[] = [
     id: 'interface-trunk',
     section: 'interface',
     label: 'Trunk / allowed VLANs',
-    available: false,
-    reason: planned('It needs validation against the VLANs the switch actually has.'),
+    available: true,
+    changeType: 'interface_trunk_vlans',
+    targetsInterface: true,
   },
   {
     id: 'routing-static',

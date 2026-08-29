@@ -191,6 +191,37 @@ describe('Packet Tracer-style device config window', () => {
     expect(screen.getByText('FAILED')).toBeVisible();
   });
 
+  it('stages a trunk allowed-VLAN list against the port it names', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.previewChange).mockResolvedValue(plan);
+    vi.mocked(api.applyChangePlan).mockResolvedValue(queuedJob);
+    renderWindow();
+
+    await user.click(screen.getByRole('button', { name: /Trunk \/ allowed VLANs/ }));
+    await user.selectOptions(await screen.findByLabelText('Interface'), 'GigabitEthernet0/1');
+    await user.type(screen.getByLabelText('Allowed VLANs'), '1,10,20-30');
+    await user.click(screen.getByRole('button', { name: /Apply/ }));
+
+    await waitFor(() =>
+      expect(api.previewChange).toHaveBeenCalledWith({
+        device_id: device.id,
+        change_type: 'interface_trunk_vlans',
+        target: 'GigabitEthernet0/1',
+        desired_value: '1,10,20-30',
+      }),
+    );
+  });
+
+  it('warns that the allowed list replaces rather than adds', async () => {
+    const user = userEvent.setup();
+    renderWindow();
+
+    await user.click(screen.getByRole('button', { name: /Trunk \/ allowed VLANs/ }));
+    // Getting this wrong silently drops every VLAN the operator left out of a
+    // link that is carrying them, so the form has to say it before they type.
+    expect(await screen.findByText(/Replaces the whole list/)).toBeVisible();
+  });
+
   it('offers no way to send a capability that is not implemented', async () => {
     const user = userEvent.setup();
     renderWindow();

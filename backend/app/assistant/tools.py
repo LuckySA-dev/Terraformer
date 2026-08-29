@@ -100,20 +100,28 @@ PROPOSE_CHANGE_PLAN_TOOL = ToolSchema(
                     "interface_admin_state",
                     "vlan_name",
                     "interface_access_vlan",
+                    "interface_trunk_vlans",
+                    "hostname",
                 ],
                 "description": (
                     "interface_description: target is an interface, desired_value is free text. "
                     "interface_admin_state: target is an interface, desired_value is 'up' or "
                     "'down'. vlan_name: target is a VLAN id, desired_value is the VLAN name "
                     "(creates the VLAN if it does not exist). interface_access_vlan: target is "
-                    "an interface, desired_value is the VLAN id to move that access port into."
+                    "an interface, desired_value is the VLAN id to move that access port into. "
+                    "interface_trunk_vlans: target is an interface, desired_value is the list of "
+                    "VLANs the trunk carries such as '1,10,20-30' -- it replaces the whole list, "
+                    "so include every VLAN the link must keep carrying. hostname: the device "
+                    "itself is the target, so pass an empty target, and desired_value is the new "
+                    "name."
                 ),
             },
             "target": {
                 "type": "string",
                 "description": (
-                    "An interface name such as GigabitEthernet0/1, or a VLAN id such as 10 "
-                    "when change_type is vlan_name."
+                    "An interface name such as GigabitEthernet0/1, a VLAN id such as 10 "
+                    "when change_type is vlan_name, or an empty string for hostname, which "
+                    "targets the device itself."
                 ),
             },
             "desired_value": {"type": "string"},

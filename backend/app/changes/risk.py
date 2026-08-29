@@ -37,6 +37,12 @@ def classify_risk(
     # specific to re-homing a port, not to touching a live interface.
     if change_type is ChangeType.INTERFACE_ACCESS_VLAN and current_oper_up is True:
         return ChangeRisk.HIGH
+    # The allowed list replaces what is there rather than adding to it, so a
+    # trunk carrying traffic loses every VLAN the new list omits. Spelled out
+    # for the same reason as the access-port rule: the shared condition below
+    # would catch it, but not for this reason.
+    if change_type is ChangeType.INTERFACE_TRUNK_VLANS and current_oper_up is True:
+        return ChangeRisk.HIGH
     if current_admin_up is True and current_oper_up is True:
         return ChangeRisk.HIGH
     return ChangeRisk.LOW

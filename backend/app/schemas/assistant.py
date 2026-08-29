@@ -16,7 +16,7 @@ class AssistantSessionCreate(APIModel):
     device_id: UUID | None = None
     # Empty means every registered device. Bounded so one request cannot push
     # an unreasonable device list into the model's system prompt.
-    scope_device_ids: list[UUID] = Field(default_factory=list, max_length=50)
+    scope_device_ids: list[UUID] = Field(default_factory=list[UUID], max_length=50)
 
 
 class AssistantSessionUpdate(APIModel):

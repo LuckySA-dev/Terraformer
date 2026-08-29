@@ -12,7 +12,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.changes.risk import classify_risk
-from app.changes.types import ChangeStepIntent
+from app.changes.types import ChangeStepIntent, expand_vlan_list
 from app.core.config import Settings
 from app.core.errors import (
     AppError,
@@ -45,10 +45,17 @@ from app.services.snapshots import SnapshotService
 _SUPPORTED_VENDORS = frozenset({Vendor.CISCO_IOSXE})
 
 _VLAN_AWARE_CHANGES = frozenset({ChangeType.VLAN_NAME, ChangeType.INTERFACE_ACCESS_VLAN})
+# Only a trunk change needs the layer-2 view of every port, and it is an extra
+# command on the device, so nothing else pays for it.
+_SWITCHPORT_AWARE_CHANGES = frozenset({ChangeType.INTERFACE_TRUNK_VLANS})
 
 
 def _needs_vlans(change_type: ChangeType) -> bool:
     return change_type in _VLAN_AWARE_CHANGES
+
+
+def _needs_switchports(change_type: ChangeType) -> bool:
+    return change_type in _SWITCHPORT_AWARE_CHANGES
 
 
 def _post_check_ok(step: ChangeStep, context: ChangeContext) -> bool:
@@ -67,6 +74,17 @@ def _post_check_ok(step: ChangeStep, context: ChangeContext) -> bool:
     if step.change_type is ChangeType.INTERFACE_ACCESS_VLAN:
         assigned = context.access_vlan_of(step.target)
         return assigned is not None and assigned.vlan_id == int(step.desired_value)
+    if step.change_type is ChangeType.INTERFACE_TRUNK_VLANS:
+        port = context.switchport_of(step.target)
+        # Compared as sets: IOS reorders and re-ranges what it is given, so
+        # "20,10" reads back as "10,20" and a string comparison would call a
+        # change that worked a failure and roll it back.
+        return (
+            port is not None
+            and port.is_trunk()
+            and expand_vlan_list(port.trunk_allowed or "")
+            == expand_vlan_list(step.desired_value)
+        )
     interface = context.interface
     if interface is None:
         return False
@@ -83,6 +101,11 @@ def _previous_value(change_type: ChangeType, target: str, context: ChangeContext
     if change_type is ChangeType.INTERFACE_ACCESS_VLAN:
         previous = context.access_vlan_of(target)
         return str(previous.vlan_id) if previous is not None else None
+    if change_type is ChangeType.INTERFACE_TRUNK_VLANS:
+        port = context.switchport_of(target)
+        # A trunk with no explicit list carries every VLAN, and the diff has to
+        # say so -- "(none)" would read as the opposite of what is there.
+        return (port.trunk_allowed or "ALL") if port is not None else None
     interface = context.interface
     if interface is None:
         return None
@@ -191,6 +214,11 @@ class ChangeService:
             # an extra command on the device, and an interface description
             # has no use for it.
             vlans = tuple(driver.get_vlans(parameters)) if _needs_vlans(change_type) else ()
+            switchports = (
+                tuple(driver.get_switchports(parameters))
+                if _needs_switchports(change_type)
+                else ()
+            )
 
         # A VLAN rename targets the VLAN database, not a port, so there is no
         # interface to look up and its absence is not an error.
@@ -198,7 +226,12 @@ class ChangeService:
         if current is None and change_type not in (ChangeType.VLAN_NAME, ChangeType.HOSTNAME):
             raise NotFoundError(f"Interface {target} was not found on this device")
 
-        context = ChangeContext(interface=current, vlans=vlans, hostname=current_hostname)
+        context = ChangeContext(
+            interface=current,
+            vlans=vlans,
+            switchports=switchports,
+            hostname=current_hostname,
+        )
         step = ChangeStepIntent(change_type=change_type, target=target, desired_value=desired_value)
         rendered = driver.render_change(step, context)
         issues = driver.validate_change(step, context)
@@ -280,9 +313,20 @@ class ChangeService:
                     if _needs_vlans(step.change_type)
                     else ()
                 )
+                switchports = (
+                    tuple(driver.get_switchports(parameters))
+                    if _needs_switchports(step.change_type)
+                    else ()
+                )
             current = next((iface for iface in interfaces if iface.name == step.target), None)
             if not _post_check_ok(
-                step, ChangeContext(interface=current, vlans=vlans, hostname=post_hostname)
+                step,
+                ChangeContext(
+                    interface=current,
+                    vlans=vlans,
+                    switchports=switchports,
+                    hostname=post_hostname,
+                ),
             ):
                 raise AppError("Post-check did not confirm the applied change")
         except AppError as error:

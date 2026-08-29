@@ -348,6 +348,11 @@ export type ChangeType =
   | 'vlan_name'
   /** Targets an interface; moves that access port into a VLAN. */
   | 'interface_access_vlan'
+  /**
+   * Targets an interface; replaces the VLANs a trunk carries. A replacement,
+   * not an addition -- every VLAN the new list omits stops crossing the link.
+   */
+  | 'interface_trunk_vlans'
   /** Global: renames the device. `target` carries no meaning for it. */
   | 'hostname';
 export type SafetyLevel = 'D' | 'C';

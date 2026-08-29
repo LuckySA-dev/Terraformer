@@ -1,0 +1,46 @@
+Name: Gi1/0/1
+Switchport: Enabled
+Administrative Mode: static access
+Operational Mode: static access
+Administrative Trunking Encapsulation: dot1q
+Negotiation of Trunking: Off
+Access Mode VLAN: 10 (USERS)
+Trunking Native Mode VLAN: 1 (default)
+Administrative Native VLAN tagging: enabled
+Voice VLAN: none
+Administrative private-vlan host-association: none
+Operational private-vlan: none
+Trunking VLANs Enabled: ALL
+Pruning VLANs Enabled: 2-1001
+Capture Mode Disabled
+Capture VLANs Allowed: ALL
+
+Name: Gi1/0/2
+Switchport: Enabled
+Administrative Mode: dynamic auto
+Operational Mode: static access
+Administrative Trunking Encapsulation: negotiate
+Negotiation of Trunking: On
+Access Mode VLAN: 1 (default)
+Trunking Native Mode VLAN: 1 (default)
+Voice VLAN: none
+Trunking VLANs Enabled: ALL
+Pruning VLANs Enabled: 2-1001
+
+Name: Gi1/0/24
+Switchport: Enabled
+Administrative Mode: trunk
+Operational Mode: trunk
+Administrative Trunking Encapsulation: dot1q
+Negotiation of Trunking: On
+Access Mode VLAN: 1 (default)
+Trunking Native Mode VLAN: 99 (MGMT)
+Voice VLAN: none
+Trunking VLANs Enabled: 1-5,10,20,30,40,50,60,70,80,90,100,110,120,130,140,150,
+160,170,180
+Pruning VLANs Enabled: 2-1001
+
+Name: Gi1/0/25
+Switchport: Disabled
+Administrative Mode: down
+Operational Mode: down

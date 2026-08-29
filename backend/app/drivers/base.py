@@ -149,6 +149,39 @@ class VlanFacts:
 
 
 @dataclass(frozen=True, slots=True)
+class SwitchportFacts:
+    """One port's layer-2 configuration, as the device itself reports it.
+
+    `show vlan brief` answers access-port membership but says nothing about a
+    trunk. This is the one read that carries the administrative mode, the
+    native VLAN and the allowed list together, which is what an allowed-VLAN
+    change needs both to render its inverse and to refuse a port that is not
+    a trunk.
+    """
+
+    name: str
+    #: The administrative mode verbatim: "trunk", "static access",
+    #: "dynamic auto", "dynamic desirable". Not normalised -- the inverse has
+    #: to put back exactly what was there.
+    mode: str
+    access_vlan: int | None = None
+    native_vlan: int | None = None
+    #: The allowed list as IOS writes it ("ALL", "1-5,10,20"). Kept as text
+    #: because that is the form the inverse command needs; expanding it to a
+    #: set and rebuilding it would risk handing the device a different list
+    #: than the one it had.
+    trunk_allowed: str | None = None
+    #: "dot1q" or "negotiate". Platforms that support ISL report "negotiate"
+    #: until told otherwise and refuse `switchport mode trunk` while they do;
+    #: platforms that only speak dot1q report it and reject the command that
+    #: would set it. So it decides whether that command is sent at all.
+    trunk_encapsulation: str | None = None
+
+    def is_trunk(self) -> bool:
+        return self.mode == "trunk"
+
+
+@dataclass(frozen=True, slots=True)
 class ChangeContext:
     """The device state a change is rendered and validated against.
 
@@ -160,6 +193,7 @@ class ChangeContext:
 
     interface: InterfaceFacts | None = None
     vlans: tuple[VlanFacts, ...] = ()
+    switchports: tuple[SwitchportFacts, ...] = ()
     # What the device currently calls itself. Only a global change needs it,
     # and it is the sole source for that change's inverse.
     hostname: str | None = None
@@ -173,6 +207,13 @@ class ChangeContext:
 
     def vlan(self, vlan_id: int) -> VlanFacts | None:
         return next((vlan for vlan in self.vlans if vlan.vlan_id == vlan_id), None)
+
+    def switchport_of(self, interface_name: str) -> SwitchportFacts | None:
+        """This port's layer-2 configuration, matched on the short/long name."""
+        return next(
+            (port for port in self.switchports if same_interface(port.name, interface_name)),
+            None,
+        )
 
 
 type NeighborProtocol = Literal["cdp", "lldp"]
@@ -260,6 +301,9 @@ class DeviceDriver(ABC):
         self._unsupported(DIAGNOSTIC_CAPABILITIES[action])
 
     def get_vlans(self, parameters: ConnectionParameters) -> list[VlanFacts]:
+        self._unsupported(DriverCapability.INTERFACES)
+
+    def get_switchports(self, parameters: ConnectionParameters) -> list[SwitchportFacts]:
         self._unsupported(DriverCapability.INTERFACES)
 
     def render_change(self, step: ChangeStepIntent, context: ChangeContext) -> RenderedChange:

@@ -115,6 +115,10 @@ class ChangeType(StrEnum):
     VLAN_NAME = "vlan_name"
     # Moves one access port into a VLAN. Targets the interface.
     INTERFACE_ACCESS_VLAN = "interface_access_vlan"
+    # Replaces the VLANs a trunk port carries. Targets the interface. The list
+    # is a replacement, not an addition -- which is why it is classified the
+    # way it is in changes/risk.py.
+    INTERFACE_TRUNK_VLANS = "interface_trunk_vlans"
     # The first global change: it targets the device itself, not a port or a
     # VLAN id, so `target` carries no meaning for it.
     HOSTNAME = "hostname"

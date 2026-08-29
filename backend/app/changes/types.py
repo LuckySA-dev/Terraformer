@@ -6,6 +6,7 @@ shape testable without a device or a container.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from app.models import ChangeType
@@ -56,3 +57,49 @@ def normalize_interface_name(name: str) -> str:
 
 def same_interface(left: str, right: str) -> bool:
     return normalize_interface_name(left) == normalize_interface_name(right)
+
+
+# An IOS trunk list is ids and ranges: "1,10,20-30". "ALL" and "NONE" are the
+# two words the device uses instead of a list.
+VLAN_LIST_PATTERN = re.compile(r"\d{1,4}(?:-\d{1,4})?(?:,\d{1,4}(?:-\d{1,4})?)*")
+VLAN_ID_MIN = 1
+VLAN_ID_MAX = 4094
+
+
+def expand_vlan_list(text: str) -> frozenset[int]:
+    """Every VLAN id a trunk list names, as a set.
+
+    Comparison has to happen on the set rather than the text: IOS reorders and
+    re-ranges what it is given, so "20,10" is read back as "10,20". A string
+    comparison would call that a failed change and roll back one that worked.
+    """
+    cleaned = text.strip().upper()
+    if cleaned in ("", "NONE"):
+        return frozenset()
+    if cleaned == "ALL":
+        return frozenset(range(VLAN_ID_MIN, VLAN_ID_MAX + 1))
+    ids: set[int] = set()
+    for part in cleaned.split(","):
+        low, _, high = part.partition("-")
+        try:
+            start = int(low)
+            end = int(high) if high else start
+        except ValueError:
+            continue
+        ids.update(range(start, end + 1))
+    return frozenset(ids)
+
+
+def vlan_list_issues(text: str, *, field: str) -> list[str]:
+    """Rejects anything that is not a well-formed list of in-range VLAN ids."""
+    cleaned = text.strip()
+    if not VLAN_LIST_PATTERN.fullmatch(cleaned):
+        return [f"{field} must be VLAN ids and ranges, for example 1,10,20-30"]
+    for part in cleaned.split(","):
+        low, _, high = part.partition("-")
+        start, end = int(low), int(high) if high else int(low)
+        if start > end:
+            return [f"{field} range {part} runs backwards"]
+        if not (VLAN_ID_MIN <= start and end <= VLAN_ID_MAX):
+            return [f"{field} ids must be between {VLAN_ID_MIN} and {VLAN_ID_MAX}"]
+    return []

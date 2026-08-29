@@ -334,6 +334,17 @@ export function DeviceConfigWindow({
             placeholder="20"
             hint="The VLAN must already exist on this switch -- create it first if it does not."
           />
+        ) : entry.changeType === 'interface_trunk_vlans' ? (
+          <InputField
+            label="Allowed VLANs"
+            value={desiredValue}
+            onChange={(event) => {
+              setDesiredValue(event.target.value);
+              resetPlan();
+            }}
+            placeholder="1,10,20-30"
+            hint="Replaces the whole list -- any VLAN left out stops crossing this link. A port that is not already trunking is switched to trunk mode, and the rollback puts the mode back."
+          />
         ) : entry.changeType === 'interface_admin_state' ? (
           <SelectField
             label="Port status"

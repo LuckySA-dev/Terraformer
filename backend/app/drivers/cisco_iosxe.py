@@ -5,9 +5,9 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from ipaddress import ip_address
 from time import monotonic
-from typing import cast
+from typing import ClassVar, cast
 
-from app.changes.types import ChangeStepIntent, RenderedChange
+from app.changes.types import ChangeStepIntent, RenderedChange, vlan_list_issues
 from app.core.errors import DriverCommandRejectedError
 from app.drivers.base import (
     ChangeContext,
@@ -23,6 +23,7 @@ from app.drivers.base import (
     InterfaceFacts,
     NeighborFacts,
     NetworkTransport,
+    SwitchportFacts,
     TransportFactory,
     VlanFacts,
 )
@@ -107,6 +108,16 @@ class CiscoIOSXEDriver(DeviceDriver):
         except DriverCommandRejectedError:
             return []
 
+    def get_switchports(self, parameters: ConnectionParameters) -> list[SwitchportFacts]:
+        # Same reasoning as the VLAN database read: a router has no
+        # switchports and rejects the command, and "no layer-2 facts" is a
+        # valid answer rather than a preview worth failing.
+        try:
+            output = self._command(parameters, "show interfaces switchport")
+        except DriverCommandRejectedError:
+            return []
+        return parse_show_interfaces_switchport(output)
+
     def get_neighbors(self, parameters: ConnectionParameters) -> list[NeighborFacts]:
         with self._session(parameters) as transport:
             return self._read_neighbors(transport)
@@ -157,6 +168,16 @@ class CiscoIOSXEDriver(DeviceDriver):
     _HOSTNAME_MAX_LENGTH = 63
     _HOSTNAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9-]*$")
 
+    # How each administrative mode `show interfaces switchport` reports maps
+    # back to the command that restores it. A mode absent from this table has
+    # no inverse, so a trunk change on that port is refused rather than staged.
+    _MODE_COMMANDS: ClassVar[dict[str, str]] = {
+        "trunk": "switchport mode trunk",
+        "static access": "switchport mode access",
+        "dynamic auto": "switchport mode dynamic auto",
+        "dynamic desirable": "switchport mode dynamic desirable",
+    }
+
     def render_change(self, step: ChangeStepIntent, context: ChangeContext) -> RenderedChange:
         if step.change_type is ChangeType.HOSTNAME:
             return self._render_hostname(step, context)
@@ -164,6 +185,8 @@ class CiscoIOSXEDriver(DeviceDriver):
             return self._render_vlan_name(step, context)
         if step.change_type is ChangeType.INTERFACE_ACCESS_VLAN:
             return self._render_access_vlan(step, context)
+        if step.change_type is ChangeType.INTERFACE_TRUNK_VLANS:
+            return self._render_trunk_vlans(step, context)
         current = context.interface
         if current is None:
             self._unsupported(DriverCapability.RENDER)
@@ -240,6 +263,39 @@ class CiscoIOSXEDriver(DeviceDriver):
             inverse_commands=inverse,
         )
 
+    def _render_trunk_vlans(self, step: ChangeStepIntent, context: ChangeContext) -> RenderedChange:
+        port = context.switchport_of(step.target)
+        # Without the port's current mode and allowed list there is no inverse,
+        # and a Level C change with no inverse is not one this pipeline stages.
+        if port is None or port.mode not in self._MODE_COMMANDS:
+            self._unsupported(DriverCapability.RENDER)
+
+        commands = [f"interface {step.target}"]
+        # A platform that also speaks ISL reports "negotiate" and refuses
+        # `switchport mode trunk` until an encapsulation is chosen. One that
+        # only speaks dot1q reports "dot1q" and rejects the command that would
+        # set it -- so this is sent exactly when the device asked for it.
+        if not port.is_trunk() and port.trunk_encapsulation == "negotiate":
+            commands.append("switchport trunk encapsulation dot1q")
+        # As with an access VLAN: the allowed list does nothing on a port that
+        # is not actually trunking, so the mode is set alongside it.
+        if not port.is_trunk():
+            commands.append("switchport mode trunk")
+        commands.append(f"switchport trunk allowed vlan {step.desired_value.strip()}")
+
+        inverse = [f"interface {step.target}"]
+        previous = (port.trunk_allowed or "").strip()
+        # "ALL" is the default rather than a settable list, so the way back to
+        # it is the negation, not `switchport trunk allowed vlan ALL`.
+        inverse.append(
+            f"switchport trunk allowed vlan {previous}"
+            if previous and previous.upper() not in ("ALL", "NONE")
+            else "no switchport trunk allowed vlan"
+        )
+        if not port.is_trunk():
+            inverse.append(self._MODE_COMMANDS[port.mode])
+        return RenderedChange(commands=tuple(commands), inverse_commands=tuple(inverse))
+
     def validate_change(self, step: ChangeStepIntent, context: ChangeContext) -> list[str]:
         issues: list[str] = []
         if step.change_type is ChangeType.HOSTNAME:
@@ -248,6 +304,8 @@ class CiscoIOSXEDriver(DeviceDriver):
             return self._validate_vlan_name(step)
         if step.change_type is ChangeType.INTERFACE_ACCESS_VLAN:
             return self._validate_access_vlan(step, context)
+        if step.change_type is ChangeType.INTERFACE_TRUNK_VLANS:
+            return self._validate_trunk_vlans(step, context)
         if step.change_type is ChangeType.INTERFACE_DESCRIPTION:
             if len(step.desired_value) > self._DESCRIPTION_MAX_LENGTH:
                 issues.append(
@@ -317,6 +375,25 @@ class CiscoIOSXEDriver(DeviceDriver):
                 "create it first with a VLAN name change"
             )
         return issues
+
+    def _validate_trunk_vlans(self, step: ChangeStepIntent, context: ChangeContext) -> list[str]:
+        issues = vlan_list_issues(step.desired_value, field="allowed VLAN list")
+        if issues:
+            return issues
+        port = context.switchport_of(step.target)
+        if port is None:
+            return [f"{step.target} reported no switchport configuration on this device"]
+        if port.mode not in self._MODE_COMMANDS:
+            return [
+                f"{step.target} is in an unrecognised switchport mode "
+                f"({port.mode or 'none reported'}), so this change has no inverse to roll back to"
+            ]
+        # Deliberately not checked: whether each VLAN exists on this switch.
+        # Allowing a VLAN a trunk does not have is normal and harmless -- the
+        # VLAN simply does not cross the link. That is unlike an access port,
+        # where a missing VLAN black-holes the port, which is why only that
+        # change refuses one.
+        return []
 
     def _vlan_id_issues(self, raw: str, *, field: str) -> list[str]:
         try:
@@ -496,6 +573,65 @@ def parse_show_vlan_brief(output: str) -> list[VlanFacts]:
 
 def _split_ports(raw: str) -> tuple[str, ...]:
     return tuple(port.strip() for port in raw.split(",") if port.strip())
+
+
+# A `show interfaces switchport` block is "Label: value" lines, one block per
+# port, separated by blank lines. A long allowed-VLAN list wraps onto
+# continuation lines that carry no label at all, which is why this is a small
+# state machine rather than a per-line regex.
+_SWITCHPORT_FIELD = re.compile(r"^(?P<label>[A-Za-z][A-Za-z0-9 ()./-]*?):\s*(?P<value>.*)$")
+
+
+def _leading_vlan_id(value: str) -> int | None:
+    """The id out of "1 (default)" or "20". None when the device said "none"."""
+    match = re.match(r"(\d+)", value.strip())
+    return int(match.group(1)) if match else None
+
+
+def parse_show_interfaces_switchport(output: str) -> list[SwitchportFacts]:
+    ports: list[SwitchportFacts] = []
+    fields: dict[str, str] = {}
+    last_label: str | None = None
+
+    def flush() -> None:
+        name = fields.get("Name")
+        if not name:
+            return
+        allowed = fields.get("Trunking VLANs Enabled") or None
+        ports.append(
+            SwitchportFacts(
+                name=name,
+                # Kept verbatim: the inverse has to restore the mode the port
+                # was actually in, not a normalised guess at it.
+                mode=fields.get("Administrative Mode", ""),
+                access_vlan=_leading_vlan_id(fields.get("Access Mode VLAN", "")),
+                native_vlan=_leading_vlan_id(fields.get("Trunking Native Mode VLAN", "")),
+                trunk_allowed=allowed,
+                trunk_encapsulation=fields.get("Administrative Trunking Encapsulation") or None,
+            )
+        )
+
+    for raw in output.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        match = _SWITCHPORT_FIELD.match(line)
+        if match is None:
+            # A continuation of the previous value -- in practice only ever a
+            # wrapped VLAN list, which is joined without a separator because
+            # IOS breaks the line directly after a comma.
+            if last_label is not None:
+                fields[last_label] = fields.get(last_label, "") + line
+            continue
+        label = match.group("label").strip()
+        if label == "Name":
+            flush()
+            fields = {}
+        fields[label] = match.group("value").strip()
+        last_label = label
+
+    flush()
+    return ports
 
 
 def parse_cdp_neighbors(output: str) -> list[NeighborFacts]:

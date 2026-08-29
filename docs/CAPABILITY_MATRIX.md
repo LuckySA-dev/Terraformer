@@ -1,6 +1,6 @@
 # Capability matrix
 
-Last updated: 2026-08-13
+Last updated: 2026-08-29
 Scope: phases 0–3, plus read-only Batfish analysis
 
 ## Status definitions
@@ -130,16 +130,23 @@ is completed. Entries may contain only the metadata allowed by
 ## Structured write capabilities
 
 Structured writes are optional (`STRUCTURED_WRITES_ENABLED`, off by default) and
-cover exactly two Cisco IOS/IOS-XE capabilities: interface description and
-admin-state changes. Every other capability and platform remains **Not
-Implemented**, and the application must not expose an API, worker job, driver
-fallback, or structured UI control that can execute them. Manual Direct Mode
+cover six Cisco IOS/IOS-XE change types: interface description, interface admin
+state, VLAN name, interface access VLAN, interface trunk allowed VLANs, and
+hostname. Saving running-config to startup-config is a seventh write, but it is
+an action rather than a change type: it is an exec command, it alters no
+running state, and it has no inverse, so it does not go through the Change Plan
+pipeline. Every other capability and platform remains **Not Implemented**,
+and the application must not expose an API, worker job, driver fallback, or structured UI control that can execute them. Manual Direct Mode
 remains the explicit path outside this table and outside Safety Levels A–D.
 
 | Capability | Cisco IOS/IOS-XE | Juniper Junos | Fortinet FortiOS | Generic/unknown |
 |---|---|---|---|---|
 | Render interface description/admin state | **Implemented, lab unverified** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
-| Render access/trunk VLAN | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
+| Render VLAN name (creates the VLAN) | **Implemented, lab unverified** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
+| Render interface access VLAN | **Implemented, lab unverified** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
+| Render trunk allowed VLANs | **Implemented, lab unverified** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
+| Render hostname | **Implemented, lab unverified** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
+| Save running-config to startup-config | **Implemented, lab unverified** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
 | Render SVI/IP address | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
 | Render static route | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
 | Validate rendered commands | **Implemented, lab unverified** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
@@ -150,10 +157,15 @@ remains the explicit path outside this table and outside Safety Levels A–D.
 | Confirmed commit | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
 | Rollback/assisted recovery | **Implemented, lab unverified** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
 
-Current structured-write safety classification: Cisco IOS/IOS-XE interface
-description and admin-state changes are **Level C, lab unverified** ("Best
-effort; never 'auto-rollback'"). Every other platform and capability remains
-**Level D — Read-only**. The opt-in real-lab test
+Current structured-write safety classification: all six Cisco IOS/IOS-XE change
+types are **Level C, lab unverified** ("Best effort; never 'auto-rollback'").
+Two of them carry a caveat worth stating here and not only in code. A trunk
+allowed-VLAN change **replaces** the list rather than adding to it, so every
+VLAN omitted stops crossing that link; it is classified HIGH risk whenever the
+port's link is up. Saving running-config is verified only by the device's own
+acknowledgement, not by an independent read-back of startup-config, which is
+weaker than a Change Plan's post-check. Every other platform and capability
+remains **Level D — Read-only**. The opt-in real-lab test
 (`backend/tests/lab/test_structured_writes_lab.py`) exists but has not been run
 against a real device — see the verification record in
 `docs/IMPLEMENTATION_STATUS.md`.

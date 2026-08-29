@@ -1,0 +1,5 @@
+ip route 0.0.0.0 0.0.0.0 192.0.2.1
+ip route 10.10.0.0 255.255.0.0 192.0.2.9
+ip route 172.16.5.0 255.255.255.0 GigabitEthernet0/1
+ip route 192.168.7.0 255.255.255.0 10.0.0.2 200 name BACKUP-PATH
+ip route vrf MGMT 10.99.0.0 255.255.0.0 10.99.0.1

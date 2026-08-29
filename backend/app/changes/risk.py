@@ -17,7 +17,17 @@ def classify_risk(
     current_admin_up: bool | None,
     current_oper_up: bool | None,
     desired_value: str,
+    target: str = "",
+    previous_value: str | None = None,
 ) -> ChangeRisk:
+    """Classifies one step.
+
+    `target` and `previous_value` are read only by the static-route rule,
+    which has no interface state to judge and has to look at the prefix itself
+    and at whether one was already routed. They carry defaults so the change
+    types that predate them keep their existing call sites; no other rule
+    consults them.
+    """
     if change_type is ChangeType.INTERFACE_ADMIN_STATE and desired_value == "down":
         return ChangeRisk.HIGH
     # Renaming the device drops no frame. It has to be checked before the
@@ -43,6 +53,24 @@ def classify_risk(
     # would catch it, but not for this reason.
     if change_type is ChangeType.INTERFACE_TRUNK_VLANS and current_oper_up is True:
         return ChangeRisk.HIGH
+    if change_type is ChangeType.STATIC_ROUTE:
+        return _static_route_risk(target, previous_value)
     if current_admin_up is True and current_oper_up is True:
+        return ChangeRisk.HIGH
+    return ChangeRisk.LOW
+
+
+def _static_route_risk(target: str, previous_value: str | None) -> ChangeRisk:
+    """A static route carries no interface state, so it is judged on its own.
+
+    Routing a prefix nothing routed before only adds a path. Replacing the
+    next hop of a prefix that already had one moves whatever is using it, and
+    a default route moves everything with no more specific match -- which, on
+    a device reached over that same path, includes the session applying the
+    change.
+    """
+    if target.strip() in ("0.0.0.0/0", "0.0.0.0 0.0.0.0"):
+        return ChangeRisk.HIGH
+    if previous_value is not None:
         return ChangeRisk.HIGH
     return ChangeRisk.LOW

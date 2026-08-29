@@ -101,6 +101,7 @@ PROPOSE_CHANGE_PLAN_TOOL = ToolSchema(
                     "vlan_name",
                     "interface_access_vlan",
                     "interface_trunk_vlans",
+                    "static_route",
                     "hostname",
                 ],
                 "description": (
@@ -111,7 +112,10 @@ PROPOSE_CHANGE_PLAN_TOOL = ToolSchema(
                     "an interface, desired_value is the VLAN id to move that access port into. "
                     "interface_trunk_vlans: target is an interface, desired_value is the list of "
                     "VLANs the trunk carries such as '1,10,20-30' -- it replaces the whole list, "
-                    "so include every VLAN the link must keep carrying. hostname: the device "
+                    "so include every VLAN the link must keep carrying. static_route: target "
+                    "is a destination prefix in CIDR form such as 10.10.0.0/16 (the prefix "
+                    "length is required), desired_value is the next hop as an IPv4 address or "
+                    "an exit interface name. hostname: the device "
                     "itself is the target, so pass an empty target, and desired_value is the new "
                     "name."
                 ),

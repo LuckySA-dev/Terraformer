@@ -7,7 +7,13 @@ from ipaddress import ip_address
 from time import monotonic
 from typing import ClassVar, cast
 
-from app.changes.types import ChangeStepIntent, RenderedChange, vlan_list_issues
+from app.changes.types import (
+    ChangeStepIntent,
+    RenderedChange,
+    prefix_issues,
+    prefix_parts,
+    vlan_list_issues,
+)
 from app.core.errors import DriverCommandRejectedError
 from app.drivers.base import (
     ChangeContext,
@@ -23,6 +29,7 @@ from app.drivers.base import (
     InterfaceFacts,
     NeighborFacts,
     NetworkTransport,
+    StaticRouteFacts,
     SwitchportFacts,
     TransportFactory,
     VlanFacts,
@@ -118,6 +125,17 @@ class CiscoIOSXEDriver(DeviceDriver):
             return []
         return parse_show_interfaces_switchport(output)
 
+    def get_static_routes(self, parameters: ConnectionParameters) -> list[StaticRouteFacts]:
+        # Read from the configuration, not `show ip route`: a static route
+        # whose next hop is currently unreachable is missing from the routing
+        # table but still configured, and treating it as absent would build a
+        # rollback that deletes a route the operator still has.
+        try:
+            output = self._command(parameters, "show running-config | include ^ip route")
+        except DriverCommandRejectedError:
+            return []
+        return parse_static_routes(output)
+
     def get_neighbors(self, parameters: ConnectionParameters) -> list[NeighborFacts]:
         with self._session(parameters) as transport:
             return self._read_neighbors(transport)
@@ -165,6 +183,8 @@ class CiscoIOSXEDriver(DeviceDriver):
     _VLAN_ID_MIN = 1
     _VLAN_ID_MAX = 4094
 
+    _NEXT_HOP_INTERFACE = re.compile(r"^[A-Za-z][A-Za-z0-9./:_-]*$")
+
     _HOSTNAME_MAX_LENGTH = 63
     _HOSTNAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9-]*$")
 
@@ -187,6 +207,8 @@ class CiscoIOSXEDriver(DeviceDriver):
             return self._render_access_vlan(step, context)
         if step.change_type is ChangeType.INTERFACE_TRUNK_VLANS:
             return self._render_trunk_vlans(step, context)
+        if step.change_type is ChangeType.STATIC_ROUTE:
+            return self._render_static_route(step, context)
         current = context.interface
         if current is None:
             self._unsupported(DriverCapability.RENDER)
@@ -296,6 +318,25 @@ class CiscoIOSXEDriver(DeviceDriver):
             inverse.append(self._MODE_COMMANDS[port.mode])
         return RenderedChange(commands=tuple(commands), inverse_commands=tuple(inverse))
 
+    def _render_static_route(
+        self, step: ChangeStepIntent, context: ChangeContext
+    ) -> RenderedChange:
+        destination, mask = prefix_parts(step.target)
+        existing = context.static_route(destination, mask)
+        added = f"ip route {destination} {mask} {step.desired_value}"
+        if existing is None:
+            # Nothing routed this prefix before, so the way back is to remove
+            # what this change adds.
+            return RenderedChange(commands=(added,), inverse_commands=(f"no {added}",))
+        # Two `ip route` lines for one prefix are alternatives, not an edit:
+        # leaving the old one in place would install a second path rather than
+        # replace the first. So the old line is withdrawn as part of the same
+        # change, and the rollback puts that exact line back.
+        return RenderedChange(
+            commands=(f"no {existing.as_command()}", added),
+            inverse_commands=(f"no {added}", existing.as_command()),
+        )
+
     def validate_change(self, step: ChangeStepIntent, context: ChangeContext) -> list[str]:
         issues: list[str] = []
         if step.change_type is ChangeType.HOSTNAME:
@@ -306,6 +347,8 @@ class CiscoIOSXEDriver(DeviceDriver):
             return self._validate_access_vlan(step, context)
         if step.change_type is ChangeType.INTERFACE_TRUNK_VLANS:
             return self._validate_trunk_vlans(step, context)
+        if step.change_type is ChangeType.STATIC_ROUTE:
+            return self._validate_static_route(step)
         if step.change_type is ChangeType.INTERFACE_DESCRIPTION:
             if len(step.desired_value) > self._DESCRIPTION_MAX_LENGTH:
                 issues.append(
@@ -394,6 +437,22 @@ class CiscoIOSXEDriver(DeviceDriver):
         # where a missing VLAN black-holes the port, which is why only that
         # change refuses one.
         return []
+
+    def _validate_static_route(self, step: ChangeStepIntent) -> list[str]:
+        issues = prefix_issues(step.target)
+        next_hop = step.desired_value.strip()
+        if not next_hop:
+            issues.append("next hop must not be empty")
+        elif not _is_ipv4(next_hop) and not self._NEXT_HOP_INTERFACE.match(next_hop):
+            # Either an address or a bare interface word. The pattern excludes
+            # whitespace for the same reason a description is checked: this
+            # value is interpolated into one config line that is split back
+            # into lines at apply time, so a space or a control character
+            # would smuggle a second command into a vetted batch.
+            issues.append(
+                "next hop must be an IPv4 address or an exit interface name, with no spaces"
+            )
+        return issues
 
     def _vlan_id_issues(self, raw: str, *, field: str) -> list[str]:
         try:
@@ -487,6 +546,13 @@ class CiscoIOSXEDriver(DeviceDriver):
                     transport.close()
                 except Exception:  # noqa: S110 - close must not mask the operation
                     pass
+
+
+def _is_ipv4(value: str) -> bool:
+    try:
+        return ip_address(value).version == 4
+    except ValueError:
+        return False
 
 
 def parse_show_version(output: str) -> DeviceFacts:
@@ -632,6 +698,33 @@ def parse_show_interfaces_switchport(output: str) -> list[SwitchportFacts]:
 
     flush()
     return ports
+
+
+# Only the plain global form is modelled. A `ip route vrf ...` line does not
+# match, and is therefore skipped rather than half-understood -- treating one
+# as a global route would build a rollback that edits the wrong table.
+_STATIC_ROUTE = re.compile(
+    r"^ip route (?P<dest>\d{1,3}(?:\.\d{1,3}){3}) (?P<mask>\d{1,3}(?:\.\d{1,3}){3}) "
+    r"(?P<next_hop>\S+)"
+)
+
+
+def parse_static_routes(output: str) -> list[StaticRouteFacts]:
+    routes: list[StaticRouteFacts] = []
+    for raw in output.splitlines():
+        line = raw.strip()
+        match = _STATIC_ROUTE.match(line)
+        if match is None:
+            continue
+        routes.append(
+            StaticRouteFacts(
+                destination=match.group("dest"),
+                mask=match.group("mask"),
+                next_hop=match.group("next_hop"),
+                raw=line,
+            )
+        )
+    return routes
 
 
 def parse_cdp_neighbors(output: str) -> list[NeighborFacts]:

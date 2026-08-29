@@ -298,6 +298,17 @@ export function DeviceConfigWindow({
               </option>
             ))}
           </SelectField>
+        ) : entry.changeType === 'static_route' ? (
+          <InputField
+            label="Destination prefix"
+            value={target}
+            onChange={(event) => {
+              setTarget(event.target.value);
+              resetPlan();
+            }}
+            placeholder="10.10.0.0/16"
+            hint="The prefix length is required -- 10.10.0.0 on its own would be read as a single host, not a network. Use 0.0.0.0/0 for a default route."
+          />
         ) : (
           <InputField
             label="VLAN id"
@@ -344,6 +355,17 @@ export function DeviceConfigWindow({
             }}
             placeholder="1,10,20-30"
             hint="Replaces the whole list -- any VLAN left out stops crossing this link. A port that is not already trunking is switched to trunk mode, and the rollback puts the mode back."
+          />
+        ) : entry.changeType === 'static_route' ? (
+          <InputField
+            label="Next hop"
+            value={desiredValue}
+            onChange={(event) => {
+              setDesiredValue(event.target.value);
+              resetPlan();
+            }}
+            placeholder="192.0.2.1"
+            hint="An IPv4 address, or an exit interface name. If this prefix already has a route, the old one is withdrawn in the same change rather than left beside the new one."
           />
         ) : entry.changeType === 'interface_admin_state' ? (
           <SelectField

@@ -182,6 +182,30 @@ class SwitchportFacts:
 
 
 @dataclass(frozen=True, slots=True)
+class StaticRouteFacts:
+    """One `ip route` line, split into the parts a change has to compare.
+
+    Read from the running configuration rather than the routing table: a
+    static route that is currently inactive (its next hop unreachable) is
+    absent from `show ip route` but is still configured, and rolling back to
+    "no route" when one was really there would lose it.
+    """
+
+    destination: str
+    mask: str
+    next_hop: str
+    #: The configuration line exactly as the device printed it. The inverse is
+    #: built from this rather than reassembled from the fields above, so a
+    #: route carrying trailing options this parser does not model -- an
+    #: administrative distance, `name`, `tag`, `permanent` -- is restored with
+    #: them intact instead of silently losing them.
+    raw: str = ""
+
+    def as_command(self) -> str:
+        return self.raw or f"ip route {self.destination} {self.mask} {self.next_hop}"
+
+
+@dataclass(frozen=True, slots=True)
 class ChangeContext:
     """The device state a change is rendered and validated against.
 
@@ -194,6 +218,7 @@ class ChangeContext:
     interface: InterfaceFacts | None = None
     vlans: tuple[VlanFacts, ...] = ()
     switchports: tuple[SwitchportFacts, ...] = ()
+    static_routes: tuple[StaticRouteFacts, ...] = ()
     # What the device currently calls itself. Only a global change needs it,
     # and it is the sole source for that change's inverse.
     hostname: str | None = None
@@ -207,6 +232,22 @@ class ChangeContext:
 
     def vlan(self, vlan_id: int) -> VlanFacts | None:
         return next((vlan for vlan in self.vlans if vlan.vlan_id == vlan_id), None)
+
+    def static_route(self, destination: str, mask: str) -> StaticRouteFacts | None:
+        """The configured route for exactly this prefix, if there is one.
+
+        Matched on destination and mask alone: two routes for the same prefix
+        with different next hops are alternatives to each other, and replacing
+        one means removing it, not adding beside it.
+        """
+        return next(
+            (
+                route
+                for route in self.static_routes
+                if route.destination == destination and route.mask == mask
+            ),
+            None,
+        )
 
     def switchport_of(self, interface_name: str) -> SwitchportFacts | None:
         """This port's layer-2 configuration, matched on the short/long name."""
@@ -305,6 +346,9 @@ class DeviceDriver(ABC):
 
     def get_switchports(self, parameters: ConnectionParameters) -> list[SwitchportFacts]:
         self._unsupported(DriverCapability.INTERFACES)
+
+    def get_static_routes(self, parameters: ConnectionParameters) -> list[StaticRouteFacts]:
+        self._unsupported(DriverCapability.ROUTING)
 
     def render_change(self, step: ChangeStepIntent, context: ChangeContext) -> RenderedChange:
         del step, context

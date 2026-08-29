@@ -119,6 +119,12 @@ class ChangeType(StrEnum):
     # is a replacement, not an addition -- which is why it is classified the
     # way it is in changes/risk.py.
     INTERFACE_TRUNK_VLANS = "interface_trunk_vlans"
+    # One `ip route` line. Targets the destination prefix in CIDR form; the
+    # desired value is the next hop. Replacing the next hop for a prefix that
+    # already has a route removes the old line as part of the same change,
+    # because two `ip route` lines for one prefix are alternatives, not an
+    # edit.
+    STATIC_ROUTE = "static_route"
     # The first global change: it targets the device itself, not a port or a
     # VLAN id, so `target` carries no meaning for it.
     HOSTNAME = "hostname"

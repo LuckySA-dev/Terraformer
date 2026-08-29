@@ -12,7 +12,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.changes.risk import classify_risk
-from app.changes.types import ChangeStepIntent, expand_vlan_list
+from app.changes.types import ChangeStepIntent, expand_vlan_list, prefix_parts
 from app.core.config import Settings
 from app.core.errors import (
     AppError,
@@ -58,6 +58,29 @@ def _needs_switchports(change_type: ChangeType) -> bool:
     return change_type in _SWITCHPORT_AWARE_CHANGES
 
 
+def _needs_static_routes(change_type: ChangeType) -> bool:
+    return change_type is ChangeType.STATIC_ROUTE
+
+
+# Which change types name a port in `target`. The rest address the VLAN
+# database, a destination prefix, or the device itself, so reading every
+# interface for them would be an extra command on the device for nothing --
+# and looking one up under a target that is not an interface name at all would
+# fail the preview outright.
+_INTERFACE_TARGETED_CHANGES = frozenset(
+    {
+        ChangeType.INTERFACE_DESCRIPTION,
+        ChangeType.INTERFACE_ADMIN_STATE,
+        ChangeType.INTERFACE_ACCESS_VLAN,
+        ChangeType.INTERFACE_TRUNK_VLANS,
+    }
+)
+
+
+def _targets_interface(change_type: ChangeType) -> bool:
+    return change_type in _INTERFACE_TARGETED_CHANGES
+
+
 def _post_check_ok(step: ChangeStep, context: ChangeContext) -> bool:
     """Re-reads the device and confirms the change is actually in place.
 
@@ -85,6 +108,10 @@ def _post_check_ok(step: ChangeStep, context: ChangeContext) -> bool:
             and expand_vlan_list(port.trunk_allowed or "")
             == expand_vlan_list(step.desired_value)
         )
+    if step.change_type is ChangeType.STATIC_ROUTE:
+        destination, mask = prefix_parts(step.target)
+        route = context.static_route(destination, mask)
+        return route is not None and route.next_hop == step.desired_value.strip()
     interface = context.interface
     if interface is None:
         return False
@@ -106,6 +133,10 @@ def _previous_value(change_type: ChangeType, target: str, context: ChangeContext
         # A trunk with no explicit list carries every VLAN, and the diff has to
         # say so -- "(none)" would read as the opposite of what is there.
         return (port.trunk_allowed or "ALL") if port is not None else None
+    if change_type is ChangeType.STATIC_ROUTE:
+        destination, mask = prefix_parts(target)
+        existing = context.static_route(destination, mask)
+        return existing.next_hop if existing is not None else None
     interface = context.interface
     if interface is None:
         return None
@@ -205,11 +236,14 @@ class ChangeService:
             ),
             operation=ConnectionOperation.STRUCTURED_READ,
         ) as parameters:
-            is_global = change_type is ChangeType.HOSTNAME
-            # A global change touches no port, so reading every interface for
-            # it would be an extra command on the device for nothing.
-            interfaces = [] if is_global else driver.get_interfaces(parameters)
-            current_hostname = driver.get_facts(parameters).hostname if is_global else None
+            interfaces = (
+                driver.get_interfaces(parameters) if _targets_interface(change_type) else []
+            )
+            current_hostname = (
+                driver.get_facts(parameters).hostname
+                if change_type is ChangeType.HOSTNAME
+                else None
+            )
             # Only read the VLAN database when a VLAN change needs it: it is
             # an extra command on the device, and an interface description
             # has no use for it.
@@ -219,17 +253,21 @@ class ChangeService:
                 if _needs_switchports(change_type)
                 else ()
             )
+            static_routes = (
+                tuple(driver.get_static_routes(parameters))
+                if _needs_static_routes(change_type)
+                else ()
+            )
 
-        # A VLAN rename targets the VLAN database, not a port, so there is no
-        # interface to look up and its absence is not an error.
         current = next((iface for iface in interfaces if iface.name == target), None)
-        if current is None and change_type not in (ChangeType.VLAN_NAME, ChangeType.HOSTNAME):
+        if current is None and _targets_interface(change_type):
             raise NotFoundError(f"Interface {target} was not found on this device")
 
         context = ChangeContext(
             interface=current,
             vlans=vlans,
             switchports=switchports,
+            static_routes=static_routes,
             hostname=current_hostname,
         )
         step = ChangeStepIntent(change_type=change_type, target=target, desired_value=desired_value)
@@ -248,6 +286,8 @@ class ChangeService:
             current_admin_up=current.admin_up if current else None,
             current_oper_up=current.oper_up if current else None,
             desired_value=desired_value,
+            target=target,
+            previous_value=previous_value,
         )
 
         plan = self._changes.create(
@@ -302,12 +342,16 @@ class ChangeService:
                 operation=ConnectionOperation.STRUCTURED_WRITE,
             ) as parameters:
                 driver.apply_configuration(parameters, rendered_commands)
-                is_global = step.change_type is ChangeType.HOSTNAME
-                # A global change touches no port, so reading every interface
-                # back for it would be an extra command on the device for
-                # nothing. Its post-check reads the hostname instead.
-                interfaces = [] if is_global else driver.get_interfaces(parameters)
-                post_hostname = driver.get_facts(parameters).hostname if is_global else None
+                interfaces = (
+                    driver.get_interfaces(parameters)
+                    if _targets_interface(step.change_type)
+                    else []
+                )
+                post_hostname = (
+                    driver.get_facts(parameters).hostname
+                    if step.change_type is ChangeType.HOSTNAME
+                    else None
+                )
                 vlans = (
                     tuple(driver.get_vlans(parameters))
                     if _needs_vlans(step.change_type)
@@ -318,6 +362,11 @@ class ChangeService:
                     if _needs_switchports(step.change_type)
                     else ()
                 )
+                static_routes = (
+                    tuple(driver.get_static_routes(parameters))
+                    if _needs_static_routes(step.change_type)
+                    else ()
+                )
             current = next((iface for iface in interfaces if iface.name == step.target), None)
             if not _post_check_ok(
                 step,
@@ -325,6 +374,7 @@ class ChangeService:
                     interface=current,
                     vlans=vlans,
                     switchports=switchports,
+                    static_routes=static_routes,
                     hostname=post_hostname,
                 ),
             ):

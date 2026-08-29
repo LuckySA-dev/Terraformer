@@ -130,9 +130,9 @@ is completed. Entries may contain only the metadata allowed by
 ## Structured write capabilities
 
 Structured writes are optional (`STRUCTURED_WRITES_ENABLED`, off by default) and
-cover six Cisco IOS/IOS-XE change types: interface description, interface admin
-state, VLAN name, interface access VLAN, interface trunk allowed VLANs, and
-hostname. Saving running-config to startup-config is a seventh write, but it is
+cover seven Cisco IOS/IOS-XE change types: interface description, interface
+admin state, VLAN name, interface access VLAN, interface trunk allowed VLANs,
+static route, and hostname. Saving running-config to startup-config is a seventh write, but it is
 an action rather than a change type: it is an exec command, it alters no
 running state, and it has no inverse, so it does not go through the Change Plan
 pipeline. Every other capability and platform remains **Not Implemented**,
@@ -148,7 +148,8 @@ remains the explicit path outside this table and outside Safety Levels A–D.
 | Render hostname | **Implemented, lab unverified** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
 | Save running-config to startup-config | **Implemented, lab unverified** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
 | Render SVI/IP address | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
-| Render static route | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
+| Render static route | **Implemented, lab unverified** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
+| Render dynamic routing (RIP/EIGRP/OSPF/BGP) | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
 | Validate rendered commands | **Implemented, lab unverified** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
 | Candidate/compare | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
 | Pre-change snapshot pipeline | **Implemented, lab unverified** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
@@ -157,15 +158,29 @@ remains the explicit path outside this table and outside Safety Levels A–D.
 | Confirmed commit | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
 | Rollback/assisted recovery | **Implemented, lab unverified** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
 
-Current structured-write safety classification: all six Cisco IOS/IOS-XE change
-types are **Level C, lab unverified** ("Best effort; never 'auto-rollback'").
-Two of them carry a caveat worth stating here and not only in code. A trunk
+Current structured-write safety classification: all seven Cisco IOS/IOS-XE
+change types are **Level C, lab unverified** ("Best effort; never
+'auto-rollback'"). Three of them carry a caveat worth stating here and not only
+in code. A trunk
 allowed-VLAN change **replaces** the list rather than adding to it, so every
 VLAN omitted stops crossing that link; it is classified HIGH risk whenever the
 port's link is up. Saving running-config is verified only by the device's own
 acknowledgement, not by an independent read-back of startup-config, which is
-weaker than a Change Plan's post-check. Every other platform and capability
-remains **Level D — Read-only**. The opt-in real-lab test
+weaker than a Change Plan's post-check. A static route is read from the running
+configuration rather than the routing table, because a route whose next hop is
+currently unreachable is absent from `show ip route` but still configured;
+repointing a prefix withdraws the old line in the same change, since two
+`ip route` lines for one prefix are alternative paths rather than an edit. A
+default route and a repointed prefix are both classified HIGH.
+
+Dynamic routing (RIP, EIGRP, OSPF, BGP) remains **Not Implemented**. The
+blocker is that each protocol's change is a configuration sub-block with its
+own shape, and no renderer for those exists. It is not convergence: a
+post-check here confirms that the configuration is present, which is the only
+thing any change in this pipeline claims -- none of them assert that the
+network has settled.
+
+Every other platform and capability remains **Level D — Read-only**. The opt-in real-lab test
 (`backend/tests/lab/test_structured_writes_lab.py`) exists but has not been run
 against a real device — see the verification record in
 `docs/IMPLEMENTATION_STATUS.md`.

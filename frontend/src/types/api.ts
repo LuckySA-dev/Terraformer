@@ -353,6 +353,12 @@ export type ChangeType =
    * not an addition -- every VLAN the new list omits stops crossing the link.
    */
   | 'interface_trunk_vlans'
+  /**
+   * Targets a destination prefix in CIDR form; the value is the next hop.
+   * Repointing a prefix that already had a route withdraws the old line as
+   * part of the same change, so the two never coexist.
+   */
+  | 'static_route'
   /** Global: renames the device. `target` carries no meaning for it. */
   | 'hostname';
 export type SafetyLevel = 'D' | 'C';

@@ -144,36 +144,57 @@ export const CONFIG_ENTRIES: readonly ConfigEntry[] = [
     id: 'routing-static',
     section: 'routing',
     label: 'Static route',
-    available: false,
-    reason: planned('It needs a post-check that reads the routing table back.'),
+    available: true,
+    changeType: 'static_route',
+    targetsInterface: false,
   },
   {
     id: 'routing-rip',
     section: 'routing',
     label: 'RIP v1 / v2',
     available: false,
-    reason: planned('Dynamic routing changes converge over time, so a single post-check does not settle them.'),
+    reason: planned(
+      'The change itself is a config sub-block with its own shape per protocol, ' +
+        'and none of those renderers exist yet. Convergence is not the blocker: a ' +
+        'post-check confirms the configuration is present, which is all any change ' +
+        'here promises -- it never claimed the network had settled.',
+    ),
   },
   {
     id: 'routing-eigrp',
     section: 'routing',
     label: 'EIGRP',
     available: false,
-    reason: planned('Dynamic routing changes converge over time, so a single post-check does not settle them.'),
+    reason: planned(
+      'The change itself is a config sub-block with its own shape per protocol, ' +
+        'and none of those renderers exist yet. Convergence is not the blocker: a ' +
+        'post-check confirms the configuration is present, which is all any change ' +
+        'here promises -- it never claimed the network had settled.',
+    ),
   },
   {
     id: 'routing-ospf',
     section: 'routing',
     label: 'OSPF',
     available: false,
-    reason: planned('Dynamic routing changes converge over time, so a single post-check does not settle them.'),
+    reason: planned(
+      'The change itself is a config sub-block with its own shape per protocol, ' +
+        'and none of those renderers exist yet. Convergence is not the blocker: a ' +
+        'post-check confirms the configuration is present, which is all any change ' +
+        'here promises -- it never claimed the network had settled.',
+    ),
   },
   {
     id: 'routing-bgp',
     section: 'routing',
     label: 'BGP',
     available: false,
-    reason: planned('Dynamic routing changes converge over time, so a single post-check does not settle them.'),
+    reason: planned(
+      'The change itself is a config sub-block with its own shape per protocol, ' +
+        'and none of those renderers exist yet. Convergence is not the blocker: a ' +
+        'post-check confirms the configuration is present, which is all any change ' +
+        'here promises -- it never claimed the network had settled.',
+    ),
   },
 ];
 

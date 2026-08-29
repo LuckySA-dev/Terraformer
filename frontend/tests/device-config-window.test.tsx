@@ -222,6 +222,39 @@ describe('Packet Tracer-style device config window', () => {
     expect(await screen.findByText(/Replaces the whole list/)).toBeVisible();
   });
 
+  it('stages a static route from a prefix and a next hop', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.previewChange).mockResolvedValue(plan);
+    vi.mocked(api.applyChangePlan).mockResolvedValue(queuedJob);
+    renderWindow();
+
+    await user.click(screen.getByRole('button', { name: /Static route/ }));
+    // A route targets a prefix, not a port, so it must not ask for one.
+    expect(screen.queryByLabelText('Interface')).not.toBeInTheDocument();
+    await user.type(screen.getByLabelText('Destination prefix'), '10.10.0.0/16');
+    await user.type(screen.getByLabelText('Next hop'), '192.0.2.1');
+    await user.click(screen.getByRole('button', { name: /Apply/ }));
+
+    await waitFor(() =>
+      expect(api.previewChange).toHaveBeenCalledWith({
+        device_id: device.id,
+        change_type: 'static_route',
+        target: '10.10.0.0/16',
+        desired_value: '192.0.2.1',
+      }),
+    );
+  });
+
+  it('says the prefix length is required before the operator omits it', async () => {
+    const user = userEvent.setup();
+    renderWindow();
+
+    await user.click(screen.getByRole('button', { name: /Static route/ }));
+    // A bare 10.10.0.0 is a valid /32, so leaving it out routes a different
+    // prefix than the operator meant with no error to show for it.
+    expect(await screen.findByText(/prefix length is required/)).toBeVisible();
+  });
+
   it('offers no way to send a capability that is not implemented', async () => {
     const user = userEvent.setup();
     renderWindow();

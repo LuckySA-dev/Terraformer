@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from ipaddress import IPv4Network, ip_network
 
 from app.models import ChangeType
 
@@ -102,4 +103,32 @@ def vlan_list_issues(text: str, *, field: str) -> list[str]:
             return [f"{field} range {part} runs backwards"]
         if not (VLAN_ID_MIN <= start and end <= VLAN_ID_MAX):
             return [f"{field} ids must be between {VLAN_ID_MIN} and {VLAN_ID_MAX}"]
+    return []
+
+
+def prefix_parts(target: str) -> tuple[str, str]:
+    """Splits "10.10.0.0/16" into the dotted destination and mask IOS wants."""
+    cleaned = target.strip()
+    # The length is required rather than defaulted. ip_network reads a bare
+    # "10.10.0.0" as a /32 host route, so an operator who meant a /16 would
+    # get a route for a different prefix than the one they typed and no
+    # warning about it -- the same failure the host-bits check exists to stop.
+    if "/" not in cleaned:
+        raise ValueError("a prefix length is required")
+    network = ip_network(cleaned, strict=True)
+    if not isinstance(network, IPv4Network):
+        raise ValueError("only IPv4 prefixes are supported")
+    return str(network.network_address), str(network.netmask)
+
+
+def prefix_issues(target: str) -> list[str]:
+    try:
+        prefix_parts(target)
+    except ValueError:
+        # ip_network reports "has host bits set" for 10.10.0.5/16, which is the
+        # most common way to get this wrong and worth saying back plainly.
+        return [
+            "destination must be an IPv4 prefix such as 10.10.0.0/16 -- the "
+            f"prefix length is required and no host bits may be set (got {target!r})"
+        ]
     return []

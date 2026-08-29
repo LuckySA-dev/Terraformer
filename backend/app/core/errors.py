@@ -248,6 +248,20 @@ class ChangeValidationError(AppError):
     default_message = "The requested change failed driver validation"
 
 
+class ChangePostCheckFailedError(AppError):
+    code = "post_check_failed"
+    status_code = 422
+    default_message = (
+        "The device accepted the commands but reading the change back did not confirm it"
+    )
+
+
+class ChangeApplyFailedError(AppError):
+    code = "change_apply_failed"
+    status_code = 500
+    default_message = "Applying the change failed unexpectedly"
+
+
 class ChangePlanNotDraftError(ConflictError):
     code = "change_plan_not_draft"
     default_message = "This change plan is not in draft status and cannot be applied"

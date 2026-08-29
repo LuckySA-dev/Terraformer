@@ -16,13 +16,14 @@ from app.changes.types import ChangeStepIntent, expand_vlan_list, prefix_parts
 from app.core.config import Settings
 from app.core.errors import (
     AppError,
+    ChangeApplyFailedError,
     ChangePlanNotDraftError,
+    ChangePostCheckFailedError,
     ChangeValidationError,
     ChangeVendorUnsupportedError,
     NotFoundError,
     UnsupportedCapabilityError,
 )
-from app.core.logging import sanitize_text
 from app.core.time import utc_now
 from app.drivers import DeviceDriver, DriverRegistry
 from app.drivers.base import ChangeContext, DriverCapability
@@ -271,12 +272,17 @@ class ChangeService:
             hostname=current_hostname,
         )
         step = ChangeStepIntent(change_type=change_type, target=target, desired_value=desired_value)
-        rendered = driver.render_change(step, context)
+        # Validation runs first. Renderers are entitled to assume a validated
+        # step -- several of them parse the target as an integer or a prefix --
+        # so rendering an unvalidated one raised a bare ValueError out of the
+        # request, which reached the operator as a 500 instead of the list of
+        # things actually wrong with what they typed.
         issues = driver.validate_change(step, context)
         if issues:
             # 422, not the bare AppError's 500: these are all rejections of
             # what the operator typed, not a server fault.
             raise ChangeValidationError(details={"issues": issues})
+        rendered = driver.render_change(step, context)
 
         pre_snapshot = self._snapshots.capture(device.id)
 
@@ -301,10 +307,20 @@ class ChangeService:
             plan,
             change_type=change_type,
             target=target,
-            previous_value=sanitize_text(previous_value) if previous_value else previous_value,
+            previous_value=previous_value,
             desired_value=desired_value,
-            rendered_commands=sanitize_text("\n".join(rendered.commands)),
-            inverse_commands=sanitize_text("\n".join(rendered.inverse_commands)),
+            # Stored verbatim, deliberately. These strings are the same text
+            # the operator reviews at preview, the worker sends to the device,
+            # and the rollback sends to put it back; if any of them differed the
+            # preview would be a lie. Running them through the log sanitizer did
+            # differ: it rewrites the token after "password", "secret", "token",
+            # "community" or "api key", so a description like "link to community
+            # switch" was stored -- and would have been configured on the device
+            # -- as "link to community [REDACTED]". docs/safety-model.md scopes
+            # that sanitizer to logs and events and calls it defense in depth; a
+            # Change Plan's commands are the executable artifact, not a log line.
+            rendered_commands="\n".join(rendered.commands),
+            inverse_commands="\n".join(rendered.inverse_commands),
         )
         self._session.commit()
         return self._changes.get(plan.id)
@@ -324,6 +340,16 @@ class ChangeService:
 
         device = self._devices.get(plan.device_id)
         driver = self._drivers.get(device.vendor)
+        # One plan is one change -- what preview() builds, and what the whole
+        # preview/apply/rollback story assumes. Reading steps[0] out of a plan
+        # that somehow held more would apply part of it and roll back part of
+        # it, so it refuses rather than guess which part.
+        if len(plan.steps) != 1:
+            self._changes.set_status(
+                plan, ChangePlanStatus.FAILED, failure_code=ChangeApplyFailedError.code
+            )
+            self._session.commit()
+            raise ChangeApplyFailedError("A change plan must carry exactly one step")
         step = plan.steps[0]
         rendered_commands = step.rendered_commands.splitlines()
         inverse_commands = step.inverse_commands.splitlines()
@@ -378,9 +404,20 @@ class ChangeService:
                     hostname=post_hostname,
                 ),
             ):
-                raise AppError("Post-check did not confirm the applied change")
+                raise ChangePostCheckFailedError()
         except AppError as error:
             return self._attempt_rollback(plan, device, driver, inverse_commands, error.code)
+        except Exception:
+            # Anything that is not a typed AppError is a fault in this service
+            # rather than a device refusing the change. It must still end the
+            # plan: leaving it APPLYING means the operator's window polls a
+            # status that will never arrive, and the change can never be
+            # applied or rolled back again. Rollback is attempted for the same
+            # reason -- what reached the device is unknown, and the inverse is
+            # the only thing that can put it back.
+            return self._attempt_rollback(
+                plan, device, driver, inverse_commands, ChangeApplyFailedError.code
+            )
 
         post_snapshot = self._snapshots.capture(device.id)
         self._changes.set_snapshots(plan, post_change_snapshot_id=post_snapshot.id)

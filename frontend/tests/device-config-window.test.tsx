@@ -5,6 +5,7 @@ import type { ReactNode } from 'react';
 import { api } from '../src/api/network';
 import { DeviceConfigWindow } from '../src/features/config/DeviceConfigWindow';
 import { CONFIG_ENTRIES } from '../src/features/config/configCatalog';
+import { CHANGE_TYPES } from '../src/types/api';
 import type { ChangePlan, Device, Job } from '../src/types/api';
 
 // The terminal itself is covered by terminal-panel.test.tsx; here the subject
@@ -103,6 +104,9 @@ const renderWindow = () =>
  */
 const reviewFirst = (user: ReturnType<typeof userEvent.setup>) =>
   user.click(screen.getByRole('button', { name: /Review first/ }));
+
+/** Entry labels carry regex characters ("RIP v1 / v2"), so match them literally. */
+const escapeLabel = (label: string) => label.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 
 describe('Packet Tracer-style device config window', () => {
   beforeEach(() => {
@@ -418,6 +422,129 @@ describe('Packet Tracer-style device config window', () => {
 
     expect(screen.getByLabelText('Configuration categories')).toBeVisible();
     expect(screen.queryByTestId('terminal-panel')).not.toBeInTheDocument();
+  });
+
+  it('does not carry the values of one protocol into another', async () => {
+    const user = userEvent.setup();
+    renderWindow();
+
+    await user.click(screen.getByRole('button', { name: /OSPF/ }));
+    await user.type(screen.getByLabelText('Process ID'), '1');
+    await user.type(screen.getByLabelText('Network'), '10.0.0.0 0.0.0.255 area 0');
+
+    // OSPF and EIGRP are the same component with a different entry, so React
+    // reuses the instance unless it is keyed -- and an OSPF statement is not a
+    // valid EIGRP one.
+    await user.click(screen.getByRole('button', { name: /EIGRP/ }));
+    expect(screen.getByLabelText('Network')).toHaveValue('');
+    expect(screen.getByLabelText('Process ID')).toHaveValue('');
+  });
+
+  it('shows why an apply was refused instead of claiming it was queued', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.previewChange).mockResolvedValue(plan);
+    // The device already has a change in flight, so the apply is rejected
+    // before any job exists.
+    vi.mocked(api.applyChangePlan).mockRejectedValue(
+      new Error('Another change is already being applied to this device'),
+    );
+    renderWindow();
+
+    await user.click(screen.getByRole('button', { name: /Hostname/ }));
+    await user.type(screen.getByLabelText('Hostname'), 'SW2-ACCESS');
+    await user.click(screen.getByRole('button', { name: /Apply/ }));
+
+    expect(await screen.findByText(/already being applied/)).toBeVisible();
+    // The plan is still a draft because nothing was queued, so the panel must
+    // not read that status back as if the worker had it.
+    expect(screen.queryByText('Queued for the worker.')).not.toBeInTheDocument();
+  });
+
+  it('does not keep a save confirmation from a previous visit', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.saveRunningConfig).mockResolvedValue({ device_id: device.id, saved: true });
+    renderWindow();
+
+    await user.click(screen.getByRole('button', { name: /Save running-config/ }));
+    await user.click(screen.getByRole('button', { name: /Write to startup-config/ }));
+    expect(await screen.findByText('The device confirmed the save.')).toBeVisible();
+
+    // Leaving and coming back must not read as a save that just happened.
+    await user.click(screen.getByRole('button', { name: /Hostname/ }));
+    await user.click(screen.getByRole('button', { name: /Save running-config/ }));
+    expect(screen.queryByText('The device confirmed the save.')).not.toBeInTheDocument();
+  });
+
+  it('says why the interface list is empty rather than offering an empty menu', async () => {
+    // A device that has never been refreshed has no stored interfaces, so the
+    // trunk form's picker would be an empty dropdown with nothing explaining
+    // it. The interface table already handles this; the generic form did not.
+    vi.mocked(api.interfaces).mockResolvedValue([]);
+    const user = userEvent.setup();
+    renderWindow();
+
+    await user.click(screen.getByRole('button', { name: /Trunk \/ allowed VLANs/ }));
+
+    expect(await screen.findByText(/No interfaces recorded/)).toBeVisible();
+    expect(screen.queryByLabelText('Interface')).not.toBeInTheDocument();
+  });
+
+  it('gives every available entry something to submit', async () => {
+    // Walks the whole tree rather than the handful of entries other tests
+    // happen to open: an entry that renders no control is unreachable, and
+    // nothing else here would notice.
+    const user = userEvent.setup();
+    renderWindow();
+
+    for (const entry of CONFIG_ENTRIES.filter((item) => item.available)) {
+      await user.click(screen.getByRole('button', { name: new RegExp(escapeLabel(entry.label)) }));
+      if (entry.kind === 'interface-editor') {
+        // Its submit lives behind picking a port from the table.
+        expect(await screen.findByRole('button', { name: /Edit/ })).toBeVisible();
+        continue;
+      }
+      expect(
+        screen.getAllByRole('button', { name: /^(Apply|Preview|Write to startup-config)/ }).length,
+        entry.label,
+      ).toBeGreaterThan(0);
+    }
+  });
+
+  it('has a path to every change type the API accepts', () => {
+    // The window is the only place a human can reach these, so a change type
+    // the backend takes but the tree cannot produce is a dead feature.
+    const reachable = new Set<string>([
+      // The interface table stages these three from one screen.
+      'interface_description',
+      'interface_admin_state',
+      'interface_access_vlan',
+    ]);
+    for (const entry of CONFIG_ENTRIES) {
+      if (!entry.available) continue;
+      if ('changeType' in entry) reachable.add(entry.changeType);
+      // The routing form offers withdrawal beside the add, and RIP its version.
+      if (entry.kind === 'router-network') {
+        reachable.add('router_network_remove');
+        if (entry.protocol === 'rip') reachable.add('router_rip_version');
+      }
+    }
+    expect([...CHANGE_TYPES].filter((type) => !reachable.has(type))).toEqual([]);
+  });
+
+  it('closes on Escape, except where the terminal needs that key', async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(<DeviceConfigWindow device={device} onClose={onClose} />, { wrapper: TestProviders });
+
+    await user.click(screen.getByRole('tab', { name: /CLI/ }));
+    await user.keyboard('{Escape}');
+    // Escape belongs to the device's shell while the CLI is open.
+    expect(onClose).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('tab', { name: /Config/ }));
+    await user.click(screen.getByRole('button', { name: /Hostname/ }));
+    await user.keyboard('{Escape}');
+    expect(onClose).toHaveBeenCalledOnce();
   });
 
   it('offers no way to send a capability that is not implemented', async () => {

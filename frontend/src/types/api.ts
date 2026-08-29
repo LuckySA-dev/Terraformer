@@ -341,39 +341,48 @@ export type ChangePlanStatus =
   | 'rolled_back'
   | 'rollback_failed';
 export type ChangeRisk = 'low' | 'high';
-export type ChangeType =
-  | 'interface_description'
-  | 'interface_admin_state'
+/**
+ * Every structured change the backend accepts, as a value rather than only a
+ * type -- so a test can assert the config window has a path to each one, and
+ * fail when a change type is added to the API with no way to reach it.
+ */
+export const CHANGE_TYPES = [
+  'interface_description',
+  'interface_admin_state',
   /** Targets a VLAN id; creates the VLAN when it does not exist yet. */
-  | 'vlan_name'
+  'vlan_name',
   /** Targets an interface; moves that access port into a VLAN. */
-  | 'interface_access_vlan'
+  'interface_access_vlan',
   /**
    * Targets an interface; replaces the VLANs a trunk carries. A replacement,
    * not an addition -- every VLAN the new list omits stops crossing the link.
    */
-  | 'interface_trunk_vlans'
+  'interface_trunk_vlans',
   /**
    * Targets a destination prefix in CIDR form; the value is the next hop.
    * Repointing a prefix that already had a route withdraws the old line as
    * part of the same change, so the two never coexist.
    */
-  | 'static_route'
+  'static_route',
   /**
    * Targets a routing process ("ospf 1", "rip", "eigrp 100"); the value is one
    * network statement. Creating the process is part of the change when it does
    * not exist, which is why its rollback removes the process rather than the
    * statement.
    */
-  | 'router_network'
+  'router_network',
   /** The same statement withdrawn. Refused when the process does not carry it. */
-  | 'router_network_remove'
+  'router_network_remove',
   /** `version 1` / `version 2` in a RIP process. */
-  | 'router_rip_version'
+  'router_rip_version',
   /** One BGP peer. Targets the local `bgp <asn>`; a device runs one process. */
-  | 'bgp_neighbor'
+  'bgp_neighbor',
   /** Global: renames the device. `target` carries no meaning for it. */
-  | 'hostname';
+  'hostname',
+] as const;
+
+export type ChangeType = (typeof CHANGE_TYPES)[number];
+
 export type SafetyLevel = 'D' | 'C';
 export type ChangePlanSource = 'manual' | 'ai_generated';
 

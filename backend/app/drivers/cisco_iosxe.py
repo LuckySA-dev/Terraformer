@@ -600,6 +600,11 @@ class CiscoIOSXEDriver(DeviceDriver):
         return []
 
     def _validate_rip_version(self, step: ChangeStepIntent, context: ChangeContext) -> list[str]:
+        # RIP has one process and this renderer hardcodes it, so a target
+        # naming anything else would be stored on the plan and shown in the
+        # diff while having no bearing on what is sent.
+        if step.target.strip().lower() != "rip":
+            return ["the RIP version change targets 'rip'; there is only one RIP process"]
         issues = rip_version_issues(step.desired_value)
         if issues:
             return issues

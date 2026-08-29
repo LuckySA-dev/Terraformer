@@ -64,6 +64,17 @@ function ApplyOutcome({
   busy: boolean;
   error?: string | undefined;
 }) {
+  // A refused apply never reached the worker, so the plan's own status still
+  // reads 'draft'. Rendering that would tell the operator the change was
+  // queued at the same moment the reason it was not is printed beneath it.
+  if (error !== undefined) {
+    return (
+      <div className="config-outcome config-outcome--bad" role="status">
+        <strong>Not sent. The device was not asked to make this change.</strong>
+        <span className="form-error">{error}</span>
+      </div>
+    );
+  }
   // `busy` covers the gap between the click and the worker picking the plan
   // up, when the row still reads 'draft'.
   const outcome = busy && plan.status === 'draft' ? OUTCOME.applying : OUTCOME[plan.status];
@@ -73,7 +84,6 @@ function ApplyOutcome({
       {plan.failure_code === null ? null : (
         <span className="config-outcome__code mono">{plan.failure_code}</span>
       )}
-      {error === undefined ? null : <span className="form-error">{error}</span>}
     </div>
   );
 }
@@ -206,6 +216,9 @@ export function DeviceConfigWindow({
     setPlan(null);
     preview.reset();
     apply.reset();
+    // Its result outlived the screen that produced it, so returning to the
+    // entry read as a save that had just happened.
+    saveConfig.reset();
   };
   const selectEntry = (next: ConfigEntry) => {
     setEntryId(next.id);
@@ -239,6 +252,7 @@ export function DeviceConfigWindow({
       return (
         <div className="config-window__form">
           <InterfaceEditor
+            key={entry.id}
             interfaces={interfaces.data ?? []}
             loading={interfaces.isPending}
             previewBusy={preview.isPending}
@@ -281,6 +295,7 @@ export function DeviceConfigWindow({
     if (entry.kind === 'router-network') {
       return (
         <RouterNetworkForm
+          key={entry.id}
           entry={entry}
           onPreview={(change) => preview.mutate(change)}
           previewBusy={preview.isPending}
@@ -292,6 +307,7 @@ export function DeviceConfigWindow({
     if (entry.kind === 'bgp-neighbor') {
       return (
         <BgpNeighborForm
+          key={entry.id}
           entry={entry}
           onPreview={(change) => preview.mutate(change)}
           previewBusy={preview.isPending}
@@ -322,6 +338,18 @@ export function DeviceConfigWindow({
             <Settings2 size={14} /> {submitLabel}
           </Button>
         </div>
+      );
+    }
+    if (entry.targetsInterface && !interfaces.isPending && (interfaces.data ?? []).length === 0) {
+      // The interface table already says this; the generic form used to offer
+      // a dropdown with nothing in it and no explanation for why.
+      return (
+        <AppState
+          kind="empty"
+          title="No interfaces recorded"
+          message="Refresh observed state on this device to collect its interface inventory first."
+          compact
+        />
       );
     }
     return (
@@ -439,7 +467,7 @@ export function DeviceConfigWindow({
           size="small"
           onClick={previewSimple}
           busy={preview.isPending}
-          disabled={target === '' || desiredValue === ''}
+          disabled={target.trim() === '' || desiredValue.trim() === ''}
         >
           <Settings2 size={14} /> {submitLabel}
         </Button>
@@ -453,6 +481,12 @@ export function DeviceConfigWindow({
       className="config-window"
       style={{ left: position.x, top: position.y, ...(zIndex === undefined ? {} : { zIndex }) }}
       onPointerDown={onFocus}
+      onKeyDown={(event) => {
+        // A floating dialog that cannot be dismissed from the keyboard is not
+        // reachable without a mouse. Not on the CLI tab: Escape is a key the
+        // terminal itself needs, and stealing it would break vi on the device.
+        if (event.key === 'Escape' && tab !== 'cli') onClose();
+      }}
       role="dialog"
       aria-label={`Configure ${device.name}`}
     >

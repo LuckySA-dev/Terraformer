@@ -33,7 +33,15 @@ from app.repositories.provider_profiles import ProviderProfileRepository
 from app.services.devices import DeviceService
 from app.services.provider_profiles import ProviderKeyVault
 
-_MAX_TOOL_ROUNDS_PER_TURN = 5
+# An agent told to investigate before it answers needs more than a couple of
+# round trips: "which ports on SW1 are down" is a list_devices then a read, and
+# anything comparing two devices is more. The cap is a runaway guard, not a
+# budget the operator should feel, so it is set well above normal use.
+_MAX_TOOL_ROUNDS_PER_TURN = 12
+# Rounds alone do not bound the work: one round may announce any number of
+# calls. Each is a database read, but a model looping on a malformed argument
+# could still spend the turn making them.
+_MAX_TOOL_CALLS_PER_TURN = 40
 
 
 # Rough characters-per-token ratio. Counting exactly would mean shipping a
@@ -58,9 +66,10 @@ the root -- every other tool needs a device_id and that is the only way to learn
 `get_topology` returns the whole observed graph in one call.
 
 Chain tools without asking permission. Reading is free and never touches a device's
-configuration. If answering takes six reads, do six reads. Stop to ask only when the
-request is genuinely ambiguous about intent, never when you are missing a fact you
-could have looked up.
+configuration. Stop to ask only when the request is genuinely ambiguous about intent,
+never when you are missing a fact you could have looked up. Ask for everything a step
+needs in one go rather than one call at a time -- a turn has a bounded number of
+rounds, and several calls in one round cost one round between them.
 
 Say what the evidence is. Everything you read is observed state as of each device's
 last refresh, which `last_seen_at` reports. If a device has not been refreshed
@@ -200,7 +209,30 @@ class AssistantChatService:
         if tool_schemas is not None and self._changes is not None:
             tool_schemas = [*tool_schemas, PROPOSE_CHANGE_PLAN_TOOL]
 
-        for _round in range(_MAX_TOOL_ROUNDS_PER_TURN):
+        calls_made = 0
+        # One extra pass with the tools withdrawn. A turn that spends its
+        # budget used to end on an error and no answer at all, which left the
+        # operator with a question and a stack of tool output; now the model is
+        # made to answer from what it already read.
+        for round_index in range(_MAX_TOOL_ROUNDS_PER_TURN + 1):
+            final_round = round_index == _MAX_TOOL_ROUNDS_PER_TURN
+            if final_round:
+                history.append(
+                    ChatMessage(
+                        role="system",
+                        content=(
+                            "The tool budget for this turn is spent. Answer now from what you "
+                            "have already read, and say plainly which part of the question you "
+                            "could not finish looking into."
+                        ),
+                    )
+                )
+            # Re-trimmed every round, not once before the loop: each round adds
+            # an assistant turn and a tool result, and a tool that returns the
+            # whole topology can be large. Without this a long investigation
+            # walks past the model's context limit mid-turn and the provider
+            # rejects the request.
+            history = _trim_to_context_limit(history, chat_session.context_limit_override)
             reply_text = ""
             pending_tool_calls: list[ToolCallRequest] = []
             async for chunk in self._provider_client_for(profile.provider_type).stream_chat(
@@ -208,7 +240,7 @@ class AssistantChatService:
                 api_key=material.api_key,
                 model_id=chat_session.model_id,
                 messages=history,
-                tools=tool_schemas,
+                tools=None if final_round else tool_schemas,
             ):
                 if chunk.type == "token" and chunk.content:
                     reply_text += chunk.content
@@ -242,6 +274,9 @@ class AssistantChatService:
                 return
 
             for call in pending_tool_calls:
+                calls_made += 1
+                if calls_made > _MAX_TOOL_CALLS_PER_TURN:
+                    break
                 yield AssistantEvent(
                     type="tool_call", tool_name=call.name, tool_payload=call.arguments
                 )
@@ -271,12 +306,13 @@ class AssistantChatService:
                 history.append(
                     ChatMessage(role="tool", content=encoded_payload, tool_call_id=call.id)
                 )
+            if calls_made > _MAX_TOOL_CALLS_PER_TURN:
+                break
 
-        yield AssistantEvent(
-            type="error",
-            error_code="tool_round_limit_exceeded",
-            content="The assistant made too many tool calls in one turn and was stopped.",
-        )
+        # Only reachable if the final tools-withdrawn round still announced
+        # tool calls, which a provider should not do. Ending on `done` keeps
+        # the socket contract intact either way.
+        yield AssistantEvent(type="done")
 
     @staticmethod
     def _propose_change_plan(

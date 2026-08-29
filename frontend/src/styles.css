@@ -3821,6 +3821,31 @@ p {
 
 /* The composer reads as a prompt line rather than a chat box: the same input
    carries a question, a change request, and a /command. */
+/* A tool call reads as one line of activity, the way a CLI agent reports what
+   it is doing; the payload is behind the disclosure triangle. */
+.chat-transcript__entry--tool > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  cursor: pointer;
+  list-style-position: outside;
+}
+
+.chat-transcript__tool-summary {
+  color: var(--muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-transcript__entry--tool > pre {
+  max-height: 260px;
+  overflow: auto;
+  margin: 6px 0 0;
+  font-size: 11px;
+}
+
 .assistant-page__prompt {
   color: var(--teal);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;

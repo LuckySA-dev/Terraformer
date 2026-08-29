@@ -23,6 +23,24 @@ function splitFencedBlocks(content: string): { text: string; commands: string[] 
   return { text: text.trim(), commands };
 }
 
+/**
+ * One line describing what a tool returned.
+ *
+ * The payload used to be pretty-printed into the transcript in full, which was
+ * tolerable when every tool read one device and unreadable once `get_topology`
+ * could return the whole network -- the answer ended up hundreds of lines below
+ * the question. The detail is still one click away.
+ */
+function summariseToolResult(payload: Record<string, unknown> | undefined): string {
+  if (payload === undefined) return 'no result';
+  if (typeof payload.error === 'string') return payload.error;
+  const counts = Object.entries(payload)
+    .filter((pair): pair is [string, unknown[]] => Array.isArray(pair[1]))
+    .map(([key, value]) => `${String(value.length)} ${key.replaceAll('_', ' ')}`);
+  if (counts.length > 0) return counts.join(', ');
+  return `${String(Object.keys(payload).length)} fields`;
+}
+
 export function ChatTranscript({
   entries,
   onApplyPlan,
@@ -87,10 +105,15 @@ export function ChatTranscript({
         }
         if (entry.role === 'tool') {
           return (
-            <div key={entry.id} className="chat-transcript__entry chat-transcript__entry--tool">
-              <span className="chat-transcript__tool-name">{entry.toolName ?? 'tool'}</span>
+            <details key={entry.id} className="chat-transcript__entry chat-transcript__entry--tool">
+              <summary>
+                <span className="chat-transcript__tool-name">{entry.toolName ?? 'tool'}</span>
+                <span className="chat-transcript__tool-summary">
+                  {summariseToolResult(entry.toolPayload)}
+                </span>
+              </summary>
               {entry.toolPayload ? <pre>{JSON.stringify(entry.toolPayload, null, 2)}</pre> : null}
-            </div>
+            </details>
           );
         }
         return (

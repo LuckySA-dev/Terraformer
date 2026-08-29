@@ -345,6 +345,12 @@ it('renders a tool result instead of a blank entry', async () => {
   socket.emitMessage({ type: 'tool_result', tool: 'get_interfaces', payload: { count: 2 } });
 
   expect(await screen.findByText('get_interfaces')).toBeVisible();
+  // The payload is collapsed behind the activity line now, but it is still
+  // there in full for anyone who wants to check what the model was told.
+  const disclosure = screen.getByText('get_interfaces').closest('details');
+  expect(disclosure).not.toBeNull();
+  expect(screen.getByText(/"count": 2/)).toBeInTheDocument();
+  await user.click(screen.getByText('get_interfaces'));
   expect(screen.getByText(/"count": 2/)).toBeVisible();
 });
 
@@ -581,5 +587,53 @@ describe('the composer answers commands itself', () => {
     expect(hint).toBeVisible();
     await user.click(hint);
     expect(screen.getByLabelText('Message')).toHaveValue('/auto ');
+  });
+});
+
+
+describe('what the transcript shows while the agent works', () => {
+  it('reports a tool result as one line, with the payload behind it', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.providerProfiles).mockResolvedValue([profile]);
+    vi.mocked(api.devices).mockResolvedValue([]);
+    vi.mocked(api.assistantSessions).mockResolvedValue([session]);
+    vi.mocked(api.assistantMessages).mockResolvedValue([]);
+    renderPanel(DEVICE_ID);
+    await user.selectOptions(await screen.findByLabelText('Conversation'), session.id);
+
+    const socket = FakeWebSocket.instances.at(-1);
+    socket?.emitMessage({
+      type: 'tool_result',
+      tool: 'get_topology',
+      payload: {
+        devices: [{ name: 'SW1' }, { name: 'SW2' }],
+        links: [{ local_device: 'SW1' }],
+        observed_only_neighbours: [],
+      },
+    });
+
+    // A whole-network payload printed in full put the answer hundreds of lines
+    // below the question, so the transcript states what came back instead.
+    expect(await screen.findByText(/2 devices, 1 links, 0 observed only neighbours/)).toBeVisible();
+    expect(screen.getByText('get_topology')).toBeVisible();
+  });
+
+  it('shows a tool error as the summary rather than a field count', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.providerProfiles).mockResolvedValue([profile]);
+    vi.mocked(api.devices).mockResolvedValue([]);
+    vi.mocked(api.assistantSessions).mockResolvedValue([session]);
+    vi.mocked(api.assistantMessages).mockResolvedValue([]);
+    renderPanel(DEVICE_ID);
+    await user.selectOptions(await screen.findByLabelText('Conversation'), session.id);
+
+    const socket = FakeWebSocket.instances.at(-1);
+    socket?.emitMessage({
+      type: 'tool_result',
+      tool: 'get_device_facts',
+      payload: { error: 'device_id must be a UUID' },
+    });
+
+    expect(await screen.findByText('device_id must be a UUID')).toBeVisible();
   });
 });

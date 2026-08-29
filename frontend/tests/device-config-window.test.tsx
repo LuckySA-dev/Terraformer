@@ -5,13 +5,14 @@ import type { ReactNode } from 'react';
 import { api } from '../src/api/network';
 import { DeviceConfigWindow } from '../src/features/config/DeviceConfigWindow';
 import { CONFIG_ENTRIES } from '../src/features/config/configCatalog';
-import type { ChangePlan, Device } from '../src/types/api';
+import type { ChangePlan, Device, Job } from '../src/types/api';
 
 vi.mock('../src/api/network', () => ({
   api: {
     interfaces: vi.fn(),
     previewChange: vi.fn(),
     applyChangePlan: vi.fn(),
+    listChangePlans: vi.fn(),
     saveRunningConfig: vi.fn(),
   },
 }));
@@ -58,6 +59,20 @@ const plan: ChangePlan = {
   updated_at: '2026-08-27T01:00:00Z',
 };
 
+const queuedJob: Job = {
+  id: '4f2e1d0c-9b8a-4756-a3e2-1d0c9b8a7564',
+  type: 'apply_change',
+  state: 'queued',
+  device_id: device.id,
+  result: null,
+  error_code: null,
+  error_message: null,
+  created_at: '2026-08-27T01:00:00Z',
+  updated_at: '2026-08-27T01:00:00Z',
+  started_at: null,
+  finished_at: null,
+};
+
 /** Indexing helper: the project forbids non-null assertions in source. */
 function at<T>(items: readonly T[], index: number): T {
   const item = items[index];
@@ -73,9 +88,18 @@ function TestProviders({ children }: { children: ReactNode }) {
 const renderWindow = () =>
   render(<DeviceConfigWindow device={device} onClose={vi.fn()} />, { wrapper: TestProviders });
 
+/**
+ * The window submits straight to the device by default. Tests about staging a
+ * plan pick the other mode first, which is the one that still shows a plan and
+ * waits for a second click.
+ */
+const reviewFirst = (user: ReturnType<typeof userEvent.setup>) =>
+  user.click(screen.getByRole('button', { name: /Review first/ }));
+
 describe('Packet Tracer-style device config window', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(api.listChangePlans).mockResolvedValue([]);
     vi.mocked(api.interfaces).mockResolvedValue([
       {
         id: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d',
@@ -97,6 +121,7 @@ describe('Packet Tracer-style device config window', () => {
     const user = userEvent.setup();
     vi.mocked(api.previewChange).mockResolvedValue(plan);
     renderWindow();
+    await reviewFirst(user);
 
     await user.click(screen.getByRole('button', { name: /Interfaces/ }));
     // The port is picked from the table rather than a dropdown, and the form
@@ -115,6 +140,57 @@ describe('Packet Tracer-style device config window', () => {
     expect(api.applyChangePlan).not.toHaveBeenCalled();
   });
 
+  it('sends the change on one click, without a plan to accept first', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.previewChange).mockResolvedValue(plan);
+    vi.mocked(api.applyChangePlan).mockResolvedValue(queuedJob);
+    renderWindow();
+
+    await user.click(screen.getByRole('button', { name: /Interfaces/ }));
+    await user.click(await screen.findByRole('button', { name: /Edit/ }));
+    await user.type(screen.getByLabelText('Description'), 'uplink-to-lab-core');
+    // One button, and it says what it does. Preview still runs -- it is what
+    // renders the commands and the inverse -- but it is no longer a stop.
+    await user.click(at(screen.getAllByRole('button', { name: /Apply/ }), 0));
+
+    await waitFor(() => expect(api.applyChangePlan).toHaveBeenCalledWith(plan.id));
+  });
+
+  it('reports what the device did with the change, not just that it was queued', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.previewChange).mockResolvedValue(plan);
+    vi.mocked(api.applyChangePlan).mockResolvedValue(queuedJob);
+    // Apply is queued to the worker, so the status arrives on a later read.
+    vi.mocked(api.listChangePlans).mockResolvedValue([{ ...plan, status: 'applied' }]);
+    renderWindow();
+
+    await user.click(screen.getByRole('button', { name: /Hostname/ }));
+    await user.type(screen.getByLabelText('Hostname'), 'SW2-ACCESS');
+    await user.click(screen.getByRole('button', { name: /Apply/ }));
+
+    expect(await screen.findByText(/post-check read the new value back/)).toBeVisible();
+    expect(await screen.findByText('ON THE DEVICE')).toBeVisible();
+  });
+
+  it('says so plainly when the rollback failed too', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.previewChange).mockResolvedValue(plan);
+    vi.mocked(api.applyChangePlan).mockResolvedValue(queuedJob);
+    vi.mocked(api.listChangePlans).mockResolvedValue([
+      { ...plan, status: 'rollback_failed', failure_code: 'post_check_failed' },
+    ]);
+    renderWindow();
+
+    await user.click(screen.getByRole('button', { name: /Hostname/ }));
+    await user.type(screen.getByLabelText('Hostname'), 'SW2-ACCESS');
+    await user.click(screen.getByRole('button', { name: /Apply/ }));
+
+    // The one outcome the operator must not miss.
+    expect(await screen.findByText(/unknown state/)).toBeVisible();
+    expect(await screen.findByText('post_check_failed')).toBeVisible();
+    expect(screen.getByText('FAILED')).toBeVisible();
+  });
+
   it('offers no way to send a capability that is not implemented', async () => {
     const user = userEvent.setup();
     renderWindow();
@@ -125,7 +201,7 @@ describe('Packet Tracer-style device config window', () => {
     for (const entry of CONFIG_ENTRIES.filter((item) => !item.available)) {
       await user.click(screen.getByRole('button', { name: new RegExp(entry.label) }));
       expect(await screen.findByText(`${entry.label} is not available yet`)).toBeVisible();
-      expect(screen.queryByRole('button', { name: /Preview/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^(Apply|Preview)/ })).not.toBeInTheDocument();
     }
     expect(api.previewChange).not.toHaveBeenCalled();
     expect(api.applyChangePlan).not.toHaveBeenCalled();
@@ -153,6 +229,7 @@ describe('Packet Tracer-style device config window', () => {
     const user = userEvent.setup();
     vi.mocked(api.previewChange).mockResolvedValue(plan);
     renderWindow();
+    await reviewFirst(user);
 
     await user.click(screen.getByRole('button', { name: /Interfaces/ }));
     await user.click(await screen.findByRole('button', { name: /Edit/ }));
@@ -174,6 +251,7 @@ describe('Packet Tracer-style device config window', () => {
 describe('Interface table', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(api.listChangePlans).mockResolvedValue([]);
     vi.mocked(api.interfaces).mockResolvedValue([
       {
         id: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d',
@@ -206,6 +284,7 @@ describe('Interface table', () => {
 
   const openTable = async (user: ReturnType<typeof userEvent.setup>) => {
     renderWindow();
+    await reviewFirst(user);
     await user.click(screen.getByRole('button', { name: /Interfaces/ }));
     return screen.findAllByRole('button', { name: /Edit/ });
   };
@@ -280,6 +359,7 @@ describe('Interface table', () => {
 describe('Global configuration', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(api.listChangePlans).mockResolvedValue([]);
     vi.mocked(api.interfaces).mockResolvedValue([]);
   });
 
@@ -297,6 +377,7 @@ describe('Global configuration', () => {
       }],
     });
     renderWindow();
+    await reviewFirst(user);
 
     await user.click(screen.getByRole('button', { name: /Hostname/ }));
     // A global change targets the device, so there is no interface or VLAN
@@ -327,7 +408,7 @@ describe('Global configuration', () => {
 
     // It has no inverse, so it must not pretend to be a reviewable plan.
     expect(await screen.findByText(/nothing to roll back/)).toBeVisible();
-    expect(screen.queryByRole('button', { name: /^Preview/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^(Apply|Preview)/ })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /Write to startup-config/ }));
     await waitFor(() => expect(api.saveRunningConfig).toHaveBeenCalledWith(device.id));

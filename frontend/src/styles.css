@@ -3655,6 +3655,41 @@ p {
   height: 100%;
 }
 
+.config-window__mode {
+  padding: 0 16px 10px;
+}
+
+/* What the device did with the change. Replaces the standing warning banner:
+   the outcome of the apply is worth the space, a permanent caution is not. */
+.config-outcome {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: 8px;
+  background: var(--surface-soft);
+  font-size: 12px;
+}
+
+.config-outcome--ok {
+  border-left-color: var(--green);
+}
+
+.config-outcome--bad {
+  border-left-color: var(--red);
+}
+
+.config-outcome--wait {
+  border-left-color: var(--amber);
+}
+
+.config-outcome__code {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .config-window__commands {
   border-top: 1px solid var(--border);
   background: var(--surface-soft);

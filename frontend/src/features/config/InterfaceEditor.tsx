@@ -20,6 +20,8 @@ interface InterfaceEditorProps {
   previewBusy: boolean;
   /** Cleared by the parent whenever a new change is staged. */
   onDirty: () => void;
+  /** "Apply" or "Preview", depending on the window's apply mode. */
+  submitLabel: string;
 }
 
 const adminLabel = (iface: DeviceInterface): string =>
@@ -43,6 +45,7 @@ export function InterfaceEditor({
   onPreview,
   previewBusy,
   onDirty,
+  submitLabel,
 }: InterfaceEditorProps) {
   const [editingName, setEditingName] = useState<string | null>(null);
   const [description, setDescription] = useState('');
@@ -164,7 +167,7 @@ export function InterfaceEditor({
           disabled={description === (editing.description ?? '')}
           onClick={() => stage('interface_description', description)}
         >
-          <Settings2 size={13} /> Preview
+          <Settings2 size={13} /> {submitLabel}
         </Button>
       </div>
 
@@ -188,7 +191,7 @@ export function InterfaceEditor({
           disabled={adminState === '' || adminState === currentAdmin}
           onClick={() => stage('interface_admin_state', adminState)}
         >
-          <Settings2 size={13} /> Preview
+          <Settings2 size={13} /> {submitLabel}
         </Button>
       </div>
 
@@ -210,7 +213,7 @@ export function InterfaceEditor({
           disabled={accessVlan.trim() === ''}
           onClick={() => stage('interface_access_vlan', accessVlan.trim())}
         >
-          <Settings2 size={13} /> Preview
+          <Settings2 size={13} /> {submitLabel}
         </Button>
       </div>
 

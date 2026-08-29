@@ -65,7 +65,7 @@ interface GlobalTextEntry {
  * entry the operator picked, so the form asks for the process id and the
  * statement rather than making them assemble "ospf 1" by hand.
  */
-interface RouterNetworkEntry {
+export interface RouterNetworkEntry {
   id: string;
   section: ConfigSectionId;
   label: string;
@@ -75,6 +75,20 @@ interface RouterNetworkEntry {
   protocol: 'ospf' | 'eigrp' | 'rip';
   /** Placeholder for the network statement, which differs per protocol. */
   placeholder: string;
+  hint: string;
+}
+
+/**
+ * One BGP peer. Separate from the other three protocols because a session is a
+ * neighbour and a remote AS rather than a network statement.
+ */
+export interface BgpNeighborEntry {
+  id: string;
+  section: ConfigSectionId;
+  label: string;
+  available: true;
+  kind: 'bgp-neighbor';
+  changeType: 'bgp_neighbor';
   hint: string;
 }
 
@@ -92,6 +106,7 @@ type AvailableEntry =
   | CustomEntry
   | GlobalTextEntry
   | RouterNetworkEntry
+  | BgpNeighborEntry
   | ActionEntry;
 
 /** A declared-but-unbuilt entry. Rendered disabled, never submittable. */
@@ -208,12 +223,10 @@ export const CONFIG_ENTRIES: readonly ConfigEntry[] = [
     id: 'routing-bgp',
     section: 'routing',
     label: 'BGP',
-    available: false,
-    reason: planned(
-      'A BGP session is a neighbour and a remote AS rather than a network ' +
-        'statement, so it does not fit the shape the other three share and needs ' +
-        'its own renderer, validation and post-check.',
-    ),
+    available: true,
+    kind: 'bgp-neighbor',
+    changeType: 'bgp_neighbor',
+    hint: 'IOS runs one BGP process per device, so this must match the AS already configured if there is one.',
   },
 ];
 

@@ -67,8 +67,19 @@ def _needs_static_routes(change_type: ChangeType) -> bool:
     return change_type is ChangeType.STATIC_ROUTE
 
 
+# Every change that reads or writes inside a `router ...` block.
+_ROUTING_PROCESS_CHANGES = frozenset(
+    {
+        ChangeType.ROUTER_NETWORK,
+        ChangeType.ROUTER_NETWORK_REMOVE,
+        ChangeType.ROUTER_RIP_VERSION,
+        ChangeType.BGP_NEIGHBOR,
+    }
+)
+
+
 def _needs_routing_processes(change_type: ChangeType) -> bool:
-    return change_type is ChangeType.ROUTER_NETWORK
+    return change_type in _ROUTING_PROCESS_CHANGES
 
 
 # Which change types name a port in `target`. The rest address the VLAN
@@ -128,6 +139,20 @@ def _post_check_ok(step: ChangeStep, context: ChangeContext) -> bool:
         process = context.routing_process(step.target)
         statement = f"network {' '.join(step.desired_value.split())}"
         return process is not None and process.has_statement(statement)
+    if step.change_type is ChangeType.ROUTER_NETWORK_REMOVE:
+        removed_from = context.routing_process(step.target)
+        statement = f"network {' '.join(step.desired_value.split())}"
+        # A process that is gone entirely also no longer carries the statement.
+        return removed_from is None or not removed_from.has_statement(statement)
+    if step.change_type is ChangeType.ROUTER_RIP_VERSION:
+        rip = context.routing_process("rip")
+        return rip is not None and rip.find_statement("version ") == (
+            f"version {step.desired_value.strip()}"
+        )
+    if step.change_type is ChangeType.BGP_NEIGHBOR:
+        bgp = context.routing_process(step.target)
+        statement = f"neighbor {' '.join(step.desired_value.split()).lower()}"
+        return bgp is not None and bgp.has_statement(statement)
     interface = context.interface
     if interface is None:
         return False
@@ -153,13 +178,25 @@ def _previous_value(change_type: ChangeType, target: str, context: ChangeContext
         destination, mask = prefix_parts(target)
         existing = context.static_route(destination, mask)
         return existing.next_hop if existing is not None else None
-    if change_type is ChangeType.ROUTER_NETWORK:
+    if change_type in (ChangeType.ROUTER_NETWORK, ChangeType.ROUTER_NETWORK_REMOVE):
         # The process name when it is already running, None when this change
         # starts it. It is the diff's left side and, as with a static route,
         # the signal the risk rule reads to tell "added a network to a process
-        # that was already up" from "started a routing protocol".
+        # that was already up" from "started a routing protocol". A removal
+        # always finds one, because validation refuses to withdraw a statement
+        # from a process that is not there; the direction is legible from the
+        # rendered `no network ...` beside it.
         existing_process = context.routing_process(target)
         return existing_process.name if existing_process is not None else None
+    if change_type is ChangeType.ROUTER_RIP_VERSION:
+        rip_process = context.routing_process("rip")
+        # "version 2", or None when RIP is not running or is at the device
+        # default -- which is the difference between changing a version and
+        # starting the protocol, and is what the risk rule reads.
+        return rip_process.find_statement("version ") if rip_process is not None else None
+    if change_type is ChangeType.BGP_NEIGHBOR:
+        bgp_process = context.routing_process(target)
+        return bgp_process.name if bgp_process is not None else None
     interface = context.interface
     if interface is None:
         return None

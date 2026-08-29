@@ -226,6 +226,20 @@ class RoutingProcessFacts:
         wanted = normalize_statement(statement)
         return any(normalize_statement(line) == wanted for line in self.statements)
 
+    def find_statement(self, prefix: str) -> str | None:
+        """The first statement starting with `prefix`, normalised.
+
+        Used where a process holds at most one line of a kind and the change
+        needs the current one to build its inverse -- "version 2" for RIP, or
+        the remote AS of one BGP peer.
+        """
+        wanted = normalize_statement(prefix)
+        for line in self.statements:
+            normalised = normalize_statement(line)
+            if normalised.startswith(wanted):
+                return normalised
+        return None
+
 
 @dataclass(frozen=True, slots=True)
 class ChangeContext:

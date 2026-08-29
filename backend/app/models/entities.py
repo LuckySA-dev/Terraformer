@@ -130,6 +130,19 @@ class ChangeType(StrEnum):
     # Creating the process is part of the change when it does not exist yet,
     # which is what makes the inverse `no router ...` rather than `no network`.
     ROUTER_NETWORK = "router_network"
+    # The same statement, withdrawn. A separate type rather than an argument
+    # because "ensure present" and "ensure absent" are different desired
+    # states, and inferring which one from whether it happens to be there
+    # already would make the same request mean opposite things on two devices.
+    ROUTER_NETWORK_REMOVE = "router_network_remove"
+    # `version 1` / `version 2` inside a RIP process. Its own type because the
+    # catalog entry is named for the choice, and creating a process without it
+    # silently leaves RIP at the device default of version 1.
+    ROUTER_RIP_VERSION = "router_rip_version"
+    # One BGP peer: target is the local `bgp <asn>`, the value is the peer and
+    # its remote AS. A device runs one BGP process, which is why the local ASN
+    # is validated against the one already configured rather than assumed.
+    BGP_NEIGHBOR = "bgp_neighbor"
     # The first global change: it targets the device itself, not a port or a
     # VLAN id, so `target` carries no meaning for it.
     HOSTNAME = "hostname"

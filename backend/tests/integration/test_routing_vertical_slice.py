@@ -20,6 +20,8 @@ _PROCESSES = (
         name="ospf 1",
         statements=("router-id 1.1.1.1", "network 10.0.0.0 0.0.0.255 area 0"),
     ),
+    RoutingProcessFacts(name="rip", statements=("version 2", "network 10.0.0.0")),
+    RoutingProcessFacts(name="bgp 65001", statements=("neighbor 192.0.2.2 remote-as 65002",)),
 )
 _ROUTES = (
     StaticRouteFacts(
@@ -256,3 +258,166 @@ def test_a_default_route_is_flagged_high_even_though_nothing_routed_it_before(
     )
     assert plan["steps"][0]["previous_value"] is None
     assert plan["risk"] == "high"
+
+
+# --- withdrawing a network statement ---------------------------------------
+
+
+def test_removing_a_network_previews_the_withdrawal_and_applies(
+    authenticated_client: TestClient,
+    container: ApplicationContainer,
+    router,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device_id = router("192.0.2.86")
+    plan = _preview(
+        authenticated_client,
+        device_id,
+        change_type="router_network_remove",
+        target="ospf 1",
+        desired_value="10.0.0.0 0.0.0.255 area 0",
+    )
+    step = plan["steps"][0]
+    assert step["rendered_commands"] == "router ospf 1\nno network 10.0.0.0 0.0.0.255 area 0"
+    assert step["inverse_commands"] == "router ospf 1\nnetwork 10.0.0.0 0.0.0.255 area 0"
+    # Whatever reached that network through this device stops reaching it.
+    assert plan["risk"] == "high"
+
+    after = (RoutingProcessFacts(name="ospf 1", statements=("router-id 1.1.1.1",)),)
+    monkeypatch.setattr(
+        CiscoIOSXEDriver, "get_routing_processes", lambda self, parameters: list(after)
+    )
+    assert _run_apply(authenticated_client, container, monkeypatch, plan["id"])["status"] == (
+        "applied"
+    )
+
+
+def test_withdrawing_a_statement_that_is_not_there_is_rejected_at_preview(
+    authenticated_client: TestClient,
+    router,
+) -> None:
+    device_id = router("192.0.2.87")
+    response = authenticated_client.post(
+        "/api/change-plans",
+        json={
+            "device_id": device_id,
+            "change_type": "router_network_remove",
+            "target": "ospf 1",
+            "desired_value": "192.168.9.0 0.0.0.255 area 0",
+        },
+    )
+    assert response.status_code == 422, response.text
+    assert any(
+        "does not have" in issue for issue in response.json()["error"]["details"]["issues"]
+    )
+
+
+# --- RIP version -----------------------------------------------------------
+
+
+def test_changing_the_rip_version_previews_and_applies(
+    authenticated_client: TestClient,
+    container: ApplicationContainer,
+    router,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device_id = router("192.0.2.88")
+    plan = _preview(
+        authenticated_client,
+        device_id,
+        change_type="router_rip_version",
+        target="rip",
+        desired_value="1",
+    )
+    step = plan["steps"][0]
+    assert step["previous_value"] == "version 2"
+    assert step["rendered_commands"] == "router rip\nversion 1"
+    assert step["inverse_commands"] == "router rip\nversion 2"
+    # v1 and v2 do not interoperate.
+    assert plan["risk"] == "high"
+
+    after = (RoutingProcessFacts(name="rip", statements=("version 1", "network 10.0.0.0")),)
+    monkeypatch.setattr(
+        CiscoIOSXEDriver, "get_routing_processes", lambda self, parameters: list(after)
+    )
+    assert _run_apply(authenticated_client, container, monkeypatch, plan["id"])["status"] == (
+        "applied"
+    )
+
+
+def test_setting_the_version_rip_already_runs_is_rejected(
+    authenticated_client: TestClient,
+    router,
+) -> None:
+    device_id = router("192.0.2.89")
+    response = authenticated_client.post(
+        "/api/change-plans",
+        json={
+            "device_id": device_id,
+            "change_type": "router_rip_version",
+            "target": "rip",
+            "desired_value": "2",
+        },
+    )
+    assert response.status_code == 422, response.text
+
+
+# --- BGP -------------------------------------------------------------------
+
+
+def test_adding_a_bgp_neighbour_previews_and_applies(
+    authenticated_client: TestClient,
+    container: ApplicationContainer,
+    router,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device_id = router("192.0.2.90")
+    plan = _preview(
+        authenticated_client,
+        device_id,
+        change_type="bgp_neighbor",
+        target="bgp 65001",
+        desired_value="192.0.2.9 remote-as 65009",
+    )
+    step = plan["steps"][0]
+    assert step["rendered_commands"] == "router bgp 65001\nneighbor 192.0.2.9 remote-as 65009"
+    assert step["inverse_commands"] == "router bgp 65001\nno neighbor 192.0.2.9"
+    # A session can move a lot of reachability the moment it comes up.
+    assert plan["risk"] == "high"
+
+    after = (
+        RoutingProcessFacts(
+            name="bgp 65001",
+            statements=(
+                "neighbor 192.0.2.2 remote-as 65002",
+                "neighbor 192.0.2.9 remote-as 65009",
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        CiscoIOSXEDriver, "get_routing_processes", lambda self, parameters: list(after)
+    )
+    assert _run_apply(authenticated_client, container, monkeypatch, plan["id"])["status"] == (
+        "applied"
+    )
+
+
+def test_a_second_bgp_local_as_is_rejected_at_preview(
+    authenticated_client: TestClient,
+    router,
+) -> None:
+    # IOS allows one BGP process per device.
+    device_id = router("192.0.2.91")
+    response = authenticated_client.post(
+        "/api/change-plans",
+        json={
+            "device_id": device_id,
+            "change_type": "bgp_neighbor",
+            "target": "bgp 65999",
+            "desired_value": "192.0.2.9 remote-as 65009",
+        },
+    )
+    assert response.status_code == 422, response.text
+    assert any(
+        "one BGP process" in issue for issue in response.json()["error"]["details"]["issues"]
+    )

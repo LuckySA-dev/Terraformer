@@ -366,6 +366,12 @@ export type ChangeType =
    * statement.
    */
   | 'router_network'
+  /** The same statement withdrawn. Refused when the process does not carry it. */
+  | 'router_network_remove'
+  /** `version 1` / `version 2` in a RIP process. */
+  | 'router_rip_version'
+  /** One BGP peer. Targets the local `bgp <asn>`; a device runs one process. */
+  | 'bgp_neighbor'
   /** Global: renames the device. `target` carries no meaning for it. */
   | 'hostname';
 export type SafetyLevel = 'D' | 'C';

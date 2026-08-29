@@ -57,6 +57,19 @@ def classify_risk(
         return _static_route_risk(target, previous_value)
     if change_type is ChangeType.ROUTER_NETWORK:
         return _router_network_risk(desired_value, previous_value)
+    # Withdrawing a network stops the process advertising it, so whatever was
+    # reaching it through this device stops reaching it. There is no version of
+    # that which is routine.
+    if change_type is ChangeType.ROUTER_NETWORK_REMOVE:
+        return ChangeRisk.HIGH
+    # v1 and v2 do not interoperate, so changing it drops every adjacency the
+    # process had; setting it on a process that does not exist starts RIP.
+    if change_type is ChangeType.ROUTER_RIP_VERSION:
+        return ChangeRisk.HIGH
+    # A peering session can move or withdraw a large amount of reachability the
+    # moment it comes up, and it is the classic way a lab loses its own path.
+    if change_type is ChangeType.BGP_NEIGHBOR:
+        return ChangeRisk.HIGH
     if current_admin_up is True and current_oper_up is True:
         return ChangeRisk.HIGH
     return ChangeRisk.LOW

@@ -287,7 +287,9 @@ describe('Packet Tracer-style device config window', () => {
     await user.click(screen.getByRole('button', { name: /RIP/ }));
     expect(screen.queryByLabelText('Process ID')).not.toBeInTheDocument();
     await user.type(screen.getByLabelText('Network'), '10.0.0.0');
-    await user.click(screen.getByRole('button', { name: /Apply/ }));
+    // RIP carries two submits -- its version and its networks are separate
+    // change types -- so each button says which one it sends.
+    await user.click(screen.getByRole('button', { name: /Apply network/ }));
 
     await waitFor(() =>
       expect(api.previewChange).toHaveBeenCalledWith({
@@ -307,6 +309,81 @@ describe('Packet Tracer-style device config window', () => {
     // The asymmetry that surprises people: undoing "add a network" can mean
     // removing the whole routing process.
     expect(await screen.findByText(/removes the whole process/)).toBeVisible();
+  });
+
+  it('withdraws a network statement when the action says remove', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.previewChange).mockResolvedValue(plan);
+    vi.mocked(api.applyChangePlan).mockResolvedValue(queuedJob);
+    renderWindow();
+
+    await user.click(screen.getByRole('button', { name: /OSPF/ }));
+    await user.type(screen.getByLabelText('Process ID'), '1');
+    await user.selectOptions(screen.getByLabelText('Action'), 'remove');
+    await user.type(screen.getByLabelText('Network'), '10.0.0.0 0.0.0.255 area 0');
+    await user.click(screen.getByRole('button', { name: /Apply network/ }));
+
+    await waitFor(() =>
+      expect(api.previewChange).toHaveBeenCalledWith({
+        device_id: device.id,
+        change_type: 'router_network_remove',
+        target: 'ospf 1',
+        desired_value: '10.0.0.0 0.0.0.255 area 0',
+      }),
+    );
+    // Removing advertises less, which is a different warning from adding.
+    expect(screen.getByText(/stops reaching it/)).toBeVisible();
+  });
+
+  it('sets the RIP version as its own change, separate from its networks', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.previewChange).mockResolvedValue(plan);
+    vi.mocked(api.applyChangePlan).mockResolvedValue(queuedJob);
+    renderWindow();
+
+    await user.click(screen.getByRole('button', { name: /RIP/ }));
+    await user.selectOptions(screen.getByLabelText('Version'), '2');
+    await user.click(screen.getByRole('button', { name: /Apply version/ }));
+
+    await waitFor(() =>
+      expect(api.previewChange).toHaveBeenCalledWith({
+        device_id: device.id,
+        change_type: 'router_rip_version',
+        target: 'rip',
+        desired_value: '2',
+      }),
+    );
+  });
+
+  it('assembles a BGP neighbour from the local AS, the peer and its AS', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.previewChange).mockResolvedValue(plan);
+    vi.mocked(api.applyChangePlan).mockResolvedValue(queuedJob);
+    renderWindow();
+
+    await user.click(screen.getByRole('button', { name: /BGP/ }));
+    await user.type(screen.getByLabelText('Local AS'), '65001');
+    await user.type(screen.getByLabelText('Neighbour address'), '192.0.2.2');
+    await user.type(screen.getByLabelText('Remote AS'), '65002');
+    await user.click(screen.getByRole('button', { name: /Apply neighbour/ }));
+
+    await waitFor(() =>
+      expect(api.previewChange).toHaveBeenCalledWith({
+        device_id: device.id,
+        change_type: 'bgp_neighbor',
+        target: 'bgp 65001',
+        desired_value: '192.0.2.2 remote-as 65002',
+      }),
+    );
+  });
+
+  it('leaves nothing in the routing section declared but unbuilt', () => {
+    renderWindow();
+    // Every protocol the operator asked for now renders a form rather than a
+    // reason it cannot.
+    for (const entry of CONFIG_ENTRIES.filter((item) => item.section === 'routing')) {
+      expect(entry.available).toBe(true);
+    }
   });
 
   it('offers no way to send a capability that is not implemented', async () => {

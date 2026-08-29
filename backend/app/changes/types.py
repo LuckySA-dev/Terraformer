@@ -194,3 +194,39 @@ def network_statement_issues(process_spec: str, statement: str) -> list[str]:
         if any(int(octet) > 255 for octet in octet_group.split(".")):
             return [f"{octet_group} is not a valid IPv4 address"]
     return []
+
+
+# A BGP process is named by its AS number, and a device runs exactly one.
+BGP_PROCESS = re.compile(r"^bgp (?P<asn>[1-9]\d{0,9})$")
+# "192.0.2.2 remote-as 65002". The peer and its AS, nothing else -- anything
+# further belongs to a change type that does not exist yet.
+_BGP_NEIGHBOR = re.compile(rf"^(?P<peer>{_IPV4}) remote-as (?P<asn>[1-9]\d{{0,9}})$")
+_ASN_MAX = 4294967295
+
+
+def bgp_process_issues(process_spec: str) -> list[str]:
+    match = BGP_PROCESS.match(process_spec.strip().lower())
+    if match is None or int(match.group("asn")) > _ASN_MAX:
+        return [f"local AS must be a number between 1 and {_ASN_MAX}"]
+    return []
+
+
+def bgp_neighbor_issues(value: str) -> list[str]:
+    cleaned = " ".join(value.split()).lower()
+    match = _BGP_NEIGHBOR.match(cleaned)
+    if match is None:
+        return [
+            "neighbour must be '<peer address> remote-as <asn>', "
+            "for example 192.0.2.2 remote-as 65002"
+        ]
+    if any(int(octet) > 255 for octet in match.group("peer").split(".")):
+        return [f"{match.group('peer')} is not a valid IPv4 address"]
+    if int(match.group("asn")) > _ASN_MAX:
+        return [f"remote AS must be a number between 1 and {_ASN_MAX}"]
+    return []
+
+
+def rip_version_issues(value: str) -> list[str]:
+    if value.strip() not in ("1", "2"):
+        return ["RIP version must be 1 or 2"]
+    return []

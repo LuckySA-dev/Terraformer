@@ -103,6 +103,9 @@ PROPOSE_CHANGE_PLAN_TOOL = ToolSchema(
                     "interface_trunk_vlans",
                     "static_route",
                     "router_network",
+                    "router_network_remove",
+                    "router_rip_version",
+                    "bgp_neighbor",
                     "hostname",
                 ],
                 "description": (
@@ -121,7 +124,13 @@ PROPOSE_CHANGE_PLAN_TOOL = ToolSchema(
                     "statement for that protocol ('10.0.0.0 0.0.0.255 area 0' for ospf, "
                     "'10.0.0.0 0.0.255.255' for eigrp, '10.0.0.0' for rip). If the process is "
                     "not running this starts it, and the rollback then removes the whole "
-                    "process. hostname: the device "
+                    "process. router_network_remove: the same target and value, but withdraws "
+                    "the statement; the process must already carry it. router_rip_version: "
+                    "target is 'rip' and desired_value is '1' or '2'. bgp_neighbor: target is "
+                    "the local process as 'bgp <asn>' and desired_value is "
+                    "'<peer address> remote-as <asn>' -- a device runs one BGP process, so the "
+                    "local AS must match the one already configured if there is one. "
+                    "hostname: the device "
                     "itself is the target, so pass an empty target, and desired_value is the new "
                     "name."
                 ),
@@ -131,8 +140,10 @@ PROPOSE_CHANGE_PLAN_TOOL = ToolSchema(
                 "description": (
                     "An interface name such as GigabitEthernet0/1, a VLAN id such as 10 "
                     "when change_type is vlan_name, a destination prefix for static_route, a "
-                    "routing process such as 'ospf 1' for router_network, or an empty string "
-                    "for hostname, which targets the device itself."
+                    "routing process such as 'ospf 1' for router_network and "
+                    "router_network_remove, 'rip' for router_rip_version, 'bgp <asn>' for "
+                    "bgp_neighbor, or an empty string for hostname, which targets the device "
+                    "itself."
                 ),
             },
             "desired_value": {"type": "string"},

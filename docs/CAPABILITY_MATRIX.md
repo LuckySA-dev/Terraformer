@@ -130,9 +130,10 @@ is completed. Entries may contain only the metadata allowed by
 ## Structured write capabilities
 
 Structured writes are optional (`STRUCTURED_WRITES_ENABLED`, off by default) and
-cover eight Cisco IOS/IOS-XE change types: interface description, interface
+cover eleven Cisco IOS/IOS-XE change types: interface description, interface
 admin state, VLAN name, interface access VLAN, interface trunk allowed VLANs,
-static route, one network statement in a RIP/EIGRP/OSPF process, and hostname. Saving running-config to startup-config is a seventh write, but it is
+static route, adding and removing one network statement in a RIP/EIGRP/OSPF
+process, the RIP version, one BGP neighbour, and hostname. Saving running-config to startup-config is a seventh write, but it is
 an action rather than a change type: it is an exec command, it alters no
 running state, and it has no inverse, so it does not go through the Change Plan
 pipeline. Every other capability and platform remains **Not Implemented**,
@@ -149,8 +150,9 @@ remains the explicit path outside this table and outside Safety Levels A–D.
 | Save running-config to startup-config | **Implemented, lab unverified** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
 | Render SVI/IP address | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
 | Render static route | **Implemented, lab unverified** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
-| Render RIP/EIGRP/OSPF network statement | **Implemented, lab unverified** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
-| Render BGP | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
+| Render RIP/EIGRP/OSPF network statement (add and remove) | **Implemented, lab unverified** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
+| Render RIP version | **Implemented, lab unverified** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
+| Render BGP neighbour | **Implemented, lab unverified** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
 | Validate rendered commands | **Implemented, lab unverified** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
 | Candidate/compare | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
 | Pre-change snapshot pipeline | **Implemented, lab unverified** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
@@ -159,10 +161,10 @@ remains the explicit path outside this table and outside Safety Levels A–D.
 | Confirmed commit | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
 | Rollback/assisted recovery | **Implemented, lab unverified** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
 
-Current structured-write safety classification: all eight Cisco IOS/IOS-XE
+Current structured-write safety classification: all eleven Cisco IOS/IOS-XE
 change types are **Level C, lab unverified** ("Best effort; never
-'auto-rollback'"). Four of them carry a caveat worth stating here and not only
-in code. A trunk
+'auto-rollback'"). Several carry a caveat worth stating here and not only in
+code. A trunk
 allowed-VLAN change **replaces** the list rather than adding to it, so every
 VLAN omitted stops crossing that link; it is classified HIGH risk whenever the
 port's link is up. Saving running-config is verified only by the device's own
@@ -174,19 +176,30 @@ repointing a prefix withdraws the old line in the same change, since two
 `ip route` lines for one prefix are alternative paths rather than an edit. A
 default route and a repointed prefix are both classified HIGH.
 
-A RIP/EIGRP/OSPF change adds exactly one `network` statement to one process.
-When that process is not running the change starts it, which is why the
+A RIP/EIGRP/OSPF change adds or withdraws exactly one `network` statement in
+one process. When the process is not running an add starts it, which is why the
 rollback for that case removes the whole process rather than the statement, and
 why it is classified HIGH; so is a statement whose wildcard covers every
-address, because it enables the protocol on the management interface too.
-Its post-check confirms the statement is present in the configuration, not that
-the protocol converged -- which is the only thing any change in this pipeline
-has ever claimed. Creating a RIP process leaves it at the device default of
-version 1; setting the version is not a supported change.
+address, because it enables the protocol on the management interface too. A
+removal is always HIGH -- whatever reached that network through this device
+stops reaching it -- and is refused unless the process already carries the
+statement, since withdrawing an absent one would produce a rollback that adds
+configuration rather than undoing any.
 
-BGP remains **Not Implemented**: a session is a neighbour and a remote AS
-rather than a network statement, so it does not share the shape the other three
-do and needs its own renderer, validation and post-check.
+The RIP version is its own change type and is always HIGH: v1 and v2 do not
+interoperate, so changing it drops every adjacency the process had, and setting
+it on a process that does not exist starts RIP.
+
+A BGP change configures one peer. IOS runs a single BGP process per device, so
+a local AS that does not match the one already configured is refused here
+rather than sent to be refused there. Re-pointing an existing peer withdraws it
+first, because one neighbour cannot hold two remote-as values. It is always
+HIGH: a session can move or withdraw a large amount of reachability as soon as
+it comes up.
+
+Every routing post-check confirms the configuration is present, not that the
+protocol converged -- which is the only thing any change in this pipeline has
+ever claimed.
 
 Every other platform and capability remains **Level D — Read-only**. The opt-in real-lab test
 (`backend/tests/lab/test_structured_writes_lab.py`) exists but has not been run

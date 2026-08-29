@@ -8,11 +8,15 @@ from time import monotonic
 from typing import ClassVar, cast
 
 from app.changes.types import (
+    BGP_PROCESS,
     ChangeStepIntent,
     RenderedChange,
+    bgp_neighbor_issues,
+    bgp_process_issues,
     network_statement_issues,
     prefix_issues,
     prefix_parts,
+    rip_version_issues,
     routing_process_issues,
     vlan_list_issues,
 )
@@ -226,6 +230,12 @@ class CiscoIOSXEDriver(DeviceDriver):
             return self._render_static_route(step, context)
         if step.change_type is ChangeType.ROUTER_NETWORK:
             return self._render_router_network(step, context)
+        if step.change_type is ChangeType.ROUTER_NETWORK_REMOVE:
+            return self._render_router_network_remove(step)
+        if step.change_type is ChangeType.ROUTER_RIP_VERSION:
+            return self._render_rip_version(step, context)
+        if step.change_type is ChangeType.BGP_NEIGHBOR:
+            return self._render_bgp_neighbor(step, context)
         current = context.interface
         if current is None:
             self._unsupported(DriverCapability.RENDER)
@@ -358,7 +368,7 @@ class CiscoIOSXEDriver(DeviceDriver):
         self, step: ChangeStepIntent, context: ChangeContext
     ) -> RenderedChange:
         process = step.target.strip()
-        statement = f"network {' '.join(step.desired_value.split())}"
+        statement = _network_statement(step.desired_value)
         existing = context.routing_process(process)
         if existing is None:
             # The process does not exist, so this change starts it. Undoing a
@@ -371,6 +381,58 @@ class CiscoIOSXEDriver(DeviceDriver):
         return RenderedChange(
             commands=(f"router {process}", statement),
             inverse_commands=(f"router {process}", f"no {statement}"),
+        )
+
+    def _render_router_network_remove(self, step: ChangeStepIntent) -> RenderedChange:
+        # Validation has already established the process holds this statement,
+        # so the inverse is simply putting it back.
+        process = step.target.strip()
+        statement = _network_statement(step.desired_value)
+        return RenderedChange(
+            commands=(f"router {process}", f"no {statement}"),
+            inverse_commands=(f"router {process}", statement),
+        )
+
+    def _render_rip_version(
+        self, step: ChangeStepIntent, context: ChangeContext
+    ) -> RenderedChange:
+        existing = context.routing_process("rip")
+        commands = ("router rip", f"version {step.desired_value.strip()}")
+        if existing is None:
+            # This change starts RIP, so undoing it removes the process.
+            return RenderedChange(commands=commands, inverse_commands=("no router rip",))
+        previous = existing.find_statement("version ")
+        # A process carrying no `version` line is at the device default, and
+        # the way back to a default is the negation rather than a number.
+        inverse_line = previous if previous is not None else "no version"
+        return RenderedChange(commands=commands, inverse_commands=("router rip", inverse_line))
+
+    def _render_bgp_neighbor(
+        self, step: ChangeStepIntent, context: ChangeContext
+    ) -> RenderedChange:
+        process = step.target.strip().lower()
+        peer = _peer_address(step.desired_value)
+        statement = f"neighbor {_collapse(step.desired_value)}"
+        existing = context.routing_process(process)
+        if existing is None:
+            return RenderedChange(
+                commands=(f"router {process}", statement),
+                inverse_commands=(f"no router {process}",),
+            )
+        previous = existing.find_statement(f"neighbor {peer} remote-as ")
+        if previous is None:
+            # `no neighbor <peer>` removes the peer entirely, which is the
+            # inverse of having introduced it.
+            return RenderedChange(
+                commands=(f"router {process}", statement),
+                inverse_commands=(f"router {process}", f"no neighbor {peer}"),
+            )
+        # Re-homing a peer to a different AS. IOS will not hold two remote-as
+        # values for one neighbour, so the old one is withdrawn first and the
+        # rollback does the same in reverse.
+        return RenderedChange(
+            commands=(f"router {process}", f"no neighbor {peer}", statement),
+            inverse_commands=(f"router {process}", f"no neighbor {peer}", previous),
         )
 
     def validate_change(self, step: ChangeStepIntent, context: ChangeContext) -> list[str]:
@@ -387,6 +449,12 @@ class CiscoIOSXEDriver(DeviceDriver):
             return self._validate_static_route(step)
         if step.change_type is ChangeType.ROUTER_NETWORK:
             return self._validate_router_network(step, context)
+        if step.change_type is ChangeType.ROUTER_NETWORK_REMOVE:
+            return self._validate_router_network_remove(step, context)
+        if step.change_type is ChangeType.ROUTER_RIP_VERSION:
+            return self._validate_rip_version(step, context)
+        if step.change_type is ChangeType.BGP_NEIGHBOR:
+            return self._validate_bgp_neighbor(step, context)
         if step.change_type is ChangeType.INTERFACE_DESCRIPTION:
             if len(step.desired_value) > self._DESCRIPTION_MAX_LENGTH:
                 issues.append(
@@ -502,12 +570,69 @@ class CiscoIOSXEDriver(DeviceDriver):
         if issues:
             return issues
         existing = context.routing_process(step.target.strip())
-        statement = f"network {' '.join(step.desired_value.split())}"
+        statement = _network_statement(step.desired_value)
         # Sending a statement the process already carries would stage a change
         # that changes nothing, and its inverse would then remove a statement
         # this change did not add.
         if existing is not None and existing.has_statement(statement):
             return [f"{step.target.strip()} already has '{statement}'"]
+        return []
+
+    def _validate_router_network_remove(
+        self, step: ChangeStepIntent, context: ChangeContext
+    ) -> list[str]:
+        issues = routing_process_issues(step.target)
+        if issues:
+            return issues
+        issues = network_statement_issues(step.target, step.desired_value)
+        if issues:
+            return issues
+        process = step.target.strip()
+        statement = _network_statement(step.desired_value)
+        existing = context.routing_process(process)
+        # Withdrawing something that is not there sends a command with no
+        # effect, and its inverse would then add a statement the device never
+        # had -- a rollback that makes a change rather than undoing one.
+        if existing is None:
+            return [f"{process} is not configured on this device"]
+        if not existing.has_statement(statement):
+            return [f"{process} does not have '{statement}'"]
+        return []
+
+    def _validate_rip_version(self, step: ChangeStepIntent, context: ChangeContext) -> list[str]:
+        issues = rip_version_issues(step.desired_value)
+        if issues:
+            return issues
+        existing = context.routing_process("rip")
+        if existing is not None:
+            current = existing.find_statement("version ")
+            if current == f"version {step.desired_value.strip()}":
+                return [f"RIP is already at {current}"]
+        return []
+
+    def _validate_bgp_neighbor(self, step: ChangeStepIntent, context: ChangeContext) -> list[str]:
+        issues = bgp_process_issues(step.target)
+        if issues:
+            return issues
+        issues = bgp_neighbor_issues(step.desired_value)
+        if issues:
+            return issues
+        process = step.target.strip().lower()
+        # IOS runs one BGP process per device and refuses a second local AS
+        # outright, so a mismatch is caught here rather than sent to be
+        # rejected there.
+        running = next(
+            (item for item in context.routing_processes if BGP_PROCESS.match(item.name.lower())),
+            None,
+        )
+        if running is not None and running.name.lower() != process:
+            return [
+                f"this device already runs router {running.name}, and IOS allows one BGP "
+                "process, so the local AS cannot be changed by adding a neighbour"
+            ]
+        statement = f"neighbor {_collapse(step.desired_value)}"
+        if running is not None and running.has_statement(statement):
+            return [f"{process} already has '{statement}'"]
         return []
 
     def _vlan_id_issues(self, raw: str, *, field: str) -> list[str]:
@@ -602,6 +727,19 @@ class CiscoIOSXEDriver(DeviceDriver):
                     transport.close()
                 except Exception:  # noqa: S110 - close must not mask the operation
                     pass
+
+
+def _collapse(value: str) -> str:
+    """One run of whitespace between tokens, which is the form IOS stores."""
+    return " ".join(value.split())
+
+
+def _network_statement(value: str) -> str:
+    return f"network {_collapse(value)}"
+
+
+def _peer_address(value: str) -> str:
+    return _collapse(value).lower().split(" ", 1)[0]
 
 
 def _is_ipv4(value: str) -> bool:

@@ -3819,6 +3819,75 @@ p {
   min-width: 0;
 }
 
+/* The composer reads as a prompt line rather than a chat box: the same input
+   carries a question, a change request, and a /command. */
+.assistant-page__prompt {
+  color: var(--teal);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+  flex: none;
+}
+
+.assistant-page__prompt-input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+
+/* Answered by the panel itself, so it is styled as terminal output rather than
+   as a message from the model -- it never entered the conversation. */
+.assistant-page__command-output {
+  margin: 0 0 8px;
+  padding: 8px 11px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--teal);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+.assistant-page__command-hints {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  max-height: 168px;
+  overflow-y: auto;
+}
+
+.assistant-page__command-hints button {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.assistant-page__command-hints button:hover {
+  background: var(--surface-muted);
+  color: var(--ink);
+}
+
+.assistant-page__command-hints .mono {
+  color: var(--teal-dark);
+  font-weight: 700;
+}
+
 .assistant-page__composer-tools {
   display: flex;
   align-items: center;

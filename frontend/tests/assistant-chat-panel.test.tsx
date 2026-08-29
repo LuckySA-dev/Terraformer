@@ -493,3 +493,93 @@ it('rescopes a live conversation without starting a new one', async () => {
   );
   expect(api.createAssistantSession).not.toHaveBeenCalled();
 });
+
+
+describe('the composer answers commands itself', () => {
+  const openChat = async (user: ReturnType<typeof userEvent.setup>) => {
+    vi.mocked(api.providerProfiles).mockResolvedValue([profile]);
+    vi.mocked(api.devices).mockResolvedValue([]);
+    vi.mocked(api.assistantSessions).mockResolvedValue([session]);
+    vi.mocked(api.assistantMessages).mockResolvedValue([]);
+    renderPanel(DEVICE_ID);
+    await user.selectOptions(await screen.findByLabelText('Conversation'), session.id);
+    return screen.getByLabelText('Message');
+  };
+
+  it('lists the commands without sending anything to the model', async () => {
+    const user = userEvent.setup();
+    const input = await openChat(user);
+
+    await user.type(input, '/help{Enter}');
+
+    expect(await screen.findByText(/Apply changes as soon as they are drafted/)).toBeVisible();
+    // A command is answered by the panel, so it must not enter the
+    // conversation the model sees.
+    const socket = FakeWebSocket.instances.at(-1);
+    expect(socket?.sent.some((frame) => frame.includes('/help'))).toBe(false);
+  });
+
+  it('switches to Auto on the command, treating typing it as the acceptance', async () => {
+    const user = userEvent.setup();
+    const input = await openChat(user);
+
+    await user.type(input, '/auto{Enter}');
+
+    const socket = FakeWebSocket.instances.at(-1);
+    await waitFor(() =>
+      expect(
+        socket?.sent.some((frame) => {
+          const parsed = JSON.parse(frame) as Record<string, unknown>;
+          return (
+            parsed.type === 'set_mode'
+            && parsed.mode === 'auto'
+            && parsed.risk_acknowledged === true
+          );
+        }),
+      ).toBe(true),
+    );
+    // And it says what it just turned on, including the ceiling.
+    expect(await screen.findByText(/Type \/manual to stop/)).toBeVisible();
+  });
+
+  it('switches back to Confirm', async () => {
+    const user = userEvent.setup();
+    const input = await openChat(user);
+
+    await user.type(input, '/manual{Enter}');
+
+    const socket = FakeWebSocket.instances.at(-1);
+    await waitFor(() =>
+      expect(
+        socket?.sent.some((frame) => {
+          const parsed = JSON.parse(frame) as Record<string, unknown>;
+          return parsed.type === 'set_mode' && parsed.mode === 'confirm';
+        }),
+      ).toBe(true),
+    );
+    expect(await screen.findByText(/Every apply waits for you/)).toBeVisible();
+  });
+
+  it('says an unknown command is unknown rather than asking the model about it', async () => {
+    const user = userEvent.setup();
+    const input = await openChat(user);
+
+    await user.type(input, '/wat{Enter}');
+
+    expect(await screen.findByText(/Unknown command \/wat/)).toBeVisible();
+    const socket = FakeWebSocket.instances.at(-1);
+    expect(socket?.sent.some((frame) => frame.includes('/wat'))).toBe(false);
+  });
+
+  it('offers the commands as soon as a slash is typed', async () => {
+    const user = userEvent.setup();
+    const input = await openChat(user);
+
+    await user.type(input, '/a');
+
+    const hint = await screen.findByRole('button', { name: /\/auto/ });
+    expect(hint).toBeVisible();
+    await user.click(hint);
+    expect(screen.getByLabelText('Message')).toHaveValue('/auto ');
+  });
+});

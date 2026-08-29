@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from app.assistant.client import ToolSchema
+from app.repositories.changes import ChangeRepository
 from app.repositories.events import EventRepository
 from app.schemas.devices import FactsView, InterfaceView, NeighborView
 from app.schemas.events import EventView
@@ -23,6 +24,18 @@ class ToolResult:
 
 
 _DEVICE_ID_PARAM = {"device_id": {"type": "string", "format": "uuid"}}
+
+_DEFAULT_LIMIT = 20
+_MAX_LIMIT = 100
+
+
+def _bounded_limit(raw: object) -> int:
+    """A model that asks for everything must not be able to have everything."""
+    try:
+        requested = int(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return _DEFAULT_LIMIT
+    return max(1, min(requested, _MAX_LIMIT))
 
 _FACTS_TOOL = ToolSchema(
     name="get_device_facts",
@@ -61,10 +74,50 @@ _EVENTS_TOOL = ToolSchema(
     },
 )
 
+_LIST_DEVICES_TOOL = ToolSchema(
+    name="list_devices",
+    description=(
+        "List every registered device: id, name, vendor, management address, reachability "
+        "and when it was last observed. Start here -- every other tool needs a device_id, "
+        "and this is the only way to learn one."
+    ),
+    parameters={"type": "object", "properties": {}},
+)
+_TOPOLOGY_TOOL = ToolSchema(
+    name="get_topology",
+    description=(
+        "The whole network as this application has observed it: every registered device, "
+        "and every CDP/LLDP adjacency between them. Links whose far end is not a "
+        "registered device are returned separately as observed-only neighbours. This is "
+        "evidence read from the devices, not a design document -- it is only as current as "
+        "the last refresh of each device, which is reported per device."
+    ),
+    parameters={"type": "object", "properties": {}},
+)
+_CHANGE_PLANS_TOOL = ToolSchema(
+    name="list_change_plans",
+    description=(
+        "Recent Change Plans, newest first, with what each one changed, its risk, whether "
+        "it applied, and the failure code if it did not. Use it to answer what was changed "
+        "recently and what a failure was, before proposing anything new. Omit device_id to "
+        "see every device."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "device_id": {"type": "string", "format": "uuid"},
+            "limit": {"type": "integer"},
+        },
+    },
+)
+
 # There is no write tool defined anywhere in this module, in either Confirm
 # or Auto mode -- see spec
 # docs/superpowers/specs/2026-08-24-phase-4-ai-assistant-design.md §6.
 READ_ONLY_TOOLS: tuple[ToolSchema, ...] = (
+    _LIST_DEVICES_TOOL,
+    _TOPOLOGY_TOOL,
+    _CHANGE_PLANS_TOOL,
     _FACTS_TOOL,
     _INTERFACES_TOOL,
     _NEIGHBORS_TOOL,
@@ -155,13 +208,27 @@ PROPOSE_CHANGE_PLAN_TOOL = ToolSchema(
 
 class ToolDispatcher:
     def __init__(
-        self, *, devices: DeviceService, snapshots: SnapshotService, events: EventRepository
+        self,
+        *,
+        devices: DeviceService,
+        snapshots: SnapshotService,
+        events: EventRepository,
+        changes: ChangeRepository | None = None,
     ) -> None:
         self._devices = devices
         self._snapshots = snapshots
         self._events = events
+        self._changes = changes
 
     def dispatch(self, name: str, arguments: dict[str, object]) -> ToolResult:
+        # The network-wide tools take no device_id, so the requirement moved
+        # from here into the tools that actually need one.
+        if name == _LIST_DEVICES_TOOL.name:
+            return ToolResult(name=name, payload=self._device_inventory())
+        if name == _TOPOLOGY_TOOL.name:
+            return ToolResult(name=name, payload=self._topology())
+        if name == _CHANGE_PLANS_TOOL.name:
+            return ToolResult(name=name, payload=self._change_plans(arguments))
         device_id = self._require_device_id(arguments)
         if name == _FACTS_TOOL.name:
             device = self._devices.get(device_id)
@@ -211,6 +278,111 @@ class ToolDispatcher:
                 },
             )
         raise ReadOnlyToolError(f"Unknown or unavailable tool: {name}")
+
+    def _device_inventory(self) -> dict[str, object]:
+        return {
+            "devices": [
+                {
+                    "device_id": str(device.id),
+                    "name": device.name,
+                    "vendor": device.vendor.value,
+                    "management_address": device.management_address,
+                    "status": device.status.value,
+                    "is_lab": device.is_lab,
+                    "last_seen_at": (
+                        device.last_seen_at.isoformat() if device.last_seen_at else None
+                    ),
+                    "hostname": device.facts.get("hostname"),
+                    "model": device.facts.get("model"),
+                }
+                for device in self._devices.list()
+            ]
+        }
+
+    def _topology(self) -> dict[str, object]:
+        """The observed graph, correlated across every registered device.
+
+        Neighbour records are stored per device, so a model asking "what does
+        this network look like" would otherwise have to call one tool per
+        device and correlate the far ends itself -- which it cannot do at all
+        until it can enumerate the devices.
+        """
+        devices = self._devices.list()
+        # A neighbour is matched to a registered device on its management
+        # address first, since that is exact, then on a hostname prefix --
+        # CDP reports "sw2.example.test" for a device named "SW2".
+        by_address = {device.management_address: device for device in devices}
+        by_name = {device.name.casefold(): device for device in devices}
+
+        links: list[dict[str, object]] = []
+        observed_only: list[dict[str, object]] = []
+        for device in devices:
+            for neighbor in self._devices.list_neighbors(device.id):
+                far_end = by_address.get(neighbor.management_address or "") or by_name.get(
+                    neighbor.remote_device_name.split(".", 1)[0].casefold()
+                )
+                record: dict[str, object] = {
+                    "protocol": neighbor.protocol,
+                    "local_device_id": str(device.id),
+                    "local_device": device.name,
+                    "local_interface": neighbor.local_interface,
+                    "remote_name": neighbor.remote_device_name,
+                    "remote_interface": neighbor.remote_interface,
+                    "remote_management_address": neighbor.management_address,
+                    "remote_platform": neighbor.platform,
+                }
+                if far_end is None:
+                    observed_only.append(record)
+                    continue
+                links.append({**record, "remote_device_id": str(far_end.id)})
+
+        return {
+            "evidence": "OBSERVED",
+            "note": (
+                "Adjacencies come from CDP/LLDP as of each device's last refresh; "
+                "last_seen_at says how current each one is. A device with no links may "
+                "simply not have been refreshed."
+            ),
+            "devices": self._device_inventory()["devices"],
+            "links": links,
+            "observed_only_neighbours": observed_only,
+        }
+
+    def _change_plans(self, arguments: dict[str, object]) -> dict[str, object]:
+        if self._changes is None:
+            raise ReadOnlyToolError("Change history is unavailable in this deployment")
+        limit = _bounded_limit(arguments.get("limit"))
+        raw_device = arguments.get("device_id")
+        if isinstance(raw_device, str) and raw_device:
+            try:
+                device_ids = [UUID(raw_device)]
+            except ValueError as exc:
+                raise ReadOnlyToolError("device_id must be a UUID") from exc
+        else:
+            device_ids = [device.id for device in self._devices.list()]
+
+        plans: list[dict[str, object]] = []
+        for device_id in device_ids:
+            for plan in self._changes.list_by_device(device_id, limit=limit):
+                step = plan.steps[0] if plan.steps else None
+                plans.append(
+                    {
+                        "change_plan_id": str(plan.id),
+                        "device_id": str(plan.device_id),
+                        "status": plan.status.value,
+                        "risk": plan.risk.value,
+                        "source": plan.source.value,
+                        "failure_code": plan.failure_code,
+                        "created_at": plan.created_at.isoformat(),
+                        "applied_at": plan.applied_at.isoformat() if plan.applied_at else None,
+                        "change_type": step.change_type.value if step else None,
+                        "target": step.target if step else None,
+                        "previous_value": step.previous_value if step else None,
+                        "desired_value": step.desired_value if step else None,
+                    }
+                )
+        plans.sort(key=lambda item: str(item["created_at"]), reverse=True)
+        return {"change_plans": plans[:limit]}
 
     @staticmethod
     def _require_device_id(arguments: dict[str, object]) -> UUID:

@@ -26,6 +26,23 @@ interface AssistantChatPanelProps {
   onOpenInventory?: (() => void) | undefined;
 }
 
+/**
+ * Commands the panel answers itself, the way a CLI does -- typed into the same
+ * line as everything else, answered without a round trip to the model.
+ *
+ * `/auto` is the risk acceptance. Typing it is the operator saying they will
+ * let changes reach the device unattended, which is the same decision the
+ * toggle's dialog asks for; there is no second prompt because the command was
+ * already deliberate.
+ */
+const COMMANDS: { name: string; help: string }[] = [
+  { name: '/auto', help: 'Apply changes as soon as they are drafted. You accept the risk.' },
+  { name: '/manual', help: 'Ask before every apply. This is the default.' },
+  { name: '/model', help: 'Switch model, or add a provider key.' },
+  { name: '/clear', help: 'Start a new conversation.' },
+  { name: '/help', help: 'List these commands.' },
+];
+
 export function AssistantChatPanel({
   deviceId,
   scopeHint,
@@ -35,6 +52,8 @@ export function AssistantChatPanel({
   const [activeSessionId, setActiveSessionId] = useState<string>();
   const [draft, setDraft] = useState('');
   const [keysOpen, setKeysOpen] = useState(false);
+  /** Output from a command the panel answered itself, not from the model. */
+  const [commandOutput, setCommandOutput] = useState<string | null>(null);
   const [modelsWanted, setModelsWanted] = useState<string[]>([]);
   // Only used before a session exists. Once one does, the session's own
   // provider/model is the truth -- mirroring it here would let the two drift.
@@ -220,8 +239,54 @@ export function AssistantChatPanel({
   const scopeIds: string[] =
     activeSession !== undefined ? activeSession.scope_device_ids : (pendingScope ?? []);
 
+  /** Returns true when the input was a command and must not reach the model. */
+  const runCommand = (raw: string): boolean => {
+    const [name] = raw.trim().split(/\s+/);
+    if (name?.startsWith('/') !== true) return false;
+    switch (name) {
+      case '/auto':
+        if (activeSessionId === undefined) {
+          setCommandOutput('Send a message first -- there is no session to switch yet.');
+          return true;
+        }
+        // Typing the command is the acceptance; the toggle's dialog asks for
+        // the same thing in a different shape.
+        chat.setMode('auto', true);
+        setCommandOutput(
+          'Auto mode. Changes are applied as soon as they are drafted, up to ' +
+            `${String(MAX_AUTO_APPLIES_PER_SESSION)} per conversation. Type /manual to stop.`,
+        );
+        return true;
+      case '/manual':
+      case '/confirm':
+        if (activeSessionId === undefined) {
+          setCommandOutput('Send a message first -- there is no session to switch yet.');
+          return true;
+        }
+        chat.setMode('confirm', false);
+        setCommandOutput('Confirm mode. Every apply waits for you.');
+        return true;
+      case '/model':
+        setKeysOpen(true);
+        setCommandOutput(null);
+        return true;
+      case '/clear':
+        setActiveSessionId(undefined);
+        setCommandOutput(null);
+        return true;
+      case '/help':
+        setCommandOutput(COMMANDS.map((item) => `${item.name}  ${item.help}`).join('\n'));
+        return true;
+      default:
+        setCommandOutput(`Unknown command ${name}. Type /help for the list.`);
+        return true;
+    }
+  };
+
   const submit = (content: string) => {
     if (content.trim() === '') return;
+    if (runCommand(content)) return;
+    setCommandOutput(null);
     if (activeSessionId !== undefined) {
       chat.sendMessage(content);
       return;
@@ -332,13 +397,33 @@ export function AssistantChatPanel({
           setDraft('');
         }}
       >
+        {commandOutput === null ? null : (
+          <pre className="assistant-page__command-output" role="status">{commandOutput}</pre>
+        )}
+        {draft.startsWith('/') ? (
+          <ul className="assistant-page__command-hints">
+            {COMMANDS.filter((item) => item.name.startsWith(draft.trim().split(/\s+/)[0] ?? '/')).map(
+              (item) => (
+                <li key={item.name}>
+                  <button type="button" onClick={() => setDraft(`${item.name} `)}>
+                    <span className="mono">{item.name}</span> {item.help}
+                  </button>
+                </li>
+              ),
+            )}
+          </ul>
+        ) : null}
         <div className="assistant-page__composer-row">
+          <span className="assistant-page__prompt" aria-hidden="true">&rsaquo;</span>
           <input
+            className="assistant-page__prompt-input"
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             aria-label="Message"
             placeholder={
-              choice === null ? 'Pick a model to start...' : 'Ask about this, or request a change...'
+              choice === null
+                ? 'Pick a model to start...'
+                : 'Ask, request a change, or type / for commands'
             }
             disabled={!hasKey}
           />

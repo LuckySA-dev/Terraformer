@@ -22,6 +22,7 @@ from app.core.errors import (
 )
 from app.models import AssistantSession, AssistantSessionMode
 from app.repositories.assistant import AssistantMessageRepository, AssistantSessionRepository
+from app.repositories.changes import ChangeRepository
 from app.repositories.events import EventRepository
 from app.repositories.provider_profiles import ProviderProfileRepository
 from app.schemas.assistant import (
@@ -231,7 +232,12 @@ def _build_tool_dispatcher(
     snapshots = SnapshotService(
         db_session, store=container.snapshot_store, devices=devices, drivers=container.drivers
     )
-    return ToolDispatcher(devices=devices, snapshots=snapshots, events=EventRepository(db_session))
+    return ToolDispatcher(
+        devices=devices,
+        snapshots=snapshots,
+        events=EventRepository(db_session),
+        changes=ChangeRepository(db_session),
+    )
 
 
 def _build_change_service(

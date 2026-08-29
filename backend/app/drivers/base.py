@@ -6,7 +6,12 @@ from dataclasses import asdict, dataclass
 from enum import StrEnum
 from typing import Any, Literal, Never, Protocol
 
-from app.changes.types import ChangeStepIntent, RenderedChange, same_interface
+from app.changes.types import (
+    ChangeStepIntent,
+    RenderedChange,
+    normalize_statement,
+    same_interface,
+)
 from app.core.errors import UnsupportedCapabilityError
 from app.models import SafetyLevel, SSHCompatibility, Vendor
 
@@ -206,6 +211,23 @@ class StaticRouteFacts:
 
 
 @dataclass(frozen=True, slots=True)
+class RoutingProcessFacts:
+    """One `router ...` block from the running configuration.
+
+    `name` is what follows the keyword -- "ospf 1", "rip", "eigrp 100" -- and
+    `statements` are its indented lines verbatim. Kept as text because the
+    change adds and removes whole statements rather than editing inside one.
+    """
+
+    name: str
+    statements: tuple[str, ...] = ()
+
+    def has_statement(self, statement: str) -> bool:
+        wanted = normalize_statement(statement)
+        return any(normalize_statement(line) == wanted for line in self.statements)
+
+
+@dataclass(frozen=True, slots=True)
 class ChangeContext:
     """The device state a change is rendered and validated against.
 
@@ -219,6 +241,7 @@ class ChangeContext:
     vlans: tuple[VlanFacts, ...] = ()
     switchports: tuple[SwitchportFacts, ...] = ()
     static_routes: tuple[StaticRouteFacts, ...] = ()
+    routing_processes: tuple[RoutingProcessFacts, ...] = ()
     # What the device currently calls itself. Only a global change needs it,
     # and it is the sole source for that change's inverse.
     hostname: str | None = None
@@ -245,6 +268,17 @@ class ChangeContext:
                 route
                 for route in self.static_routes
                 if route.destination == destination and route.mask == mask
+            ),
+            None,
+        )
+
+    def routing_process(self, name: str) -> RoutingProcessFacts | None:
+        wanted = normalize_statement(name)
+        return next(
+            (
+                process
+                for process in self.routing_processes
+                if normalize_statement(process.name) == wanted
             ),
             None,
         )
@@ -348,6 +382,11 @@ class DeviceDriver(ABC):
         self._unsupported(DriverCapability.INTERFACES)
 
     def get_static_routes(self, parameters: ConnectionParameters) -> list[StaticRouteFacts]:
+        self._unsupported(DriverCapability.ROUTING)
+
+    def get_routing_processes(
+        self, parameters: ConnectionParameters
+    ) -> list[RoutingProcessFacts]:
         self._unsupported(DriverCapability.ROUTING)
 
     def render_change(self, step: ChangeStepIntent, context: ChangeContext) -> RenderedChange:

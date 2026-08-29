@@ -359,6 +359,13 @@ export type ChangeType =
    * part of the same change, so the two never coexist.
    */
   | 'static_route'
+  /**
+   * Targets a routing process ("ospf 1", "rip", "eigrp 100"); the value is one
+   * network statement. Creating the process is part of the change when it does
+   * not exist, which is why its rollback removes the process rather than the
+   * statement.
+   */
+  | 'router_network'
   /** Global: renames the device. `target` carries no meaning for it. */
   | 'hostname';
 export type SafetyLevel = 'D' | 'C';

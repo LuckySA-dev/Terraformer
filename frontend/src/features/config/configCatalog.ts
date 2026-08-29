@@ -60,6 +60,24 @@ interface GlobalTextEntry {
   hint: string;
 }
 
+/**
+ * One network statement in a routing process. The protocol is fixed by which
+ * entry the operator picked, so the form asks for the process id and the
+ * statement rather than making them assemble "ospf 1" by hand.
+ */
+interface RouterNetworkEntry {
+  id: string;
+  section: ConfigSectionId;
+  label: string;
+  available: true;
+  kind: 'router-network';
+  changeType: 'router_network';
+  protocol: 'ospf' | 'eigrp' | 'rip';
+  /** Placeholder for the network statement, which differs per protocol. */
+  placeholder: string;
+  hint: string;
+}
+
 /** An action that runs on its own, with no plan to preview first. */
 interface ActionEntry {
   id: string;
@@ -69,7 +87,12 @@ interface ActionEntry {
   kind: 'save-config';
 }
 
-type AvailableEntry = SimpleEntry | CustomEntry | GlobalTextEntry | ActionEntry;
+type AvailableEntry =
+  | SimpleEntry
+  | CustomEntry
+  | GlobalTextEntry
+  | RouterNetworkEntry
+  | ActionEntry;
 
 /** A declared-but-unbuilt entry. Rendered disabled, never submittable. */
 interface UnavailableEntry {
@@ -152,37 +175,34 @@ export const CONFIG_ENTRIES: readonly ConfigEntry[] = [
     id: 'routing-rip',
     section: 'routing',
     label: 'RIP v1 / v2',
-    available: false,
-    reason: planned(
-      'The change itself is a config sub-block with its own shape per protocol, ' +
-        'and none of those renderers exist yet. Convergence is not the blocker: a ' +
-        'post-check confirms the configuration is present, which is all any change ' +
-        'here promises -- it never claimed the network had settled.',
-    ),
+    available: true,
+    kind: 'router-network',
+    changeType: 'router_network',
+    protocol: 'rip',
+    placeholder: '10.0.0.0',
+    hint: 'A classful network. A process this change creates starts at the device default, which is version 1 -- setting the version is not a supported change yet.',
   },
   {
     id: 'routing-eigrp',
     section: 'routing',
     label: 'EIGRP',
-    available: false,
-    reason: planned(
-      'The change itself is a config sub-block with its own shape per protocol, ' +
-        'and none of those renderers exist yet. Convergence is not the blocker: a ' +
-        'post-check confirms the configuration is present, which is all any change ' +
-        'here promises -- it never claimed the network had settled.',
-    ),
+    available: true,
+    kind: 'router-network',
+    changeType: 'router_network',
+    protocol: 'eigrp',
+    placeholder: '172.16.0.0 0.0.255.255',
+    hint: 'A network, with an optional wildcard mask.',
   },
   {
     id: 'routing-ospf',
     section: 'routing',
     label: 'OSPF',
-    available: false,
-    reason: planned(
-      'The change itself is a config sub-block with its own shape per protocol, ' +
-        'and none of those renderers exist yet. Convergence is not the blocker: a ' +
-        'post-check confirms the configuration is present, which is all any change ' +
-        'here promises -- it never claimed the network had settled.',
-    ),
+    available: true,
+    kind: 'router-network',
+    changeType: 'router_network',
+    protocol: 'ospf',
+    placeholder: '10.0.0.0 0.0.0.255 area 0',
+    hint: 'A network, a wildcard mask and an area. A wildcard of 255.255.255.255 enables OSPF on every interface, including the one this device is managed on.',
   },
   {
     id: 'routing-bgp',
@@ -190,10 +210,9 @@ export const CONFIG_ENTRIES: readonly ConfigEntry[] = [
     label: 'BGP',
     available: false,
     reason: planned(
-      'The change itself is a config sub-block with its own shape per protocol, ' +
-        'and none of those renderers exist yet. Convergence is not the blocker: a ' +
-        'post-check confirms the configuration is present, which is all any change ' +
-        'here promises -- it never claimed the network had settled.',
+      'A BGP session is a neighbour and a remote AS rather than a network ' +
+        'statement, so it does not fit the shape the other three share and needs ' +
+        'its own renderer, validation and post-check.',
     ),
   },
 ];

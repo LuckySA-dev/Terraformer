@@ -256,6 +256,56 @@ export function DeviceConfigWindow({
         </div>
       );
     }
+    if (entry.kind === 'router-network') {
+      // RIP takes no process id, so the target is the bare protocol word.
+      const process = entry.protocol === 'rip' ? 'rip' : `${entry.protocol} ${target.trim()}`;
+      const missingProcess = entry.protocol !== 'rip' && target.trim() === '';
+      return (
+        <div className="config-window__form">
+          {entry.protocol === 'rip' ? null : (
+            <InputField
+              label="Process ID"
+              inputMode="numeric"
+              value={target}
+              onChange={(event) => {
+                setTarget(event.target.value);
+                resetPlan();
+              }}
+              placeholder="1"
+              hint="1-65535. Local to this device -- it does not have to match its neighbours."
+            />
+          )}
+          <InputField
+            label="Network"
+            value={desiredValue}
+            onChange={(event) => {
+              setDesiredValue(event.target.value);
+              resetPlan();
+            }}
+            placeholder={entry.placeholder}
+            hint={entry.hint}
+          />
+          <InlineNotice tone="warning" title="Starting a process is part of this change">
+            If {process.trim() === 'rip' ? 'RIP' : process} is not running yet, this starts it --
+            and the rollback then removes the whole process, not just this network.
+          </InlineNotice>
+          <Button
+            size="small"
+            busy={preview.isPending}
+            disabled={missingProcess || desiredValue.trim() === ''}
+            onClick={() =>
+              preview.mutate({
+                changeType: entry.changeType,
+                target: process,
+                desiredValue: desiredValue.trim(),
+              })
+            }
+          >
+            <Settings2 size={14} /> {submitLabel}
+          </Button>
+        </div>
+      );
+    }
     if (entry.kind === 'global-text') {
       return (
         <div className="config-window__form">

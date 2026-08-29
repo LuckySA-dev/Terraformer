@@ -255,6 +255,60 @@ describe('Packet Tracer-style device config window', () => {
     expect(await screen.findByText(/prefix length is required/)).toBeVisible();
   });
 
+  it('assembles the routing process from the entry rather than asking for it', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.previewChange).mockResolvedValue(plan);
+    vi.mocked(api.applyChangePlan).mockResolvedValue(queuedJob);
+    renderWindow();
+
+    await user.click(screen.getByRole('button', { name: /OSPF/ }));
+    await user.type(screen.getByLabelText('Process ID'), '1');
+    await user.type(screen.getByLabelText('Network'), '10.0.0.0 0.0.0.255 area 0');
+    await user.click(screen.getByRole('button', { name: /Apply/ }));
+
+    // The protocol comes from the tree entry, so the operator never types
+    // "ospf 1" by hand.
+    await waitFor(() =>
+      expect(api.previewChange).toHaveBeenCalledWith({
+        device_id: device.id,
+        change_type: 'router_network',
+        target: 'ospf 1',
+        desired_value: '10.0.0.0 0.0.0.255 area 0',
+      }),
+    );
+  });
+
+  it('does not ask RIP for a process id it does not have', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.previewChange).mockResolvedValue(plan);
+    vi.mocked(api.applyChangePlan).mockResolvedValue(queuedJob);
+    renderWindow();
+
+    await user.click(screen.getByRole('button', { name: /RIP/ }));
+    expect(screen.queryByLabelText('Process ID')).not.toBeInTheDocument();
+    await user.type(screen.getByLabelText('Network'), '10.0.0.0');
+    await user.click(screen.getByRole('button', { name: /Apply/ }));
+
+    await waitFor(() =>
+      expect(api.previewChange).toHaveBeenCalledWith({
+        device_id: device.id,
+        change_type: 'router_network',
+        target: 'rip',
+        desired_value: '10.0.0.0',
+      }),
+    );
+  });
+
+  it('warns that the rollback removes a process this change would start', async () => {
+    const user = userEvent.setup();
+    renderWindow();
+
+    await user.click(screen.getByRole('button', { name: /EIGRP/ }));
+    // The asymmetry that surprises people: undoing "add a network" can mean
+    // removing the whole routing process.
+    expect(await screen.findByText(/removes the whole process/)).toBeVisible();
+  });
+
   it('offers no way to send a capability that is not implemented', async () => {
     const user = userEvent.setup();
     renderWindow();

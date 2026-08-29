@@ -12,7 +12,11 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.changes.risk import classify_risk
-from app.changes.types import ChangeStepIntent, expand_vlan_list, prefix_parts
+from app.changes.types import (
+    ChangeStepIntent,
+    expand_vlan_list,
+    prefix_parts,
+)
 from app.core.config import Settings
 from app.core.errors import (
     AppError,
@@ -61,6 +65,10 @@ def _needs_switchports(change_type: ChangeType) -> bool:
 
 def _needs_static_routes(change_type: ChangeType) -> bool:
     return change_type is ChangeType.STATIC_ROUTE
+
+
+def _needs_routing_processes(change_type: ChangeType) -> bool:
+    return change_type is ChangeType.ROUTER_NETWORK
 
 
 # Which change types name a port in `target`. The rest address the VLAN
@@ -113,6 +121,13 @@ def _post_check_ok(step: ChangeStep, context: ChangeContext) -> bool:
         destination, mask = prefix_parts(step.target)
         route = context.static_route(destination, mask)
         return route is not None and route.next_hop == step.desired_value.strip()
+    if step.change_type is ChangeType.ROUTER_NETWORK:
+        # Config presence, not convergence. That is all any post-check in this
+        # pipeline has ever asserted -- it confirms the device took the change,
+        # never that the network settled around it.
+        process = context.routing_process(step.target)
+        statement = f"network {' '.join(step.desired_value.split())}"
+        return process is not None and process.has_statement(statement)
     interface = context.interface
     if interface is None:
         return False
@@ -138,6 +153,13 @@ def _previous_value(change_type: ChangeType, target: str, context: ChangeContext
         destination, mask = prefix_parts(target)
         existing = context.static_route(destination, mask)
         return existing.next_hop if existing is not None else None
+    if change_type is ChangeType.ROUTER_NETWORK:
+        # The process name when it is already running, None when this change
+        # starts it. It is the diff's left side and, as with a static route,
+        # the signal the risk rule reads to tell "added a network to a process
+        # that was already up" from "started a routing protocol".
+        existing_process = context.routing_process(target)
+        return existing_process.name if existing_process is not None else None
     interface = context.interface
     if interface is None:
         return None
@@ -259,6 +281,11 @@ class ChangeService:
                 if _needs_static_routes(change_type)
                 else ()
             )
+            routing_processes = (
+                tuple(driver.get_routing_processes(parameters))
+                if _needs_routing_processes(change_type)
+                else ()
+            )
 
         current = next((iface for iface in interfaces if iface.name == target), None)
         if current is None and _targets_interface(change_type):
@@ -269,6 +296,7 @@ class ChangeService:
             vlans=vlans,
             switchports=switchports,
             static_routes=static_routes,
+            routing_processes=routing_processes,
             hostname=current_hostname,
         )
         step = ChangeStepIntent(change_type=change_type, target=target, desired_value=desired_value)
@@ -393,6 +421,11 @@ class ChangeService:
                     if _needs_static_routes(step.change_type)
                     else ()
                 )
+                routing_processes = (
+                    tuple(driver.get_routing_processes(parameters))
+                    if _needs_routing_processes(step.change_type)
+                    else ()
+                )
             current = next((iface for iface in interfaces if iface.name == step.target), None)
             if not _post_check_ok(
                 step,
@@ -401,6 +434,7 @@ class ChangeService:
                     vlans=vlans,
                     switchports=switchports,
                     static_routes=static_routes,
+                    routing_processes=routing_processes,
                     hostname=post_hostname,
                 ),
             ):

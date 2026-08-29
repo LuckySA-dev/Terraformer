@@ -55,6 +55,8 @@ def classify_risk(
         return ChangeRisk.HIGH
     if change_type is ChangeType.STATIC_ROUTE:
         return _static_route_risk(target, previous_value)
+    if change_type is ChangeType.ROUTER_NETWORK:
+        return _router_network_risk(desired_value, previous_value)
     if current_admin_up is True and current_oper_up is True:
         return ChangeRisk.HIGH
     return ChangeRisk.LOW
@@ -72,5 +74,21 @@ def _static_route_risk(target: str, previous_value: str | None) -> ChangeRisk:
     if target.strip() in ("0.0.0.0/0", "0.0.0.0 0.0.0.0"):
         return ChangeRisk.HIGH
     if previous_value is not None:
+        return ChangeRisk.HIGH
+    return ChangeRisk.LOW
+
+
+def _router_network_risk(desired_value: str, previous_value: str | None) -> ChangeRisk:
+    """A routing change is judged on reach, not on interface state.
+
+    Adding a network to a process that is already running extends something
+    the device was already doing. Starting a process puts the device into a
+    routing domain it was not in, and a statement whose wildcard covers every
+    address enables the protocol on every interface -- including the one the
+    device is managed on, whose adjacency can move how it is reached.
+    """
+    if " ".join(desired_value.split()).startswith("0.0.0.0 255.255.255.255"):
+        return ChangeRisk.HIGH
+    if previous_value is None:
         return ChangeRisk.HIGH
     return ChangeRisk.LOW

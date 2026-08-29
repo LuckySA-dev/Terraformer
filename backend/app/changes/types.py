@@ -132,3 +132,65 @@ def prefix_issues(target: str) -> list[str]:
             f"prefix length is required and no host bits may be set (got {target!r})"
         ]
     return []
+
+
+def normalize_statement(text: str) -> str:
+    """Collapses a config line onto one form for comparison.
+
+    IOS re-spaces what it is given, so a statement is matched on its tokens
+    rather than its exact text -- otherwise a change that took would read as
+    one that did not, and be rolled back.
+    """
+    return " ".join(text.split()).lower()
+
+
+# A routing process as the operator names it: "ospf 1", "eigrp 100", "rip".
+# RIP takes no identifier; the other two require one.
+_PROCESS_SPEC = re.compile(r"^(?:rip|(?:ospf|eigrp) (?P<id>[1-9]\d{0,4}))$")
+_IPV4 = r"\d{1,3}(?:\.\d{1,3}){3}"
+# What each protocol accepts after `network`. Deliberately three patterns
+# rather than one permissive one: the value is interpolated into a config line
+# and these are the only shapes any of them actually take.
+_NETWORK_STATEMENTS: dict[str, re.Pattern[str]] = {
+    "rip": re.compile(rf"^{_IPV4}$"),
+    "eigrp": re.compile(rf"^{_IPV4}(?: {_IPV4})?$"),
+    "ospf": re.compile(rf"^{_IPV4} {_IPV4} area (?:\d{{1,10}}|{_IPV4})$"),
+}
+
+
+def routing_protocol_of(process_spec: str) -> str:
+    """The protocol word out of "ospf 1"; empty when the spec is malformed."""
+    head = process_spec.strip().split(" ", 1)[0].lower()
+    return head if head in _NETWORK_STATEMENTS else ""
+
+
+def routing_process_issues(process_spec: str) -> list[str]:
+    cleaned = process_spec.strip().lower()
+    match = _PROCESS_SPEC.match(cleaned)
+    # The pattern bounds the digits loosely; the real ceiling is checked here
+    # rather than written as a regex nobody can read.
+    if match is None or (match.group("id") is not None and int(match.group("id")) > 65535):
+        return [
+            "routing process must be 'rip', or 'ospf <id>' / 'eigrp <id>' "
+            "with an id between 1 and 65535"
+        ]
+    return []
+
+
+def network_statement_issues(process_spec: str, statement: str) -> list[str]:
+    protocol = routing_protocol_of(process_spec)
+    if not protocol:
+        return []
+    pattern = _NETWORK_STATEMENTS[protocol]
+    cleaned = " ".join(statement.split())
+    if not pattern.match(cleaned):
+        shapes = {
+            "rip": "a classful network, for example 10.0.0.0",
+            "eigrp": "a network with an optional wildcard, for example 10.0.0.0 0.0.255.255",
+            "ospf": "a network, wildcard and area, for example 10.0.0.0 0.0.0.255 area 0",
+        }
+        return [f"for {protocol} the network must be {shapes[protocol]}"]
+    for octet_group in re.findall(_IPV4, cleaned):
+        if any(int(octet) > 255 for octet in octet_group.split(".")):
+            return [f"{octet_group} is not a valid IPv4 address"]
+    return []

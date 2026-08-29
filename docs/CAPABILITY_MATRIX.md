@@ -130,9 +130,9 @@ is completed. Entries may contain only the metadata allowed by
 ## Structured write capabilities
 
 Structured writes are optional (`STRUCTURED_WRITES_ENABLED`, off by default) and
-cover seven Cisco IOS/IOS-XE change types: interface description, interface
+cover eight Cisco IOS/IOS-XE change types: interface description, interface
 admin state, VLAN name, interface access VLAN, interface trunk allowed VLANs,
-static route, and hostname. Saving running-config to startup-config is a seventh write, but it is
+static route, one network statement in a RIP/EIGRP/OSPF process, and hostname. Saving running-config to startup-config is a seventh write, but it is
 an action rather than a change type: it is an exec command, it alters no
 running state, and it has no inverse, so it does not go through the Change Plan
 pipeline. Every other capability and platform remains **Not Implemented**,
@@ -149,7 +149,8 @@ remains the explicit path outside this table and outside Safety Levels A–D.
 | Save running-config to startup-config | **Implemented, lab unverified** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
 | Render SVI/IP address | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
 | Render static route | **Implemented, lab unverified** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
-| Render dynamic routing (RIP/EIGRP/OSPF/BGP) | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
+| Render RIP/EIGRP/OSPF network statement | **Implemented, lab unverified** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
+| Render BGP | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
 | Validate rendered commands | **Implemented, lab unverified** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
 | Candidate/compare | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
 | Pre-change snapshot pipeline | **Implemented, lab unverified** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
@@ -158,9 +159,9 @@ remains the explicit path outside this table and outside Safety Levels A–D.
 | Confirmed commit | **Not Implemented** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
 | Rollback/assisted recovery | **Implemented, lab unverified** | **Not Implemented** | **Not Implemented** | **Not Implemented** |
 
-Current structured-write safety classification: all seven Cisco IOS/IOS-XE
+Current structured-write safety classification: all eight Cisco IOS/IOS-XE
 change types are **Level C, lab unverified** ("Best effort; never
-'auto-rollback'"). Three of them carry a caveat worth stating here and not only
+'auto-rollback'"). Four of them carry a caveat worth stating here and not only
 in code. A trunk
 allowed-VLAN change **replaces** the list rather than adding to it, so every
 VLAN omitted stops crossing that link; it is classified HIGH risk whenever the
@@ -173,12 +174,19 @@ repointing a prefix withdraws the old line in the same change, since two
 `ip route` lines for one prefix are alternative paths rather than an edit. A
 default route and a repointed prefix are both classified HIGH.
 
-Dynamic routing (RIP, EIGRP, OSPF, BGP) remains **Not Implemented**. The
-blocker is that each protocol's change is a configuration sub-block with its
-own shape, and no renderer for those exists. It is not convergence: a
-post-check here confirms that the configuration is present, which is the only
-thing any change in this pipeline claims -- none of them assert that the
-network has settled.
+A RIP/EIGRP/OSPF change adds exactly one `network` statement to one process.
+When that process is not running the change starts it, which is why the
+rollback for that case removes the whole process rather than the statement, and
+why it is classified HIGH; so is a statement whose wildcard covers every
+address, because it enables the protocol on the management interface too.
+Its post-check confirms the statement is present in the configuration, not that
+the protocol converged -- which is the only thing any change in this pipeline
+has ever claimed. Creating a RIP process leaves it at the device default of
+version 1; setting the version is not a supported change.
+
+BGP remains **Not Implemented**: a session is a neighbour and a remote AS
+rather than a network statement, so it does not share the shape the other three
+do and needs its own renderer, validation and post-check.
 
 Every other platform and capability remains **Level D — Read-only**. The opt-in real-lab test
 (`backend/tests/lab/test_structured_writes_lab.py`) exists but has not been run

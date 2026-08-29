@@ -102,6 +102,7 @@ PROPOSE_CHANGE_PLAN_TOOL = ToolSchema(
                     "interface_access_vlan",
                     "interface_trunk_vlans",
                     "static_route",
+                    "router_network",
                     "hostname",
                 ],
                 "description": (
@@ -115,7 +116,12 @@ PROPOSE_CHANGE_PLAN_TOOL = ToolSchema(
                     "so include every VLAN the link must keep carrying. static_route: target "
                     "is a destination prefix in CIDR form such as 10.10.0.0/16 (the prefix "
                     "length is required), desired_value is the next hop as an IPv4 address or "
-                    "an exit interface name. hostname: the device "
+                    "an exit interface name. router_network: target is a routing process -- "
+                    "'rip', or 'ospf <id>' / 'eigrp <id>' -- and desired_value is one network "
+                    "statement for that protocol ('10.0.0.0 0.0.0.255 area 0' for ospf, "
+                    "'10.0.0.0 0.0.255.255' for eigrp, '10.0.0.0' for rip). If the process is "
+                    "not running this starts it, and the rollback then removes the whole "
+                    "process. hostname: the device "
                     "itself is the target, so pass an empty target, and desired_value is the new "
                     "name."
                 ),
@@ -124,8 +130,9 @@ PROPOSE_CHANGE_PLAN_TOOL = ToolSchema(
                 "type": "string",
                 "description": (
                     "An interface name such as GigabitEthernet0/1, a VLAN id such as 10 "
-                    "when change_type is vlan_name, or an empty string for hostname, which "
-                    "targets the device itself."
+                    "when change_type is vlan_name, a destination prefix for static_route, a "
+                    "routing process such as 'ospf 1' for router_network, or an empty string "
+                    "for hostname, which targets the device itself."
                 ),
             },
             "desired_value": {"type": "string"},

@@ -10,8 +10,10 @@ from typing import ClassVar, cast
 from app.changes.types import (
     ChangeStepIntent,
     RenderedChange,
+    network_statement_issues,
     prefix_issues,
     prefix_parts,
+    routing_process_issues,
     vlan_list_issues,
 )
 from app.core.errors import DriverCommandRejectedError
@@ -29,6 +31,7 @@ from app.drivers.base import (
     InterfaceFacts,
     NeighborFacts,
     NetworkTransport,
+    RoutingProcessFacts,
     StaticRouteFacts,
     SwitchportFacts,
     TransportFactory,
@@ -136,6 +139,18 @@ class CiscoIOSXEDriver(DeviceDriver):
             return []
         return parse_static_routes(output)
 
+    def get_routing_processes(
+        self, parameters: ConnectionParameters
+    ) -> list[RoutingProcessFacts]:
+        # Read from the configuration for the same reason static routes are:
+        # a process that has not formed an adjacency yet shows nothing useful
+        # in an operational view, but is configured all the same.
+        try:
+            output = self._command(parameters, "show running-config | section ^router")
+        except DriverCommandRejectedError:
+            return []
+        return parse_routing_processes(output)
+
     def get_neighbors(self, parameters: ConnectionParameters) -> list[NeighborFacts]:
         with self._session(parameters) as transport:
             return self._read_neighbors(transport)
@@ -209,6 +224,8 @@ class CiscoIOSXEDriver(DeviceDriver):
             return self._render_trunk_vlans(step, context)
         if step.change_type is ChangeType.STATIC_ROUTE:
             return self._render_static_route(step, context)
+        if step.change_type is ChangeType.ROUTER_NETWORK:
+            return self._render_router_network(step, context)
         current = context.interface
         if current is None:
             self._unsupported(DriverCapability.RENDER)
@@ -337,6 +354,25 @@ class CiscoIOSXEDriver(DeviceDriver):
             inverse_commands=(f"no {added}", existing.as_command()),
         )
 
+    def _render_router_network(
+        self, step: ChangeStepIntent, context: ChangeContext
+    ) -> RenderedChange:
+        process = step.target.strip()
+        statement = f"network {' '.join(step.desired_value.split())}"
+        existing = context.routing_process(process)
+        if existing is None:
+            # The process does not exist, so this change starts it. Undoing a
+            # start is removing it -- exactly as naming a VLAN that did not
+            # exist rolls back to `no vlan`, not to a previous name.
+            return RenderedChange(
+                commands=(f"router {process}", statement),
+                inverse_commands=(f"no router {process}",),
+            )
+        return RenderedChange(
+            commands=(f"router {process}", statement),
+            inverse_commands=(f"router {process}", f"no {statement}"),
+        )
+
     def validate_change(self, step: ChangeStepIntent, context: ChangeContext) -> list[str]:
         issues: list[str] = []
         if step.change_type is ChangeType.HOSTNAME:
@@ -349,6 +385,8 @@ class CiscoIOSXEDriver(DeviceDriver):
             return self._validate_trunk_vlans(step, context)
         if step.change_type is ChangeType.STATIC_ROUTE:
             return self._validate_static_route(step)
+        if step.change_type is ChangeType.ROUTER_NETWORK:
+            return self._validate_router_network(step, context)
         if step.change_type is ChangeType.INTERFACE_DESCRIPTION:
             if len(step.desired_value) > self._DESCRIPTION_MAX_LENGTH:
                 issues.append(
@@ -453,6 +491,24 @@ class CiscoIOSXEDriver(DeviceDriver):
                 "next hop must be an IPv4 address or an exit interface name, with no spaces"
             )
         return issues
+
+    def _validate_router_network(
+        self, step: ChangeStepIntent, context: ChangeContext
+    ) -> list[str]:
+        issues = routing_process_issues(step.target)
+        if issues:
+            return issues
+        issues = network_statement_issues(step.target, step.desired_value)
+        if issues:
+            return issues
+        existing = context.routing_process(step.target.strip())
+        statement = f"network {' '.join(step.desired_value.split())}"
+        # Sending a statement the process already carries would stage a change
+        # that changes nothing, and its inverse would then remove a statement
+        # this change did not add.
+        if existing is not None and existing.has_statement(statement):
+            return [f"{step.target.strip()} already has '{statement}'"]
+        return []
 
     def _vlan_id_issues(self, raw: str, *, field: str) -> list[str]:
         try:
@@ -725,6 +781,39 @@ def parse_static_routes(output: str) -> list[StaticRouteFacts]:
             )
         )
     return routes
+
+
+def parse_routing_processes(output: str) -> list[RoutingProcessFacts]:
+    """Splits `show running-config | section ^router` into its blocks.
+
+    A block header is unindented ("router ospf 1"); its statements are the
+    indented lines under it. `!` separators and blank lines are dropped.
+    """
+    processes: list[RoutingProcessFacts] = []
+    name: str | None = None
+    statements: list[str] = []
+    for raw in output.splitlines():
+        stripped = raw.strip()
+        if raw.startswith("router "):
+            if name is not None:
+                processes.append(RoutingProcessFacts(name=name, statements=tuple(statements)))
+            name = raw[len("router ") :].strip()
+            statements = []
+            continue
+        if name is None:
+            continue
+        if stripped in ("", "!"):
+            continue
+        if raw[:1].isspace():
+            statements.append(stripped)
+            continue
+        # An unindented line that is not a router header ends the block.
+        processes.append(RoutingProcessFacts(name=name, statements=tuple(statements)))
+        name = None
+        statements = []
+    if name is not None:
+        processes.append(RoutingProcessFacts(name=name, statements=tuple(statements)))
+    return processes
 
 
 def parse_cdp_neighbors(output: str) -> list[NeighborFacts]:

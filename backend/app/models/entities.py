@@ -125,6 +125,11 @@ class ChangeType(StrEnum):
     # because two `ip route` lines for one prefix are alternatives, not an
     # edit.
     STATIC_ROUTE = "static_route"
+    # One `network` statement inside a routing process. Targets the process
+    # ("ospf 1", "rip", "eigrp 100"); the desired value is the statement body.
+    # Creating the process is part of the change when it does not exist yet,
+    # which is what makes the inverse `no router ...` rather than `no network`.
+    ROUTER_NETWORK = "router_network"
     # The first global change: it targets the device itself, not a port or a
     # VLAN id, so `target` carries no meaning for it.
     HOSTNAME = "hostname"

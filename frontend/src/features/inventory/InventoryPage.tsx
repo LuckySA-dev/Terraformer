@@ -40,7 +40,14 @@ import { CredentialList } from './CredentialList';
 import { DeviceForm } from './DeviceForm';
 import { DeviceInspector } from './DeviceInspector';
 import { DiscoveryDialog } from './DiscoveryDialog';
-import { UsbConsoleDialog } from './UsbConsoleDialog';
+// Lazy because it reaches xterm. Imported eagerly, the terminal emulator
+// landed in the entry chunk and shipped on every page load -- including
+// the setup and login screens, where there is nothing to attach it to.
+// The dialog only ever renders inside a Modal that returns null while
+// closed, so the chunk arrives exactly when it is opened.
+const UsbConsoleDialog = lazy(() =>
+  import('./UsbConsoleDialog').then((module) => ({ default: module.UsbConsoleDialog })),
+);
 
 type DeviceDialog =
   | { mode: 'create' }
@@ -428,7 +435,11 @@ export function InventoryPage({ focusDeviceId }: InventoryPageProps) {
         onClose={() => setUsbConsoleOpen(false)}
         size="large"
       >
-        <UsbConsoleDialog />
+        <Suspense
+          fallback={<AppState kind="loading" title="Loading console" message="Fetching the USB console." compact />}
+        >
+          <UsbConsoleDialog />
+        </Suspense>
       </Modal>
 
       <Modal

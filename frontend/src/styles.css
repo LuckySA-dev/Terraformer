@@ -1,32 +1,52 @@
 :root {
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  color: #172126;
-  background: #eef1ef;
+  font-family: var(--face-body);
+  color: #141c1f;
+  background: #e8edeb;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   --ink: #172126;
   --muted: #69777d;
   --muted-2: #8b979b;
+  /* Surfaces are label tape and painted steel: the flat white a printed port
+     legend sits on, over the cool grey of a chassis. */
   --surface: #ffffff;
-  --surface-soft: #f7f8f7;
-  --surface-muted: #eef1ef;
-  --border: #dfe5e2;
-  --border-strong: #ccd5d1;
-  --sidebar: #0d1517;
-  --sidebar-soft: #152023;
-  --teal: #0c806e;
-  --teal-dark: #086556;
-  --teal-soft: #e6f4f0;
-  --blue: #2563a9;
-  --blue-soft: #eaf2fb;
-  --green: #148259;
-  --green-soft: #e8f6ef;
-  --red: #bc3d43;
-  --red-soft: #fbecee;
-  --amber: #a96712;
-  --amber-soft: #fff4de;
-  --violet: #7251ad;
-  --violet-soft: #f1ebfa;
+  --surface-soft: #f5f7f6;
+  --surface-muted: #e8edeb;
+  --border: #d5dcda;
+  --border-strong: #b6c1be;
+  --sidebar: #101a1d;
+  --sidebar-soft: #182529;
+
+  /* The accent is the console cable -- the one object every engineer in this
+     tool's audience owns, and the only blue in a rack that is there to be
+     noticed. `--teal` keeps its name because 37 rules reference it; the value
+     is what carries the identity. */
+  --teal: #0a6fa8;
+  --teal-dark: #08587f;
+  --teal-soft: #e3f0f8;
+  --blue: #2f6ea8;
+  --blue-soft: #e9f1f8;
+
+  /* Status is read off the front panel, so it uses the front panel's own
+     vocabulary: link green, blocked amber, fault red. */
+  --green: #1c8f4c;
+  --green-soft: #e6f4ec;
+  --red: #bf3b33;
+  --red-soft: #fbebea;
+  --amber: #b87503;
+  --amber-soft: #fdf2df;
+  --violet: #6a52a3;
+  --violet-soft: #efecf8;
+
+  /* Type roles. The structure face is monospace on purpose: a device answers
+     in fixed-width columns, and the chrome that quotes it should speak the
+     same way. Prose keeps the sans. Both are system stacks -- this tool runs
+     on closed lab networks and must not fetch a font from anyone. */
+  --face-structure: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+  --face-body: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+  --track-label: 0.09em;
   --shadow-sm: 0 1px 2px rgb(11 30 24 / 5%), 0 4px 14px rgb(11 30 24 / 3%);
   --shadow-lg: 0 24px 80px rgb(7 22 18 / 22%);
 }
@@ -209,21 +229,35 @@ p {
   background: var(--surface);
 }
 
+/* The evidence stamp.
+   Every badge in this app is the interface saying where something came from or
+   what state it is in -- OBSERVED, NOT YET SENT, ON THE DEVICE. So it is set
+   like a machine-printed legend: a leading rule in the status colour, then
+   fixed-width uppercase.
+
+   The status colour lives in the rule and the LED, not in a tinted pill. A
+   screen here carries nineteen warnings at once, and nineteen amber pills
+   become wallpaper; one saturated indicator against neutral chrome stays
+   readable. It is also how the operator already reads a switch -- the chassis
+   is grey and the LED is the colour. */
 .badge {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   width: max-content;
-  min-height: 21px;
-  padding: 2px 7px;
-  border-radius: 999px;
-  font-size: 9px;
+  min-height: 20px;
+  padding: 2px 8px 2px 0;
+  border-left: 2px solid var(--border-strong);
+  padding-left: 7px;
+  border-radius: 0;
+  font-family: var(--face-structure);
+  font-size: 10px;
   line-height: 1;
-  font-weight: 800;
-  letter-spacing: 0.055em;
+  font-weight: 600;
+  letter-spacing: var(--track-label);
   text-transform: uppercase;
-  color: var(--muted);
-  background: var(--surface-muted);
+  color: var(--ink);
+  background: none;
 }
 
 .badge__dot {
@@ -232,31 +266,38 @@ p {
   flex: 0 0 auto;
   border-radius: 50%;
   background: currentcolor;
+  /* The glow is what makes a lit LED read as lit rather than as a printed
+     dot. Kept to a single tight ring so it never becomes decoration. */
+  box-shadow: 0 0 0 2px color-mix(in srgb, currentcolor 18%, transparent);
 }
 
 .badge--success {
+  border-left-color: var(--green);
   color: var(--green);
-  background: var(--green-soft);
 }
 
 .badge--warning {
+  border-left-color: var(--amber);
   color: var(--amber);
-  background: var(--amber-soft);
 }
 
 .badge--danger {
+  border-left-color: var(--red);
   color: var(--red);
-  background: var(--red-soft);
 }
 
 .badge--info {
-  color: var(--blue);
-  background: var(--blue-soft);
+  border-left-color: var(--teal);
+  color: var(--teal);
+}
+
+.badge--neutral {
+  color: var(--muted);
 }
 
 .badge--purple {
+  border-left-color: var(--violet);
   color: var(--violet);
-  background: var(--violet-soft);
 }
 
 /* Access and service gates */
@@ -531,10 +572,17 @@ p {
   gap: 12px;
 }
 
+/* A label names a field; it is chrome, not prose, so it takes the structure
+   face. The value the operator types stays in the body face -- or in the
+   structure face where the value is device vernacular, which the .mono class
+   already marks. */
 .field label {
-  color: #3c4a4f;
-  font-size: 11px;
-  font-weight: 700;
+  color: #47565b;
+  font-family: var(--face-structure);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
 }
 
 .field-action {
@@ -1012,6 +1060,7 @@ p {
 }
 
 .sidebar__brand span {
+  font-family: var(--face-structure);
   color: #687976;
   font-size: 8px;
   text-transform: uppercase;
@@ -1355,6 +1404,7 @@ p {
 }
 
 .metric-card span {
+  font-family: var(--face-structure);
   color: var(--muted);
   font-size: 8px;
   font-weight: 700;
@@ -1472,6 +1522,7 @@ p {
 }
 
 .device-table th {
+  font-family: var(--face-structure);
   padding: 9px 12px;
   border-bottom: 1px solid var(--border);
   color: var(--muted);
@@ -1723,6 +1774,7 @@ p {
 }
 
 .inspector__footer {
+  font-family: var(--face-structure);
   min-height: 29px;
   display: flex;
   align-items: center;
@@ -3054,6 +3106,7 @@ p {
 }
 
 .connection-error__stage-tag {
+  font-family: var(--face-structure);
   padding: 1px 6px;
   border-radius: 999px;
   background: var(--red);
@@ -3135,18 +3188,20 @@ p {
     --border-strong: #35474e;
     --sidebar: #0a1113;
     --sidebar-soft: #121b1e;
-    --teal: #3fbfa5;
-    --teal-dark: #2fa48c;
-    --teal-soft: #10312c;
+    /* The same equipment vocabulary, lifted for a dark surface: a rack in a
+       dim room still shows console blue and the same three LEDs. */
+    --teal: #4aaee0;
+    --teal-dark: #3893c2;
+    --teal-soft: #102836;
     --blue: #6ba6e8;
     --blue-soft: #14253a;
-    --green: #4cbc8b;
-    --green-soft: #102e22;
-    --red: #f08a8f;
+    --green: #46c07a;
+    --green-soft: #0f2c1c;
+    --red: #ec6f68;
     --red-soft: #33191d;
-    --amber: #e0a952;
+    --amber: #e0a23f;
     --amber-soft: #33260f;
-    --violet: #b096e2;
+    --violet: #a893dd;
     --violet-soft: #241d38;
     --shadow-sm: 0 1px 2px rgb(0 0 0 / 40%), 0 4px 14px rgb(0 0 0 / 30%);
     --shadow-lg: 0 24px 80px rgb(0 0 0 / 60%);
@@ -3312,6 +3367,7 @@ p {
 }
 
 .chat-transcript__tool-name {
+  font-family: var(--face-structure);
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -3346,6 +3402,7 @@ p {
 }
 
 .mode-toggle__label {
+  font-family: var(--face-structure);
   color: var(--muted);
   font-size: 9px;
   font-weight: 800;
@@ -3593,6 +3650,7 @@ p {
 }
 
 .config-window__group-label {
+  font-family: var(--face-structure);
   display: block;
   padding: 0 7px 5px;
   color: var(--muted-2);
@@ -4031,6 +4089,7 @@ p {
 }
 
 .model-picker__group-label {
+  font-family: var(--face-structure);
   display: block;
   padding: 0 7px 4px;
   color: var(--muted-2);
@@ -4183,6 +4242,7 @@ p {
 }
 
 .interface-table th {
+  font-family: var(--face-structure);
   position: sticky;
   top: 0;
   z-index: 1;

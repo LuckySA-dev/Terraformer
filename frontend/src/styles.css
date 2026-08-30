@@ -1,12 +1,12 @@
 :root {
   font-family: var(--face-body);
   color: #141c1f;
-  background: #e8edeb;
+  background: #e8ebed;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   --ink: #172126;
   --muted: #69777d;
-  --muted-2: #8b979b;
+  --muted-2: #8b949b;
   /* Surfaces are label tape and painted steel: the flat white a printed port
      legend sits on, over the cool grey of a chassis. */
   --surface: var(--light-surface);
@@ -14,8 +14,8 @@
   --surface-muted: var(--light-surface-muted);
   --border: var(--light-border);
   --border-strong: var(--light-border-strong);
-  --sidebar: #101a1d;
-  --sidebar-soft: #182529;
+  --sidebar: #10181d;
+  --sidebar-soft: #182229;
 
   /* The accent is the console cable -- the one object every engineer in this
      tool's audience owns, and the only blue in a rack that is there to be
@@ -47,12 +47,12 @@
      These are the copy; the scopes below map to them. */
   --light-ink: #141c1f;
   --light-muted: #69777d;
-  --light-muted-2: #8b979b;
+  --light-muted-2: #8b949b;
   --light-surface: #ffffff;
   --light-surface-soft: #f5f7f6;
-  --light-surface-muted: #e8edeb;
-  --light-border: #d5dcda;
-  --light-border-strong: #b6c1be;
+  --light-surface-muted: #e8ebed;
+  --light-border: #d5d9dc;
+  --light-border-strong: #b6bcc1;
   --light-teal: #0a6fa8;
   --light-teal-dark: #08587f;
   --light-teal-soft: #e3f0f8;
@@ -376,11 +376,11 @@ p {
   justify-content: center;
   align-items: flex-start;
   padding: clamp(56px, 8vw, 120px);
-  color: #f1f7f5;
+  color: #f1f4f7;
   background:
     radial-gradient(circle at 12% 82%, rgb(22 112 168 / 20%), transparent 28%),
     radial-gradient(circle at 88% 12%, rgb(46 104 132 / 16%), transparent 27%),
-    #0c1517;
+    #0c1217;
 }
 
 .access-brand::after {
@@ -437,7 +437,7 @@ p {
   position: relative;
   z-index: 1;
   max-width: 560px;
-  color: #aab9b6;
+  color: #aab3b9;
   font-size: 16px;
   line-height: 1.7;
 }
@@ -463,12 +463,12 @@ p {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  color: #849793;
+  color: #848f97;
   font-size: 12px;
 }
 
 .access-benefits strong {
-  color: #dfe8e6;
+  color: #dfe4e8;
   font-size: 13px;
 }
 
@@ -543,7 +543,7 @@ p {
   display: flex;
   align-items: center;
   gap: 10px;
-  color: #24413c;
+  color: #243541;
   font-weight: 800;
 }
 
@@ -606,7 +606,7 @@ p {
    structure face where the value is device vernacular, which the .mono class
    already marks. */
 .field label {
-  color: #47565b;
+  color: #47535b;
   font-family: var(--face-structure);
   font-size: 10px;
   font-weight: 600;
@@ -639,11 +639,11 @@ p {
 }
 
 .input::placeholder {
-  color: #9aa4a7;
+  color: #9aa2a7;
 }
 
 .input:hover {
-  border-color: #b8c4bf;
+  border-color: #b8bfc4;
 }
 
 .input:focus {
@@ -658,8 +658,8 @@ p {
   appearance: none;
   padding-right: 34px;
   background-image:
-    linear-gradient(45deg, transparent 50%, #6d797d 50%),
-    linear-gradient(135deg, #6d797d 50%, transparent 50%);
+    linear-gradient(45deg, transparent 50%, #6d767d 50%),
+    linear-gradient(135deg, #6d767d 50%, transparent 50%);
   background-position:
     calc(100% - 16px) 18px,
     calc(100% - 12px) 18px;
@@ -980,7 +980,7 @@ p {
   display: grid;
   place-items: center;
   border-radius: 50%;
-  color: #71817d;
+  color: #717a81;
   background: var(--surface-muted);
 }
 
@@ -1051,9 +1051,9 @@ p {
   flex-direction: column;
   min-height: 0;
   padding: 17px 13px 12px;
-  color: #b6c1be;
+  color: #b6bcc1;
   background: var(--sidebar);
-  border-right: 1px solid #172225;
+  border-right: 1px solid #171f25;
 }
 
 .sidebar__brand {
@@ -1083,14 +1083,14 @@ p {
 }
 
 .sidebar__brand strong {
-  color: #f0f5f3;
+  color: #f0f3f5;
   font-size: 14px;
   letter-spacing: -0.015em;
 }
 
 .sidebar__brand span {
   font-family: var(--face-structure);
-  color: #687976;
+  color: #687279;
   font-size: 8px;
   text-transform: uppercase;
   letter-spacing: 0.09em;
@@ -1102,7 +1102,7 @@ p {
   gap: 9px;
   margin: 0 1px 20px;
   padding: 9px 10px;
-  border: 1px solid #203034;
+  border: 1px solid #202c34;
   border-radius: 8px;
   background: var(--sidebar-soft);
 }
@@ -1122,19 +1122,19 @@ p {
 }
 
 .environment-chip strong {
-  color: #cfd8d5;
+  color: #cfd4d8;
   font-size: 9px;
 }
 
 .environment-chip span:last-child {
-  color: #667773;
+  color: #667077;
   font-size: 7px;
 }
 
 .sidebar__section-label {
   display: block;
   padding: 0 10px 8px;
-  color: #52625f;
+  color: #525b62;
   font-size: 8px;
   font-weight: 800;
   letter-spacing: 0.13em;
@@ -1154,7 +1154,7 @@ p {
   padding: 0 11px;
   border: 0;
   border-radius: 7px;
-  color: #7e8e8a;
+  color: #7e878e;
   background: transparent;
   font-size: 10px;
   font-weight: 700;
@@ -1162,13 +1162,13 @@ p {
 }
 
 .sidebar__nav button:hover {
-  color: #b7c4c0;
+  color: #b7bfc4;
   background: #121d22;
 }
 
 .sidebar__nav button.is-active {
-  color: #e9f4f1;
-  background: #17262b;
+  color: #e9eff4;
+  background: #17232b;
 }
 
 .sidebar__nav button.is-active::before {
@@ -1211,13 +1211,13 @@ p {
 
 .safety-card strong {
   display: block;
-  color: #d8e3e0;
+  color: #d8dee3;
   font-size: 9px;
 }
 
 .safety-card p {
   margin: 5px 0 10px;
-  color: #6d7e7a;
+  color: #6d777e;
   font-size: 8px;
   line-height: 1.5;
 }
@@ -1234,15 +1234,15 @@ p {
   gap: 9px;
   padding: 9px 8px;
   border: 0;
-  border-top: 1px solid #1c282b;
-  color: #6f807c;
+  border-top: 1px solid #1c252b;
+  color: #6f7980;
   background: transparent;
   text-align: left;
   cursor: pointer;
 }
 
 .session-button:hover {
-  color: #a9b8b4;
+  color: #a9b2b8;
 }
 
 .session-button__icon {
@@ -1262,7 +1262,7 @@ p {
 }
 
 .session-button strong {
-  color: #a8b5b2;
+  color: #a8b0b5;
   font-size: 9px;
 }
 
@@ -1303,7 +1303,7 @@ p {
 }
 
 .status-bar__group strong {
-  color: #50615e;
+  color: #505a61;
   font-size: 8px;
   text-transform: capitalize;
 }
@@ -1315,7 +1315,7 @@ p {
 }
 
 .status-dot.is-ok {
-  background: #26a777;
+  background: var(--green);
 }
 
 .status-dot.is-warning {
@@ -1377,6 +1377,7 @@ p {
 
 .page-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
   justify-content: space-between;
   gap: 24px;
@@ -1394,8 +1395,13 @@ p {
   font-size: 10px;
 }
 
+/* Inventory puts six actions here -- 835px in an unbroken row, which became
+   the page's minimum width. A toolbar is the one part of a header that can
+   always afford to wrap; the title beside it cannot. */
 .page-header__actions {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
 }
 
@@ -1520,7 +1526,7 @@ p {
   padding: 0 10px;
   border: 1px solid var(--border);
   border-radius: 7px;
-  color: #93a09d;
+  color: #939ba0;
   background: var(--surface-soft);
 }
 
@@ -1654,7 +1660,7 @@ p {
 .device-name small,
 .table-secondary {
   display: block;
-  color: #8a9699;
+  color: #8a9399;
   font-size: 7px;
   white-space: nowrap;
   overflow: hidden;
@@ -1773,7 +1779,7 @@ p {
   gap: 3px;
   padding: 0;
   border: 0;
-  color: #86928f;
+  color: #868d92;
   background: transparent;
   font-size: 7px;
   font-weight: 700;
@@ -1849,7 +1855,7 @@ p {
   align-items: center;
   justify-content: space-between;
   gap: 15px;
-  border-top: 1px solid #edf0ef;
+  border-top: 1px solid #edeff0;
   font-size: 8px;
 }
 
@@ -1885,7 +1891,7 @@ p {
 
 .fact-card svg {
   grid-row: 1 / 3;
-  color: #7a9991;
+  color: #7a8c99;
 }
 
 .fact-card span {
@@ -1927,8 +1933,8 @@ p {
 }
 
 .interface-row__status.is-up {
-  background: #29a878;
-  box-shadow: 0 0 0 3px rgb(41 168 120 / 10%);
+  background: var(--green);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 12%, transparent);
 }
 
 .interface-row__status.is-down {
@@ -2021,9 +2027,9 @@ p {
 
 .diagnostic-output {
   overflow: hidden;
-  border: 1px solid #293839;
+  border: 1px solid #293239;
   border-radius: 8px;
-  background: #10191b;
+  background: #10161b;
 }
 
 .diagnostic-output > div {
@@ -2032,9 +2038,9 @@ p {
   justify-content: space-between;
   gap: 10px;
   padding: 8px 10px;
-  border-bottom: 1px solid #273537;
-  color: #b8cbc6;
-  background: #162225;
+  border-bottom: 1px solid #273037;
+  color: #b8c3cb;
+  background: #161f25;
   font-size: 8px;
 }
 
@@ -2047,8 +2053,8 @@ p {
 .diagnostic-output .button {
   min-height: 25px;
   padding: 4px 7px;
-  color: #b8cbc6;
-  border-color: #405153;
+  color: #b8c3cb;
+  border-color: #404b53;
 }
 
 .diagnostic-output pre {
@@ -2056,7 +2062,7 @@ p {
   margin: 0;
   padding: 13px;
   overflow: auto;
-  color: #b8cbc6;
+  color: #b8c3cb;
   font: 8px/1.6 "DM Mono", monospace;
   white-space: pre;
 }
@@ -2117,17 +2123,17 @@ p {
 
 .terminal-session {
   overflow: hidden;
-  border: 1px solid #293839;
+  border: 1px solid #293239;
   border-radius: 8px;
-  background: #10191b;
+  background: #10161b;
 }
 
 .terminal-session__status {
   display: flex;
   justify-content: space-between;
   padding: 7px 10px;
-  color: #8ca19c;
-  background: #162225;
+  color: #8c98a1;
+  background: #161f25;
   font: 7px "DM Mono", monospace;
 }
 
@@ -2189,7 +2195,7 @@ p {
 
 .usb-console-authorization {
   margin: 0 12px;
-  color: #d6e2df;
+  color: #d6dde2;
   font-size: 10px;
 }
 
@@ -2339,10 +2345,10 @@ p {
 }
 
 .snapshot-viewer {
-  border: 1px solid #293839;
+  border: 1px solid #293239;
   border-radius: 8px;
   overflow: hidden;
-  background: #10191b;
+  background: #10161b;
 }
 
 .snapshot-viewer__bar {
@@ -2351,9 +2357,9 @@ p {
   justify-content: space-between;
   gap: 10px;
   padding: 8px 10px;
-  border-bottom: 1px solid #273537;
-  color: #899b97;
-  background: #162225;
+  border-bottom: 1px solid #273037;
+  color: #89939b;
+  background: #161f25;
   font-size: 7px;
 }
 
@@ -2368,7 +2374,7 @@ p {
   margin: 0;
   padding: 13px;
   overflow: auto;
-  color: #b8cbc6;
+  color: #b8c3cb;
   font: 8px/1.6 "DM Mono", monospace;
   white-space: pre;
 }
@@ -2389,7 +2395,7 @@ p {
   border: 1px solid var(--border);
   border-radius: 11px;
   background: var(--surface);
-  box-shadow: 0 8px 24px rgb(29 51 45 / 5%);
+  box-shadow: 0 8px 24px rgb(29 42 51 / 5%);
 }
 
 .topology-stale-alert {
@@ -2491,7 +2497,7 @@ p {
 
 /* Mirrors the cytoscape edge styles: CDP solid, LLDP dashed, manual dotted. */
 .topology-line--cdp {
-  border-color: #7e968f;
+  border-color: #7e8c96;
 }
 
 .topology-line--lldp {
@@ -2615,13 +2621,13 @@ p {
   place-items: center;
   border: 1px solid var(--border);
   border-radius: 50%;
-  color: #768683;
+  color: #767f86;
   background: var(--surface);
 }
 
 .timeline__item--success .timeline__icon {
   color: var(--green);
-  border-color: #c7e6d7;
+  border-color: color-mix(in srgb, var(--green) 30%, transparent);
   background: var(--green-soft);
 }
 
@@ -2645,7 +2651,7 @@ p {
 
 .timeline__content {
   padding: 5px 0 11px;
-  border-bottom: 1px solid #edf0ef;
+  border-bottom: 1px solid #edeff0;
 }
 
 .timeline__meta {
@@ -2676,7 +2682,13 @@ p {
     grid-template-columns: 206px minmax(0, 1fr);
   }
 
-  .workspace-layout {
+  /* Scoped on purpose. A bare `.workspace-layout` here carries the same
+     specificity as `.workspace-layout--inspector-collapsed` and sits later in
+     the file, so it won: below 1260px every page reserved a 340px inspector
+     column whether or not an inspector was open. Inventory's content column
+     was squeezed to 634px next to 340px of nothing, and the toolbar that no
+     longer fit scrolled the workspace sideways. */
+  .workspace-layout:not(.workspace-layout--inspector-collapsed) {
     grid-template-columns: minmax(560px, 1fr) 340px;
   }
 
@@ -3205,18 +3217,18 @@ p {
 
 @media (prefers-color-scheme: dark) {
   :root {
-    color: #e6ecea;
-    background: #0d1416;
-    --ink: #e6ecea;
+    color: #e6eaec;
+    background: #0d1216;
+    --ink: #e6eaec;
     --muted: #9aa8ad;
     --muted-2: #7d8b90;
-    --surface: #151f22;
+    --surface: #151d22;
     --surface-soft: #1b262a;
-    --surface-muted: #111a1c;
+    --surface-muted: #11171c;
     --border: #26343a;
     --border-strong: #35474e;
-    --sidebar: #0a1113;
-    --sidebar-soft: #121b1e;
+    --sidebar: #0a0f13;
+    --sidebar-soft: #12191e;
     /* The same equipment vocabulary, lifted for a dark surface: a rack in a
        dim room still shows console blue and the same three LEDs. */
     --teal: #4aaee0;
@@ -3238,7 +3250,7 @@ p {
 
   .device-form__step--done .device-form__step-number,
   .connection-error__stage-tag {
-    color: #0d1416;
+    color: #0d1216;
   }
 }
 
@@ -3277,8 +3289,8 @@ p {
   overflow-x: auto;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: #10191b;
-  color: #b8cbc6;
+  background: #10161b;
+  color: #b8c3cb;
   font: 11px/1.6 "DM Mono", monospace;
   white-space: pre;
 }
@@ -3411,8 +3423,8 @@ p {
   padding: 8px;
   overflow-x: auto;
   border-radius: 6px;
-  background: #10191b;
-  color: #b8cbc6;
+  background: #10161b;
+  color: #b8c3cb;
   font: 10px/1.5 "DM Mono", monospace;
   white-space: pre-wrap;
 }
@@ -3457,8 +3469,8 @@ p {
   overflow-x: auto;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: #10191b;
-  color: #b8cbc6;
+  background: #10161b;
+  color: #b8c3cb;
   font: 11px/1.6 "DM Mono", monospace;
   white-space: pre-wrap;
 }
@@ -3838,8 +3850,8 @@ p {
   margin: 0;
   padding: 9px 12px 11px;
   border-top: 1px solid var(--border);
-  color: #b8cbc6;
-  background: #10191b;
+  color: #b8c3cb;
+  background: #10161b;
   font-family: "DM Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 10px;
   line-height: 1.55;

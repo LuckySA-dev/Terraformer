@@ -52,39 +52,57 @@ cytoscape.use(fcose);
 const RESTING_ZOOM_CAP = 1;
 
 // Cytoscape renders to its own canvas, not the DOM, so its style values are
-// literal colors resolved once at graph-build time -- a CSS var() string
-// here would not be looked up the way it is in a stylesheet. Two fixed
-// palettes, chosen by prefers-color-scheme, stand in for the CSS custom
-// properties the rest of the app uses.
+// literal colors resolved once at graph-build time -- a CSS var() string here
+// is never looked up the way it is in a stylesheet. That is why this palette
+// existed as a hand-copied duplicate of the tokens, and why it silently went
+// stale: it was still drawing the old accent and the old reds long after the
+// palette moved, on the screen the product is named for.
+//
+// So the colors that carry meaning are read back out of the stylesheet, which
+// makes the tokens the single source again -- the graph now follows a palette
+// change on its own, in either theme. The literals are fallbacks for an
+// environment with no computed custom properties (jsdom, in the tests); the
+// remaining greys are graph-only surfaces with no token to read.
+const token = (name: string, fallback: string): string => {
+  const resolved =
+    typeof window === 'undefined'
+      ? ''
+      : window
+          .getComputedStyle(document.documentElement)
+          .getPropertyValue(name)
+          .trim();
+  return resolved || fallback;
+};
+
 function buildTopologyStyle(dark: boolean): StylesheetJson {
   const c = dark
     ? {
-        text: '#e6ecea',
-        textBg: '#151f22',
-        registered: '#3fbfa5',
-        unreachable: '#f08a8f',
-        observedFill: '#5c6b70',
-        observedBorder: '#9aa8ad',
-        iconInk: '#0d1416',
-        edge: '#5b706b',
-        edgeText: '#9aa8ad',
-        edgeTextBg: '#111a1c',
-        lldp: '#8891c9',
-        manual: '#d99a3f',
+        text: token('--ink', '#e6eaec'),
+        textBg: '#151d22',
+        registered: token('--teal', '#4aaee0'),
+        unreachable: token('--red', '#ec6f68'),
+        observedFill: '#5c686e',
+        observedBorder: '#9aa5ad',
+        iconInk: '#0d1216',
+        edge: '#5b6a70',
+        edgeText: '#9aa5ad',
+        edgeTextBg: '#111820',
+        lldp: token('--violet', '#a893dd'),
+        manual: token('--amber', '#e0a23f'),
       }
     : {
-        text: '#24312f',
+        text: token('--ink', '#141c1f'),
         textBg: '#ffffff',
-        registered: '#1c8a74',
-        unreachable: '#ba4650',
-        observedFill: '#9fb0ab',
-        observedBorder: '#5f716c',
+        registered: token('--teal', '#0a6fa8'),
+        unreachable: token('--red', '#bf3b33'),
+        observedFill: '#9faab0',
+        observedBorder: '#5f6d73',
         iconInk: '#ffffff',
-        edge: '#7e968f',
-        edgeText: '#556762',
-        edgeTextBg: '#f7faf9',
-        lldp: '#7180b9',
-        manual: '#b17b24',
+        edge: '#7e8f96',
+        edgeText: '#556267',
+        edgeTextBg: '#f7f9fa',
+        lldp: token('--violet', '#6a52a3'),
+        manual: token('--amber', '#b87503'),
       };
   // One image per role x tint. Built once per theme rather than per node so a
   // 200-node graph does not re-encode the same SVG 200 times.

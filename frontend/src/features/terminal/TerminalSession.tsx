@@ -266,7 +266,7 @@ export function TerminalSession({
         fontFamily: '"DM Mono", monospace',
         fontSize: 12,
         scrollback: 2_000,
-        theme: { background: '#10191b', foreground: '#b8cbc6' },
+        theme: { background: '#10161b', foreground: '#b8c3cb' },
         windowOptions: {},
         linkHandler: null,
       });

@@ -110,7 +110,7 @@ button {
 button:focus-visible,
 input:focus-visible,
 select:focus-visible {
-  outline: 3px solid rgb(12 128 110 / 22%);
+  outline: 3px solid rgb(10 111 168 / 22%);
   outline-offset: 2px;
 }
 
@@ -184,7 +184,7 @@ p {
   color: #fff;
   background: var(--teal);
   border-color: var(--teal);
-  box-shadow: 0 3px 10px rgb(12 128 110 / 18%);
+  box-shadow: 0 3px 10px rgb(10 111 168 / 18%);
 }
 
 .button--primary:hover:not(:disabled) {
@@ -390,8 +390,8 @@ p {
   opacity: 0.13;
   pointer-events: none;
   background-image:
-    linear-gradient(rgb(109 186 171 / 18%) 1px, transparent 1px),
-    linear-gradient(90deg, rgb(109 186 171 / 18%) 1px, transparent 1px);
+    linear-gradient(rgb(106 166 200 / 18%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(106 166 200 / 18%) 1px, transparent 1px);
   background-size: 42px 42px;
   mask-image: linear-gradient(110deg, #000, transparent 72%);
 }
@@ -419,8 +419,8 @@ p {
 .access-brand .badge {
   position: relative;
   z-index: 1;
-  color: #75d7c2;
-  background: rgb(19 118 99 / 20%);
+  color: #7cc9ec;
+  background: rgb(16 104 152 / 20%);
 }
 
 .access-brand h1 {
@@ -456,7 +456,7 @@ p {
   display: flex;
   align-items: flex-start;
   gap: 13px;
-  color: #6ed4bd;
+  color: #74c6ea;
 }
 
 .access-benefits span {
@@ -1111,8 +1111,8 @@ p {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #52cba9;
-  box-shadow: 0 0 0 3px rgb(82 203 169 / 10%);
+  background: #4aaee0;
+  box-shadow: 0 0 0 3px rgb(74 174 224 / 10%);
 }
 
 .environment-chip > div {
@@ -1163,12 +1163,12 @@ p {
 
 .sidebar__nav button:hover {
   color: #b7c4c0;
-  background: #121e20;
+  background: #121d22;
 }
 
 .sidebar__nav button.is-active {
   color: #e9f4f1;
-  background: #172725;
+  background: #17262b;
 }
 
 .sidebar__nav button.is-active::before {
@@ -1178,11 +1178,11 @@ p {
   width: 2px;
   height: 17px;
   border-radius: 2px;
-  background: #58d0b4;
+  background: #4aaee0;
 }
 
 .sidebar__nav button.is-active svg {
-  color: #62cfb5;
+  color: #5cb8e4;
 }
 
 .sidebar__spacer {
@@ -1193,9 +1193,9 @@ p {
   position: relative;
   margin: 12px 1px;
   padding: 12px;
-  border: 1px solid #244039;
+  border: 1px solid #1f3a4a;
   border-radius: 9px;
-  background: linear-gradient(140deg, #142621, #121d1e);
+  background: linear-gradient(140deg, #12222c, #121c22);
 }
 
 .safety-card__icon {
@@ -1205,8 +1205,8 @@ p {
   place-items: center;
   margin-bottom: 9px;
   border-radius: 8px;
-  color: #66d1b7;
-  background: rgb(51 160 131 / 13%);
+  color: #5fbde8;
+  background: rgb(46 132 176 / 13%);
 }
 
 .safety-card strong {
@@ -1223,8 +1223,8 @@ p {
 }
 
 .safety-card .badge {
-  color: #64d1b6;
-  background: rgb(46 157 127 / 13%);
+  color: #5cbbe6;
+  background: rgb(42 128 172 / 13%);
 }
 
 .session-button {
@@ -1251,8 +1251,8 @@ p {
   display: grid;
   place-items: center;
   border-radius: 7px;
-  color: #79aa9f;
-  background: #182527;
+  color: #7ba2b4;
+  background: #18242b;
 }
 
 .session-button > span:nth-child(2) {
@@ -1526,7 +1526,7 @@ p {
 
 .search-box:focus-within {
   border-color: var(--teal);
-  box-shadow: 0 0 0 3px rgb(12 128 110 / 10%);
+  box-shadow: 0 0 0 3px rgb(10 111 168 / 10%);
 }
 
 .search-box input {

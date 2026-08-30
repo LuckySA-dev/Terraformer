@@ -9,11 +9,11 @@
   --muted-2: #8b979b;
   /* Surfaces are label tape and painted steel: the flat white a printed port
      legend sits on, over the cool grey of a chassis. */
-  --surface: #ffffff;
-  --surface-soft: #f5f7f6;
-  --surface-muted: #e8edeb;
-  --border: #d5dcda;
-  --border-strong: #b6c1be;
+  --surface: var(--light-surface);
+  --surface-soft: var(--light-surface-soft);
+  --surface-muted: var(--light-surface-muted);
+  --border: var(--light-border);
+  --border-strong: var(--light-border-strong);
   --sidebar: #101a1d;
   --sidebar-soft: #182529;
 
@@ -21,22 +21,51 @@
      tool's audience owns, and the only blue in a rack that is there to be
      noticed. `--teal` keeps its name because 37 rules reference it; the value
      is what carries the identity. */
-  --teal: #0a6fa8;
-  --teal-dark: #08587f;
-  --teal-soft: #e3f0f8;
-  --blue: #2f6ea8;
-  --blue-soft: #e9f1f8;
+  --teal: var(--light-teal);
+  --teal-dark: var(--light-teal-dark);
+  --teal-soft: var(--light-teal-soft);
+  --blue: var(--light-blue);
+  --blue-soft: var(--light-blue-soft);
 
   /* Status is read off the front panel, so it uses the front panel's own
      vocabulary: link green, blocked amber, fault red. */
-  --green: #1c8f4c;
-  --green-soft: #e6f4ec;
-  --red: #bf3b33;
-  --red-soft: #fbebea;
-  --amber: #b87503;
-  --amber-soft: #fdf2df;
-  --violet: #6a52a3;
-  --violet-soft: #efecf8;
+  --green: var(--light-green);
+  --green-soft: var(--light-green-soft);
+  --red: var(--light-red);
+  --red-soft: var(--light-red-soft);
+  --amber: var(--light-amber);
+  --amber-soft: var(--light-amber-soft);
+  --violet: var(--light-violet);
+  --violet-soft: var(--light-violet-soft);
+
+  /* The light palette, named once.
+     Two scopes are deliberately always-light whatever the OS theme says --
+     the unlock page and any modal -- so they have to re-pin every variable
+     their descendants read, or dark mode's near-white ink lands on their
+     permanently white surfaces. That used to mean three copies of the same
+     twenty values, and a change to the identity that reached one of them.
+     These are the copy; the scopes below map to them. */
+  --light-ink: #141c1f;
+  --light-muted: #69777d;
+  --light-muted-2: #8b979b;
+  --light-surface: #ffffff;
+  --light-surface-soft: #f5f7f6;
+  --light-surface-muted: #e8edeb;
+  --light-border: #d5dcda;
+  --light-border-strong: #b6c1be;
+  --light-teal: #0a6fa8;
+  --light-teal-dark: #08587f;
+  --light-teal-soft: #e3f0f8;
+  --light-blue: #2f6ea8;
+  --light-blue-soft: #e9f1f8;
+  --light-green: #1c8f4c;
+  --light-green-soft: #e6f4ec;
+  --light-red: #bf3b33;
+  --light-red-soft: #fbebea;
+  --light-amber: #b87503;
+  --light-amber-soft: #fdf2df;
+  --light-violet: #6a52a3;
+  --light-violet-soft: #efecf8;
 
   /* Type roles. The structure face is monospace on purpose: a device answers
      in fixed-width columns, and the chrome that quotes it should speak the
@@ -315,27 +344,27 @@ p {
      this always-light background. Re-pin to the light-mode values so
      nothing nested -- headings, form fields, buttons, badges -- inherits
      the wrong palette. */
-  --ink: #172126;
-  --muted: #69777d;
-  --muted-2: #8b979b;
-  --surface: #ffffff;
-  --surface-soft: #f7f8f7;
-  --surface-muted: #eef1ef;
-  --border: #dfe5e2;
-  --border-strong: #ccd5d1;
-  --teal: #0c806e;
-  --teal-dark: #086556;
-  --teal-soft: #e6f4f0;
-  --blue: #2563a9;
-  --blue-soft: #eaf2fb;
-  --green: #148259;
-  --green-soft: #e8f6ef;
-  --red: #bc3d43;
-  --red-soft: #fbecee;
-  --amber: #a96712;
-  --amber-soft: #fff4de;
-  --violet: #7251ad;
-  --violet-soft: #f1ebfa;
+  --ink: var(--light-ink);
+  --muted: var(--light-muted);
+  --muted-2: var(--light-muted-2);
+  --surface: var(--light-surface);
+  --surface-soft: var(--light-surface-soft);
+  --surface-muted: var(--light-surface-muted);
+  --border: var(--light-border);
+  --border-strong: var(--light-border-strong);
+  --teal: var(--light-teal);
+  --teal-dark: var(--light-teal-dark);
+  --teal-soft: var(--light-teal-soft);
+  --blue: var(--light-blue);
+  --blue-soft: var(--light-blue-soft);
+  --green: var(--light-green);
+  --green-soft: var(--light-green-soft);
+  --red: var(--light-red);
+  --red-soft: var(--light-red-soft);
+  --amber: var(--light-amber);
+  --amber-soft: var(--light-amber-soft);
+  --violet: var(--light-violet);
+  --violet-soft: var(--light-violet-soft);
   color: #172126;
 }
 
@@ -349,8 +378,8 @@ p {
   padding: clamp(56px, 8vw, 120px);
   color: #f1f7f5;
   background:
-    radial-gradient(circle at 12% 82%, rgb(25 150 127 / 19%), transparent 28%),
-    radial-gradient(circle at 88% 12%, rgb(51 116 125 / 17%), transparent 27%),
+    radial-gradient(circle at 12% 82%, rgb(22 112 168 / 20%), transparent 28%),
+    radial-gradient(circle at 88% 12%, rgb(46 104 132 / 16%), transparent 27%),
     #0c1517;
 }
 
@@ -373,10 +402,10 @@ p {
   display: grid;
   place-items: center;
   flex: 0 0 auto;
-  border: 1px solid rgb(104 218 192 / 25%);
+  border: 1px solid rgb(90 178 224 / 25%);
   border-radius: 11px;
-  color: #76d6c1;
-  background: linear-gradient(145deg, #17312f, #102222);
+  color: #6cc3ea;
+  background: linear-gradient(145deg, #12293a, #0e1c26);
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 6%);
 }
 
@@ -839,27 +868,27 @@ p {
      the variables its descendants read (header h2/p, InlineNotice, Badge,
      form hints) so dark-mode's flipped --ink/--muted don't render near-
      white text on this permanently-white card. */
-  --ink: #172126;
-  --muted: #69777d;
-  --muted-2: #8b979b;
-  --surface: #ffffff;
-  --surface-soft: #f7f8f7;
-  --surface-muted: #eef1ef;
-  --border: #dfe5e2;
-  --border-strong: #ccd5d1;
-  --teal: #0c806e;
-  --teal-dark: #086556;
-  --teal-soft: #e6f4f0;
-  --blue: #2563a9;
-  --blue-soft: #eaf2fb;
-  --green: #148259;
-  --green-soft: #e8f6ef;
-  --red: #bc3d43;
-  --red-soft: #fbecee;
-  --amber: #a96712;
-  --amber-soft: #fff4de;
-  --violet: #7251ad;
-  --violet-soft: #f1ebfa;
+  --ink: var(--light-ink);
+  --muted: var(--light-muted);
+  --muted-2: var(--light-muted-2);
+  --surface: var(--light-surface);
+  --surface-soft: var(--light-surface-soft);
+  --surface-muted: var(--light-surface-muted);
+  --border: var(--light-border);
+  --border-strong: var(--light-border-strong);
+  --teal: var(--light-teal);
+  --teal-dark: var(--light-teal-dark);
+  --teal-soft: var(--light-teal-soft);
+  --blue: var(--light-blue);
+  --blue-soft: var(--light-blue-soft);
+  --green: var(--light-green);
+  --green-soft: var(--light-green-soft);
+  --red: var(--light-red);
+  --red-soft: var(--light-red-soft);
+  --amber: var(--light-amber);
+  --amber-soft: var(--light-amber-soft);
+  --violet: var(--light-violet);
+  --violet-soft: var(--light-violet-soft);
   color: #172126;
 }
 

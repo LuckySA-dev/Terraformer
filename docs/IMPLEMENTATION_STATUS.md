@@ -1,7 +1,7 @@
 # Implementation status
 
-Last updated: 2026-08-09
-Current delivery target: phases 0–3
+Last updated: 2026-09-01
+Current delivery target: phases 0–4
 
 This is the status ledger, not a roadmap. Product intent and future scope remain
 in `network-automation-final-plan.md`.
@@ -27,10 +27,11 @@ that policy does and does not cover.
 | Phase | Status | Delivered boundary | Exit-criterion result |
 |---|---|---|---|
 | 0 — Repository and safety foundation | Implemented | Local Compose stack, file-secret bootstrap, PostgreSQL/Redis/RQ, migrations, health, authentication, encrypted credentials, sanitized logging, tests and operator docs | Passed automated and local-runtime acceptance |
-| 1 — First real device | Implemented; exit unblocked | Exact-target manual add, capability-gated Cisco IOS/IOS-XE structured read-only connection/facts/interfaces/running-config snapshots, generic authenticated connection test, jobs/events and operator UI | Automated acceptance passed. Exit no longer gated on physical hardware; record a GNS3/EVE-NG read-only run as the acceptance evidence |
-| 2 — Topology and terminal | Implemented; exit unblocked | Bounded multi-port SSH-aware discovery/approval; CDP/LLDP topology with saved layouts and unverified manual links; allowlisted show/ping/traceroute diagnostics; guarded Web PTY Direct Mode; Telnet console for lab devices | Automated acceptance passed. Exit no longer gated on physical hardware; record a GNS3/EVE-NG topology plus terminal/diagnostic run |
-| 3 — Safe configuration MVP | Implemented; lab unverified | Cisco IOS/IOS-XE interface description and admin-state changes only, gated by `STRUCTURED_WRITES_ENABLED` (off by default); Change Plan preview with risk classification, per-device apply lock, apply, post-check, and assisted (inverse-command) rollback at Safety Level C | Automated acceptance passed (backend and frontend). Exit no longer gated on physical hardware, but no GNS3/EVE-NG or physical apply-and-rollback run has been recorded yet — see the verification record below |
-| 4–8 | Not Implemented | None | Future phases |
+| 1 — First real device | Implemented; **lab verified 2026-08-11** | Exact-target manual add, capability-gated Cisco IOS/IOS-XE structured read-only connection/facts/interfaces/running-config snapshots, generic authenticated connection test, jobs/events and operator UI | Automated acceptance passed, and the owner recorded a physical run on 2026-08-11 covering Cisco Catalyst 2960, 2960X, 3650 and ISR 2911: connection test plus structured facts/interface/neighbor reads passed for each category. Other vendors and models remain lab unverified |
+| 2 — Topology and terminal | Implemented; **lab verified 2026-08-11** | Bounded multi-port SSH-aware discovery/approval; CDP/LLDP topology with saved layouts and unverified manual links; allowlisted show/ping/traceroute diagnostics; guarded Web PTY Direct Mode; Telnet console for lab devices | Automated acceptance passed. The 2026-08-11 physical run also covered CDP/LLDP collection and the Direct Mode terminal open/connect/disconnect lifecycle under Cisco Legacy mode for the same four device categories. Discovery, diagnostics and the Telnet console were not part of that run |
+| 3 — Safe configuration MVP | Implemented; **apply/rollback still lab unverified** | Eleven Cisco IOS/IOS-XE change types gated by `STRUCTURED_WRITES_ENABLED` (off by default): interface description and admin state; VLAN name, access VLAN and trunk allowed-VLAN list; static route; router `network` statement, its removal, and RIP version; BGP neighbor; hostname. Change Plan preview with risk classification, per-device apply lock, apply, post-check, and assisted (inverse-command) rollback at Safety Level C, drivable from the Packet Tracer-style config window (several devices open at once) or its CLI tab | Automated acceptance passed (backend and frontend). No GNS3/EVE-NG or physical apply-and-rollback run has been recorded for **any** of the eleven types — see the verification record and known gaps below |
+| 4 — AI assistant | Implemented; lab unverified | Optional (`AI_GATEWAY_ENABLED`, off by default) chat assistant over provider profiles in two wire formats — OpenAI-compatible (OpenAI, OpenRouter, Gemini compat, Ollama, LM Studio) and native Anthropic. Nine tools: eight read-only, plus `propose_change_plan`, which drafts into the same Change Plan pipeline rather than touching a device. Confirm/Auto modes with a per-session automatic-apply cap; suggested console commands are staged for human review, never relayed live; provider secrets are scrubbed defensively; long conversations are compacted rather than truncated | Automated acceptance passed. No model provider was contacted and no device was driven by the assistant in any recorded run |
+| 5–8 | Not Implemented | None | Future phases |
 
 ## Phase 0 checklist
 
@@ -74,6 +75,34 @@ that policy does and does not cover.
 | Allowlisted Cisco diagnostics | Implemented; lab unverified | Typed routing/ARP/MAC plus bounded exact-IPv4 ping/traceroute actions; fixed driver mappings; RQ execution; sanitized 64 KiB cap and local download; injection/timeout/unsupported tests |
 | Web SSH terminal | Implemented; lab unverified | **Automated verification passed; hardware validation pending.** AsyncSSH PTY over authenticated same-origin WebSocket; mandatory exact-device host-key pin; password-only, device-scoped `compatibility_policy_version = 2` (`modern` default; no fallback; per-device explicit selection for `cisco_legacy`, `cisco_legacy_group1`, and `very_old_ssh`); explicit Direct Mode confirmation before credential decrypt/connect; no command/output recording |
 | Manual USB Console / USB Direct Mode | Implemented; lab unverified | **Automated verification passed; hardware validation pending.** Same-machine Chrome/Edge Web Serial path with secure-context and `serial=(self)` checks, per-session authorization warning, settings, multiline confirmation, bounded writes, five-second cleanup, fresh-session reopen, and fake-stream privacy/lifecycle coverage; no real adapter was contacted |
+
+## Phase 3 checklist
+
+| Item | Status | Evidence |
+|---|---|---|
+| Change Plan pipeline | Implemented; lab unverified | Preview, validate, risk classification, pre-change snapshot, per-device apply lock, apply, post-check and assisted inverse-command rollback, all at Safety Level C behind `STRUCTURED_WRITES_ENABLED` |
+| Eleven Cisco IOS/IOS-XE change types | Implemented; lab unverified | Interface description and admin state; VLAN name, access VLAN, trunk allowed-VLAN list; static route; router `network`, `network` removal, RIP version; BGP neighbor; hostname. Change types are stored as `VARCHAR` rather than a database enum, so adding one needs no migration |
+| Device reads the change types depend on | Implemented; lab unverified | `show vlan brief`, `show interfaces switchport`, `ip route` and `router` sections of the running config, parsed from sanitized fixtures |
+| Free-text input cannot smuggle commands | Implemented | `validate_change` rejects non-printable and empty values before a plan exists; a `"looks-fine
+shutdown"` description returns 422 and creates no plan (found by review 2026-08-09, regression test retained) |
+| Applied commands are recorded verbatim | Implemented | The log sanitizer no longer rewrites the command text stored with a plan, so the record matches what the device received |
+| Plans cannot stick in `APPLYING` | Implemented | Apply catches every exception, not only `AppError`, and settles the plan into a terminal state |
+| Config window | Implemented; lab unverified | Packet Tracer-style window with up to six devices open at once, per-window state preserved, a Config tab covering every change type and a CLI tab that holds its SSH session across tab switches; apply reports what the device actually did, including `ROLLBACK_FAILED` |
+| Real-device apply and rollback | **Not verified** | Opt-in test at `backend/tests/lab/test_structured_writes_lab.py` skips cleanly when unset; it has never been run against a real or virtual device |
+
+## Phase 4 checklist
+
+| Item | Status | Evidence |
+|---|---|---|
+| Provider profiles | Implemented; lab unverified | CRUD plus capability probe behind `AI_GATEWAY_ENABLED` (off by default); API keys encrypted with the same server-side scheme as device credentials and never returned |
+| Two wire formats | Implemented; lab unverified | One adapter for everything speaking OpenAI Chat Completions (OpenAI, OpenRouter, Gemini compat, Ollama, LM Studio) and a native Anthropic adapter; the provider type selects the adapter |
+| Session and message persistence | Implemented | Migrations through `20260829_0018`; replay order rests on an explicit `sequence` column rather than a timestamp, which collided often enough to reorder transcripts |
+| Bounded multi-round tool loop | Implemented | Twelve rounds and forty tool calls per turn, with a bounded result size per tool |
+| Tool surface | Implemented | Eight read-only tools plus `propose_change_plan`, which drafts into the Change Plan pipeline and cannot reach a device on its own |
+| Confirm/Auto modes | Implemented | Automatic apply is capped per session; AI-drafted plans are marked by source so they stay distinguishable from operator-drafted ones |
+| Console commands are staged, not relayed | Implemented | Suggested commands are presented for human review; the assistant has no path to the PTY |
+| Context window accounting and compaction | Implemented | A long conversation is summarised at 80% of the model's context and the newest messages are kept verbatim; the operator's own question and the leading system messages are pinned and can no longer be dropped by the trimmer |
+| Any real provider or device run | **Not verified** | No model provider was contacted and no device was driven by the assistant in any recorded run |
 
 ## Verification record
 
@@ -120,6 +149,9 @@ that policy does and does not cover.
 | 2026-08-09 | Phase 3 migration chain on real PostgreSQL 17 | `postgres:17.10-alpine3.23` throwaway container; `TEST_POSTGRES_URL=... pytest tests/integration/test_migrations.py -v`; same variable for the complete backend suite; `alembic upgrade head`; `alembic check` | **Deferred obligation from Task 1, now discharged.** All 9 migration tests passed, including the new `test_change_plan_tables_exist_after_upgrade`; complete backend suite 380 passed / 3 skipped (only the two opt-in real-device/Batfish tests remained gated). `alembic upgrade head` reached `20260809_0009` and `alembic check` reported no model drift. Container and its anonymous volume were removed after the run. |
 | 2026-08-09 | Phase 3 post-implementation review (defects found and fixed) | Line-by-line review of the change pipeline against the safety model; new regression tests at `tests/unit/test_drivers.py` and `tests/integration/test_changes_vertical_slice.py`; full backend and frontend suites | **Three defects found by review, not by the original tests.** (1) **Command injection in the one free-form input:** an interface description containing a newline rode through `render_change` into a single line, was persisted newline-joined, and split back into an extra configuration command at apply — defeating the premise that only vetted change types reach a device. `validate_change` now rejects any non-printable value (and empty/whitespace-only), refused before a plan is ever created; proved end-to-end with a `"looks-fine\nshutdown"` payload that now returns 422 and leaves no plan. Interface targets were never exposed: they are matched against names parsed from the device. (2) Driver validation failures returned HTTP 500 via a bare `AppError`; they are operator input errors and now return 422 `change_validation_failed`. (3) The Configure tab rendered preview errors but silently swallowed apply errors (including the 409 device lock), and never surfaced `ROLLBACK_FAILED` — the one outcome the safety model says needs manual device verification. Backend 380 passed / 6 opt-in skipped; frontend 155 passed. |
 | 2026-08-09 | Phase 3 real-lab apply/rollback: **not run** | Opt-in test written at `backend/tests/lab/test_structured_writes_lab.py` (`RUN_LAB_TESTS=1` plus `LAB_DEVICE_*` and `LAB_TARGET_INTERFACE`); confirmed to skip cleanly with a clear reason when unset | **Not executed — no GNS3/EVE-NG or physical Cisco IOS/IOS-XE device was available in this environment.** Per this plan's Global Constraints (Approved Decision 3), this is recorded honestly rather than omitted: the apply-and-rollback pipeline has sanitized fixture/unit/integration coverage (including a fake-transport vertical slice exercising preview → apply → post-check → device-scoped lock) but has never been exercised against a real or virtual device. Cisco IOS/IOS-XE interface changes stay **Level C, lab unverified** — see `docs/CAPABILITY_MATRIX.md`. Running this test against a real lab device remains the outstanding acceptance step for Phase 3. |
+| 2026-08-11 | Cisco Legacy SSH: physical lab run by the owner | Connection test, structured facts/interface/neighbor read, and Direct Mode terminal open/connect/disconnect through the UI, per device category | **Physical hardware, not a simulation.** Cisco Catalyst 2960, 2960X, 3650 and ISR 2911 all passed under Cisco Legacy compatibility mode (recorded at commit `48b776d`). This is the device acceptance evidence phases 1 and 2 had been waiting on. It does not extend to other vendors or models, to discovery, to the allowlisted diagnostics, to the Telnet console, or to any structured write. Full record in `docs/lab-test-guide.md`; capability-level detail in `docs/CAPABILITY_MATRIX.md` and `docs/PHASE_1_2_READINESS.md` |
+| 2026-09-01 | Full regression after 59 commits of Phase 3 expansion, Phase 4, and the interface redesign | Backend `ruff check --no-cache .`, `pyright`, `pytest -q`; frontend `tsc --noEmit`, `eslint src --max-warnings 0`, `vitest run --no-file-parallelism`, `npm run build`; `docker compose --env-file .env -f deploy/compose.yml up --build --detach web` | **Automated verification passed.** Ruff clean; Pyright 0 errors, 0 warnings, 0 informations; backend **692 passed / 7 skipped**, every skip opt-in (3 gated on `TEST_POSTGRES_URL`, 2 on `RUN_LAB_TESTS`, 2 on `RUN_ANALYSIS_TESTS`). Frontend TypeScript and ESLint clean; **312 tests / 24 files passed** run serially, and the production build passed. Note the suite is only reliably green serially: under file parallelism 2-3 tests intermittently exceed the 5 s timeout and fail, which is a harness contention issue, not a product defect — the same files pass 72/72 in isolation. Migration head `20260829_0018`. No provider was contacted, no device connected, and no lab opt-in supplied |
+| 2026-09-01 | Interface re-identity: defects found by measuring the running app | Computed-style and layout measurement in the browser against the built image; hue sweep over every source file; a CSS specificity scan for modifier rules defeated by later base rules | **Three real defects, none visible in code review.** (1) A bare `.workspace-layout` inside the `<=1260px` media query outranked `.workspace-layout--inspector-collapsed` by source order, so every page below that width reserved a 340 px inspector column that nothing occupied; the content column measured 634 px beside it and the non-wrapping 835 px toolbar pushed the workspace into a horizontal scroll. (2) The topology graph draws to a canvas and cannot read a `var()`, so its palette was a hand-copied duplicate of the tokens — and had gone stale, still drawing the pre-redesign accent and reds. It now resolves the same custom properties the DOM uses. (3) 58 greys across the app still carried the old accent's green cast, and the link-up indicators were hardcoded to a colour that never followed the theme. The specificity scan found two further modifier/base clashes, both verified deliberate and harmless |
 
 ## Known defects found and fixed on 2026-08-08
 
@@ -165,18 +197,29 @@ and an opt-in `TEST_POSTGRES_URL` test runs the chain against real PostgreSQL.
   tampering/path traversal and cannot be overwritten in storage or PostgreSQL.
 - State-changing browser requests enforce trusted-origin checks; session cookies
   are HttpOnly and SameSite strict.
-- Structured driver operations are capability-gated. Current code contains no
-  supported configuration apply or model-execution path. Manual terminal access
-  is isolated as warning-gated Direct Mode and does not log commands or output.
-  Discovery candidates and neighbor records do not create topology nodes or
-  links automatically.
+- Structured driver operations are capability-gated. **Updated 2026-09-01:**
+  the claim that no configuration apply or model-execution path exists is no
+  longer true and has been corrected here. Both now exist and both are off by
+  default — configuration apply behind `STRUCTURED_WRITES_ENABLED`, the model
+  path behind `AI_GATEWAY_ENABLED`. Apply is confined to eleven vetted change
+  types at Safety Level C; free-text values are refused if they contain
+  anything non-printable, so a change cannot carry a second command. The
+  assistant reaches devices only through read-only tools and by drafting into
+  the same Change Plan pipeline a human drafts into; it has no path to the PTY,
+  and suggested console commands are staged for human review rather than
+  relayed. Manual terminal access is isolated as warning-gated Direct Mode and
+  does not log commands or output. Discovery candidates and neighbor records do
+  not create topology nodes or links automatically.
 
 ## Known gaps
 
-- No device acceptance run — virtual or physical — is recorded yet, so Cisco
-  reads remain **lab unverified**. Phase exit is no longer *blocked* on this
-  (see the evidence policy above), but the status stays unverified until a run
-  is recorded.
+- ~~No device acceptance run is recorded yet.~~ **Closed 2026-08-11:** the
+  owner ran Cisco Catalyst 2960, 2960X, 3650 and ISR 2911 on physical hardware
+  — connection test, structured facts/interface/neighbor reads, and the Direct
+  Mode terminal lifecycle, all passing under Cisco Legacy mode. Cisco reads are
+  **lab verified for those four categories only**. Every other vendor, model
+  and compatibility mode is still lab unverified, and nothing about structured
+  writes was exercised by that run.
 - Mandatory host-key pinning and its explicit UI enrollment flow have automated
   coverage only. No unknown or changed key is trusted automatically, and no
   authorized metadata-only virtual or physical acceptance record exists yet.
@@ -189,9 +232,15 @@ and an opt-in `TEST_POSTGRES_URL` test runs the chain against real PostgreSQL.
   Direct Mode is outside structured Safety Levels A–D and can write/change
   hardware.
 - Structured configuration writes are optional (`STRUCTURED_WRITES_ENABLED`,
-  off by default) and cover exactly two change types on Cisco IOS/IOS-XE
-  only: interface description and admin state. VLAN, static route, other
-  vendors, and any Safety Level above C remain Not Implemented. Rollback is
+  off by default) and cover eleven change types on Cisco IOS/IOS-XE only:
+  interface description and admin state; VLAN name, access VLAN and trunk
+  allowed-VLAN list; static route; router `network`, its removal and RIP
+  version; BGP neighbor; hostname. **None of the eleven has been applied to a
+  real or virtual device** — the expansion from two types to eleven added no
+  lab evidence, so the whole set is lab unverified, not just the new members.
+  Other vendors and any Safety Level above C remain Not Implemented. A trunk
+  allowed-VLAN change replaces the list rather than adding to it, which is why
+  risk classification treats it the way it does. Rollback is
   surgical (inverse commands from the rendered change), never a full
   running-config replay. `ROLLBACK_FAILED` is a real, expected outcome of
   Level C and requires manual device verification when it occurs — it is
@@ -199,15 +248,16 @@ and an opt-in `TEST_POSTGRES_URL` test runs the chain against real PostgreSQL.
   performed immediately before push; a plan applies exactly what it showed
   the operator at preview time, and post-check is the only safety net
   against device state that drifted since then.
-- Backup/restore acceptance is not implemented in phases 0–3.
+- Backup/restore acceptance is not implemented in phases 0–4.
 - Broader LAN exposure has not been hardened or tested; normal deployment stays
   loopback-only.
-- Phase 2 automated implementation is complete. Its exit now needs a recorded
-  GNS3/EVE-NG topology plus terminal/diagnostic run rather than physical
-  hardware. Phase 3's own apply-and-rollback acceptance run is separately
-  outstanding (see the verification record above) — its opt-in test exists
-  and has automated fixture coverage, but has never been run against a real
-  or virtual device.
+- Phase 2's topology and terminal claims were met by the 2026-08-11 physical
+  run for the four Cisco categories it covered. Discovery, the allowlisted
+  diagnostics and the Telnet console were **not** part of that run and keep
+  automated coverage only. Phase 3's apply-and-rollback acceptance run remains
+  outstanding (see the verification record above) — its opt-in test exists and
+  has automated fixture coverage, but has never been run against a real or
+  virtual device.
 - The Telnet console for lab devices has automated coverage only. It is
   cleartext with no host identity, is off unless `TELNET_ENABLED` is set, and is
   refused for any device not marked as a lab device. Credentials are never sent
@@ -218,9 +268,20 @@ and an opt-in `TEST_POSTGRES_URL` test runs the chain against real PostgreSQL.
   backend image (Debian bookworm ships 9.2).
 - Direct Mode is an explicit operator escape hatch and can change a device. It
   has no parser, approval plan, rollback guarantee, or recording by design.
-- Cisco legacy SSH terminal and topology claims remain lab-unverified. The
-  approved compatibility-policy version, kill switches, and resource limits
-  have automated coverage only; no real hardware result is recorded.
+- Cisco Legacy SSH terminal and topology claims are lab verified for Catalyst
+  2960, 2960X, 3650 and ISR 2911 as of 2026-08-11, and remain lab unverified
+  everywhere else. The compatibility-policy version, kill switches and resource
+  limits still have automated coverage only — the lab run exercised the happy
+  path, not the limits.
+
+- The AI assistant (`AI_GATEWAY_ENABLED`, off by default) has automated
+  coverage only. No model provider has been contacted in any recorded run, so
+  nothing is known about how a real model behaves against the tool loop: the
+  bounded rounds, the per-session automatic-apply cap, and compaction of a long
+  conversation are all enforced in code and proven by tests, not by a provider.
+  An assistant-drafted Change Plan is applied through exactly the same pipeline
+  and the same Level C guarantees as an operator-drafted one, so it inherits
+  that pipeline's outstanding lab gap rather than having a separate one.
 - Read-only configuration analysis is optional and off by default. It is
   Cisco IOS/IOS-XE only; Fortinet and generic devices are reported as
   exclusions. Its device and findings limits are enforced bounds that protect

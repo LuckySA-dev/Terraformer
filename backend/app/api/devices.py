@@ -15,6 +15,9 @@ from app.schemas.devices import (
     FactsView,
     InterfaceView,
     NeighborView,
+    RoutingProcessView,
+    RoutingView,
+    StaticRouteView,
 )
 from app.schemas.jobs import JobView
 from app.schemas.ssh_trust import HostKeyRepinRequest
@@ -154,6 +157,37 @@ def get_interfaces(
     container: ContainerDependency,
 ) -> list[Interface]:
     return _service(session, container).list_interfaces(device_id)
+
+
+@router.get("/{device_id}/routing", response_model=RoutingView)
+def get_routing(
+    device_id: UUID,
+    _auth: Authenticated,
+    session: SessionDependency,
+    container: ContainerDependency,
+) -> RoutingView:
+    """Read the device's routing configuration.
+
+    Live, not stored: unlike interfaces and neighbors there is no table
+    behind this, so every call opens a connection. That is also why it is one
+    route returning both halves rather than two.
+    """
+    routes, processes = _service(session, container).read_routing(device_id)
+    return RoutingView(
+        static_routes=[
+            StaticRouteView(
+                destination=route.destination,
+                mask=route.mask,
+                next_hop=route.next_hop,
+                command=route.as_command(),
+            )
+            for route in routes
+        ],
+        processes=[
+            RoutingProcessView(name=process.name, statements=list(process.statements))
+            for process in processes
+        ],
+    )
 
 
 @router.get("/{device_id}/neighbors", response_model=list[NeighborView])

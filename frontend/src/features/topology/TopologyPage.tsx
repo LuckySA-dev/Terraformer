@@ -147,7 +147,8 @@ function buildTopologyStyle(dark: boolean): StylesheetJson {
         'text-margin-y': 6,
         'text-valign': 'bottom',
         'text-wrap': 'wrap',
-        'text-max-width': '92px',
+        // Wide enough for an address line under the name.
+        'text-max-width': '128px',
         height: 40,
         width: 52,
       },

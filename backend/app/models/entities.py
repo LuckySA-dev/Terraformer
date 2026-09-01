@@ -146,6 +146,9 @@ class ChangeType(StrEnum):
     # The first global change: it targets the device itself, not a port or a
     # VLAN id, so `target` carries no meaning for it.
     HOSTNAME = "hostname"
+    # Also global. Off is the one every lab wants: with it on, a typo at the
+    # prompt becomes a DNS lookup that blocks the session until it times out.
+    DOMAIN_LOOKUP = "domain_lookup"
 
 
 class JobState(StrEnum):

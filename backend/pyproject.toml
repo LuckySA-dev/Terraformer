@@ -28,10 +28,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Read-only configuration analysis. Kept out of the default install because
-# pybatfish pulls in pandas and numpy, which would sit in the always-on image
-# even when ANALYSIS_ENABLED is false. Pinned to the latest PyPI release as of
-# 2026-08-08; `pip index versions pybatfish` confirmed no newer release exists.
+# Read-only configuration analysis. Still an extra so a plain `uv sync` stays
+# small, but the runtime image installs it (backend/Dockerfile): keeping it out
+# of the image made ANALYSIS_ENABLED a flag that could never do anything.
+# Pinned to the latest PyPI release as of 2026-08-08; `pip index versions
+# pybatfish` confirmed no newer release exists.
 analysis = [
   "pybatfish==2025.7.7.2423",
 ]

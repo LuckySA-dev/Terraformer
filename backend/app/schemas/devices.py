@@ -152,3 +152,27 @@ class NeighborView(APIModel):
     platform: str | None
     created_at: datetime
     updated_at: datetime
+
+class StaticRouteView(APIModel):
+    destination: str
+    mask: str
+    next_hop: str
+    command: str
+
+
+class RoutingProcessView(APIModel):
+    name: str
+    statements: list[str]
+
+
+class RoutingView(APIModel):
+    """Everything the routing screen shows, from one read of the device.
+
+    Static routes and routing processes arrive together because they are two
+    parts of the same question and splitting them would open the device twice.
+    Neither is stored: unlike interfaces there is no table behind them, so
+    this is a live read every time it is asked for.
+    """
+
+    static_routes: list[StaticRouteView]
+    processes: list[RoutingProcessView]

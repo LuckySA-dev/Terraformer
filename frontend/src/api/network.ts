@@ -17,6 +17,7 @@ import type {
   DiscoveryInput,
   DeviceInterface,
   DeviceNeighbor,
+  DeviceRouting,
   EventRecord,
   FilterCheckResult,
   FindingCategory,
@@ -145,6 +146,9 @@ export const api = {
   facts: (id: string) => apiRequest<FactsResponse>(`/devices/${encodeURIComponent(id)}/facts`),
   interfaces: (id: string) =>
     apiRequest<DeviceInterface[]>(`/devices/${encodeURIComponent(id)}/interfaces`),
+  /** Live read: routing is not stored, so this opens the device. */
+  routing: (id: string) =>
+    apiRequest<DeviceRouting>(`/devices/${encodeURIComponent(id)}/routing`),
   neighbors: (id: string) =>
     apiRequest<DeviceNeighbor[]>(`/devices/${encodeURIComponent(id)}/neighbors`),
   captureSnapshot: (id: string) =>

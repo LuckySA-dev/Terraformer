@@ -6,7 +6,10 @@ ENV UV_COMPILE_BYTECODE=1 \
 WORKDIR /build
 COPY --from=ghcr.io/astral-sh/uv:0.8.0 /uv /uvx /bin/
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
+# --extra analysis: pybatfish is declared optional, but the image is what
+# decides whether ANALYSIS_ENABLED can do anything. Leaving it out made the
+# flag a no-op that failed as 503 at request time.
+RUN uv sync --frozen --no-dev --no-install-project --extra analysis
 
 FROM python:3.12.11-slim-bookworm AS runtime
 ENV PATH="/opt/venv/bin:$PATH" \

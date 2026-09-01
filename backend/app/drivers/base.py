@@ -259,6 +259,9 @@ class ChangeContext:
     # What the device currently calls itself. Only a global change needs it,
     # and it is the sole source for that change's inverse.
     hostname: str | None = None
+    # Whether the device currently resolves names. None when it was not read,
+    # which is every change that is not about it.
+    domain_lookup: bool | None = None
 
     def access_vlan_of(self, interface_name: str) -> VlanFacts | None:
         """Which VLAN currently holds this access port, per the device."""
@@ -414,6 +417,10 @@ class DeviceDriver(ABC):
     def apply_configuration(self, parameters: ConnectionParameters, commands: list[str]) -> None:
         del parameters, commands
         self._unsupported(DriverCapability.APPLY)
+
+    def get_domain_lookup(self, parameters: ConnectionParameters) -> bool:
+        """Whether the device currently resolves hostnames."""
+        self._unsupported(DriverCapability.FACTS)
 
     def save_configuration(self, parameters: ConnectionParameters) -> str:
         """Persist running-config to startup-config; returns the device's reply."""

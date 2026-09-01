@@ -24,6 +24,7 @@ from app.drivers import (
     DiagnosticAction,
     DriverRegistry,
 )
+from app.drivers.base import RoutingProcessFacts, StaticRouteFacts
 from app.drivers.ssh_compatibility import (
     SSH_COMPATIBILITY_POLICY_VERSION,
     enforce_compatibility_policy,
@@ -435,6 +436,39 @@ class DeviceService:
             "interface_count": len(observations.interfaces),
             "neighbor_count": len(observations.neighbors),
         }
+
+    def read_routing(
+        self, device_id: UUID
+    ) -> tuple[list[StaticRouteFacts], list[RoutingProcessFacts]]:
+        """Static routes and routing processes, read live from the device.
+
+        Neither is persisted -- there is no table behind them the way there is
+        for interfaces -- so this reads on demand. Both come from one
+        connection because they answer one question and opening the device
+        twice for it would be two sessions against the rate limits.
+        """
+        device = self._devices.get(device_id)
+        with self.admitted_connection(
+            device_id=device.id,
+            host=device.management_address,
+            port=device.port,
+            profile_id=device.credential_profile_id,
+            vendor=device.vendor,
+            compatibility=device.ssh_compatibility,
+            group1_risk_acknowledged=(
+                device.ssh_compatibility
+                in (SSHCompatibility.CISCO_LEGACY_GROUP1, SSHCompatibility.VERY_OLD_SSH)
+            ),
+            very_old_risk_acknowledged=(
+                device.ssh_compatibility is SSHCompatibility.VERY_OLD_SSH
+            ),
+            operation=ConnectionOperation.STRUCTURED_READ,
+        ) as parameters:
+            driver = self._drivers.get(device.vendor)
+            return (
+                list(driver.get_static_routes(parameters)),
+                list(driver.get_routing_processes(parameters)),
+            )
 
     def run_diagnostic(
         self,

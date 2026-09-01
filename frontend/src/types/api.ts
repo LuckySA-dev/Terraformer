@@ -200,6 +200,24 @@ export interface DeviceInterface {
   updated_at: string;
 }
 
+export interface StaticRouteRow {
+  destination: string;
+  mask: string;
+  next_hop: string;
+  /** The device's own `ip route` line, including options this app does not model. */
+  command: string;
+}
+
+export interface RoutingProcessRow {
+  name: string;
+  statements: string[];
+}
+
+export interface DeviceRouting {
+  static_routes: StaticRouteRow[];
+  processes: RoutingProcessRow[];
+}
+
 export interface DeviceNeighbor {
   id: string;
   device_id: string;
@@ -379,6 +397,8 @@ export const CHANGE_TYPES = [
   'bgp_neighbor',
   /** Global: renames the device. `target` carries no meaning for it. */
   'hostname',
+  /** Global: whether the device resolves hostnames. 'on' or 'off'. */
+  'domain_lookup',
 ] as const;
 
 export type ChangeType = (typeof CHANGE_TYPES)[number];

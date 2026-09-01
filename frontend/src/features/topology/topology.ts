@@ -133,13 +133,30 @@ export function buildTopologyElements(
   const registeredByAddress = new Map(
     devices.map((device) => [device.management_address, device]),
   );
+  // A device advertises whatever address its own config calls management,
+  // which is routinely not the one we reach it on: SW3 is registered at
+  // .65 but announces .97 to one neighbour and .1 to another. Matching on
+  // address alone therefore drew a registered device again as an "observed"
+  // node -- once per address it advertised -- so a four-device lab rendered
+  // as eight nodes with every link crossing. The advertised name is the
+  // stabler identifier, so it is the fallback.
+  const registeredByName = new Map(
+    devices.map((device) => [
+      shortenDeviceLabel(device.facts.hostname ?? device.name).toLowerCase(),
+      device,
+    ]),
+  );
   const elements: TopologyElement[] = devices.map((device) => {
     const id = `device:${device.id}`;
     return {
       group: 'nodes',
       data: {
         id,
-        label: device.facts.hostname ?? device.name,
+        // The address is on the node because "which subnet is this on" is
+        // the question the graph gets asked first, and it was only
+        // answerable by opening the inspector one device at a time.
+        label: `${device.facts.hostname ?? device.name}
+${device.management_address}`,
         kind: 'registered',
         // The operator's own name is a weak hint, but it is the only one left
         // when a device has not returned a model yet. Precedence comes from the
@@ -161,9 +178,10 @@ export function buildTopologyElements(
   for (const { deviceId, neighbors } of neighborGroups) {
     for (const neighbor of neighbors) {
       const registeredTarget =
-        neighbor.management_address === null
+        (neighbor.management_address === null
           ? undefined
-          : registeredByAddress.get(neighbor.management_address);
+          : registeredByAddress.get(neighbor.management_address)) ??
+        registeredByName.get(shortenDeviceLabel(neighbor.remote_device_name).toLowerCase());
       const targetId =
         registeredTarget === undefined
           ? `observed:${neighbor.id}`

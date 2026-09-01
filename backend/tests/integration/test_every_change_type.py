@@ -8,9 +8,12 @@ command list, or a rollback identical to the change it is supposed to undo.
 
 from __future__ import annotations
 
+from uuid import UUID
+
 import pytest
 from fastapi.testclient import TestClient
 
+from app.changes.service import ChangeService
 from app.container import ApplicationContainer
 from app.drivers.base import (
     DeviceFacts,
@@ -22,6 +25,8 @@ from app.drivers.base import (
 )
 from app.drivers.cisco_iosxe import CiscoIOSXEDriver
 from app.models import ChangeType
+from app.services.devices import DeviceService
+from app.services.snapshots import SnapshotService
 
 _INTERFACES = [
     InterfaceFacts(
@@ -74,6 +79,7 @@ _REQUESTS: dict[ChangeType, tuple[str, str]] = {
     ChangeType.ROUTER_RIP_VERSION: ("rip", "2"),
     ChangeType.BGP_NEIGHBOR: ("bgp 65001", "192.0.2.9 remote-as 65009"),
     ChangeType.HOSTNAME: ("", "SW9-ACCESS"),
+    ChangeType.DOMAIN_LOOKUP: ("", "off"),
 }
 
 
@@ -95,6 +101,7 @@ def switch(
     monkeypatch.setattr(
         CiscoIOSXEDriver, "get_facts", lambda self, p: DeviceFacts(hostname="SW9")
     )
+    monkeypatch.setattr(CiscoIOSXEDriver, "get_domain_lookup", lambda self, p: True)
 
     connection = {
         "management_address": "192.0.2.200",
@@ -181,6 +188,8 @@ def test_a_malformed_target_is_refused_without_a_server_error(
 ) -> None:
     if change_type is ChangeType.HOSTNAME:
         pytest.skip("hostname targets the device itself, so its target carries no meaning")
+    if change_type is ChangeType.DOMAIN_LOOKUP:
+        pytest.skip("domain lookup targets the device itself, so its target carries no meaning")
     _, desired_value = _REQUESTS[change_type]
     response = authenticated_client.post(
         "/api/change-plans",
@@ -192,3 +201,120 @@ def test_a_malformed_target_is_refused_without_a_server_error(
         },
     )
     assert response.status_code in (404, 422), response.text
+
+
+def _change_service(container: ApplicationContainer, session) -> ChangeService:
+    devices = DeviceService(
+        session,
+        settings=container.settings,
+        drivers=container.drivers,
+        vault=container.credential_vault,
+        host_key_trust=container.host_key_trust,
+        connection_gate=container.connection_gate,
+    )
+    return ChangeService(
+        session,
+        settings=container.settings,
+        drivers=container.drivers,
+        devices=devices,
+        snapshots=SnapshotService(
+            session, store=container.snapshot_store, devices=devices, drivers=container.drivers
+        ),
+    )
+
+
+def test_an_applied_interface_change_updates_the_stored_interfaces(
+    switch: str,
+    container: ApplicationContainer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The stored copy is what every screen renders.
+
+    Without this the change reached the device but the UI kept showing the old
+    value until a separate refresh job ran, which reads as the apply having
+    silently done nothing. Apply runs through the service here because the
+    queue in tests records jobs rather than running them.
+    """
+    with container.session_factory() as session:
+        service = _change_service(container, session)
+        plan = service.preview(
+            device_id=UUID(switch),
+            change_type=ChangeType.INTERFACE_DESCRIPTION,
+            target="GigabitEthernet1/0/1",
+            desired_value="new-uplink",
+        )
+        # What the device reports once the change is on it -- the post-check
+        # reads this, and it is the copy that should be stored.
+        monkeypatch.setattr(
+            CiscoIOSXEDriver,
+            "get_interfaces",
+            lambda self, p: [
+                InterfaceFacts(
+                    name="GigabitEthernet1/0/1",
+                    description="new-uplink",
+                    admin_up=True,
+                    oper_up=True,
+                )
+            ],
+        )
+        service.apply(plan.id)
+
+    with container.session_factory() as session:
+        stored = DeviceService(
+            session,
+            settings=container.settings,
+            drivers=container.drivers,
+            vault=container.credential_vault,
+            host_key_trust=container.host_key_trust,
+            connection_gate=container.connection_gate,
+        ).list_interfaces(UUID(switch))
+    assert [item.description for item in stored] == ["new-uplink"]
+
+
+def test_a_change_that_reads_no_port_leaves_the_interface_inventory_alone(
+    switch: str,
+    container: ApplicationContainer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # replace_interfaces deletes the existing rows first, so persisting an
+    # empty read would wipe the inventory for every global or VLAN change.
+    stored_port = InterfaceFacts(
+        name="GigabitEthernet1/0/1", description="seeded", admin_up=True, oper_up=True
+    )
+    monkeypatch.setattr(CiscoIOSXEDriver, "get_interfaces", lambda self, p: [stored_port])
+
+    with container.session_factory() as session:
+        service = _change_service(container, session)
+        # Applying an interface change is what puts a row in the table.
+        seed = service.preview(
+            device_id=UUID(switch),
+            change_type=ChangeType.INTERFACE_DESCRIPTION,
+            target="GigabitEthernet1/0/1",
+            desired_value="seeded",
+        )
+        assert service.apply(seed.id)["status"] == "applied"
+
+        # A hostname change reads no port at all. Its own post-check reads
+        # facts, so the device has to report the new name for the apply to
+        # succeed -- otherwise this would be measuring a rollback.
+        monkeypatch.setattr(
+            CiscoIOSXEDriver, "get_facts", lambda self, p: DeviceFacts(hostname="SW9-ACCESS")
+        )
+        hostname = service.preview(
+            device_id=UUID(switch),
+            change_type=ChangeType.HOSTNAME,
+            target="",
+            desired_value="SW9-ACCESS",
+        )
+        assert service.apply(hostname.id)["status"] == "applied"
+
+    with container.session_factory() as session:
+        stored = DeviceService(
+            session,
+            settings=container.settings,
+            drivers=container.drivers,
+            vault=container.credential_vault,
+            host_key_trust=container.host_key_trust,
+            connection_gate=container.connection_gate,
+        ).list_interfaces(UUID(switch))
+    assert [item.name for item in stored] == ["GigabitEthernet1/0/1"]

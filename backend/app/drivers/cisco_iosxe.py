@@ -143,6 +143,23 @@ class CiscoIOSXEDriver(DeviceDriver):
             return []
         return parse_static_routes(output)
 
+    def get_domain_lookup(self, parameters: ConnectionParameters) -> bool:
+        # Lookup is on by default, so IOS only writes a line when it is off.
+        # Absence therefore means enabled -- the opposite of the usual
+        # "not in the config, not configured" reading, which is why this is
+        # a method rather than a grep at the call site.
+        try:
+            output = self._command(
+                parameters, "show running-config | include ip domain.lookup"
+            )
+        except DriverCommandRejectedError:
+            # A device that will not answer the question is not evidence that
+            # lookup is on, and the caller needs that distinction.
+            raise
+        return not any(
+            line.strip().startswith("no ip domain") for line in output.splitlines()
+        )
+
     def get_routing_processes(
         self, parameters: ConnectionParameters
     ) -> list[RoutingProcessFacts]:
@@ -220,6 +237,8 @@ class CiscoIOSXEDriver(DeviceDriver):
     def render_change(self, step: ChangeStepIntent, context: ChangeContext) -> RenderedChange:
         if step.change_type is ChangeType.HOSTNAME:
             return self._render_hostname(step, context)
+        if step.change_type is ChangeType.DOMAIN_LOOKUP:
+            return self._render_domain_lookup(step, context)
         if step.change_type is ChangeType.VLAN_NAME:
             return self._render_vlan_name(step, context)
         if step.change_type is ChangeType.INTERFACE_ACCESS_VLAN:
@@ -264,6 +283,20 @@ class CiscoIOSXEDriver(DeviceDriver):
                 ),
             )
         self._unsupported(DriverCapability.RENDER)
+
+    def _render_domain_lookup(
+        self, step: ChangeStepIntent, context: ChangeContext
+    ) -> RenderedChange:
+        current = context.domain_lookup
+        # Same rule as hostname: without the current value there is no inverse,
+        # and a Level C change with no inverse must not be staged.
+        if current is None:
+            self._unsupported(DriverCapability.RENDER)
+        enable = step.desired_value == "on"
+        return RenderedChange(
+            commands=("ip domain-lookup",) if enable else ("no ip domain-lookup",),
+            inverse_commands=("ip domain-lookup",) if current else ("no ip domain-lookup",),
+        )
 
     def _render_hostname(self, step: ChangeStepIntent, context: ChangeContext) -> RenderedChange:
         previous = context.hostname
@@ -439,6 +472,12 @@ class CiscoIOSXEDriver(DeviceDriver):
         issues: list[str] = []
         if step.change_type is ChangeType.HOSTNAME:
             return self._validate_hostname(step)
+        if step.change_type is ChangeType.DOMAIN_LOOKUP:
+            return (
+                []
+                if step.desired_value in ("on", "off")
+                else ["domain lookup must be 'on' or 'off'"]
+            )
         if step.change_type is ChangeType.VLAN_NAME:
             return self._validate_vlan_name(step)
         if step.change_type is ChangeType.INTERFACE_ACCESS_VLAN:

@@ -111,6 +111,8 @@ def _post_check_ok(step: ChangeStep, context: ChangeContext) -> bool:
     """
     if step.change_type is ChangeType.HOSTNAME:
         return context.hostname == step.desired_value
+    if step.change_type is ChangeType.DOMAIN_LOOKUP:
+        return context.domain_lookup is (step.desired_value == "on")
     if step.change_type is ChangeType.VLAN_NAME:
         vlan = context.vlan(int(step.target))
         return vlan is not None and vlan.name == step.desired_value
@@ -304,6 +306,11 @@ class ChangeService:
                 if change_type is ChangeType.HOSTNAME
                 else None
             )
+            current_domain_lookup = (
+                driver.get_domain_lookup(parameters)
+                if change_type is ChangeType.DOMAIN_LOOKUP
+                else None
+            )
             # Only read the VLAN database when a VLAN change needs it: it is
             # an extra command on the device, and an interface description
             # has no use for it.
@@ -335,6 +342,7 @@ class ChangeService:
             static_routes=static_routes,
             routing_processes=routing_processes,
             hostname=current_hostname,
+            domain_lookup=current_domain_lookup,
         )
         step = ChangeStepIntent(change_type=change_type, target=target, desired_value=desired_value)
         # Validation runs first. Renderers are entitled to assume a validated
@@ -443,6 +451,11 @@ class ChangeService:
                     if step.change_type is ChangeType.HOSTNAME
                     else None
                 )
+                post_domain_lookup = (
+                    driver.get_domain_lookup(parameters)
+                    if step.change_type is ChangeType.DOMAIN_LOOKUP
+                    else None
+                )
                 vlans = (
                     tuple(driver.get_vlans(parameters))
                     if _needs_vlans(step.change_type)
@@ -473,6 +486,7 @@ class ChangeService:
                     static_routes=static_routes,
                     routing_processes=routing_processes,
                     hostname=post_hostname,
+                    domain_lookup=post_domain_lookup,
                 ),
             ):
                 raise ChangePostCheckFailedError()
@@ -489,6 +503,16 @@ class ChangeService:
             return self._attempt_rollback(
                 plan, device, driver, inverse_commands, ChangeApplyFailedError.code
             )
+
+        # The post-check already read the interfaces back from the device, and
+        # the stored copy is what every screen renders. Without this the change
+        # was on the device but the UI kept showing the old value until the
+        # operator ran a separate refresh -- which looked like the apply had
+        # not worked. Guarded on having actually read them: replace_interfaces
+        # deletes the existing rows first, so writing an empty list here would
+        # erase the inventory for every change that never reads a port.
+        if _targets_interface(step.change_type) and interfaces:
+            self._devices.replace_interfaces(device, interfaces)
 
         post_snapshot = self._snapshots.capture(device.id)
         self._changes.set_snapshots(plan, post_change_snapshot_id=post_snapshot.id)

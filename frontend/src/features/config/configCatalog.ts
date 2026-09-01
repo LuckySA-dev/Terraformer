@@ -20,9 +20,9 @@ export interface ConfigSection {
 }
 
 export const CONFIG_SECTIONS: readonly ConfigSection[] = [
-  { id: 'global', label: 'Global' },
+  { id: 'global', label: 'Initial setup' },
   { id: 'switching', label: 'Switching' },
-  { id: 'interface', label: 'Interface' },
+  { id: 'interface', label: 'Interface / IP' },
   { id: 'routing', label: 'Routing' },
 ];
 
@@ -45,6 +45,15 @@ interface CustomEntry {
   label: string;
   available: true;
   kind: 'interface-editor';
+}
+
+/** Read-only screen: shows device state rather than staging a change. */
+interface InventoryEntry {
+  id: string;
+  section: ConfigSectionId;
+  label: string;
+  available: true;
+  kind: 'routing-inventory';
 }
 
 /** A change that targets the device itself: one value, no target to pick. */
@@ -101,10 +110,25 @@ interface ActionEntry {
   kind: 'save-config';
 }
 
+/** A global change with a fixed set of values rather than free text. */
+interface GlobalChoiceEntry {
+  id: string;
+  section: ConfigSectionId;
+  label: string;
+  available: true;
+  kind: 'global-choice';
+  changeType: ChangeType;
+  valueLabel: string;
+  choices: readonly { value: string; label: string }[];
+  hint: string;
+}
+
 type AvailableEntry =
   | SimpleEntry
   | CustomEntry
+  | InventoryEntry
   | GlobalTextEntry
+  | GlobalChoiceEntry
   | RouterNetworkEntry
   | BgpNeighborEntry
   | ActionEntry;
@@ -121,9 +145,6 @@ interface UnavailableEntry {
 
 export type ConfigEntry = AvailableEntry | UnavailableEntry;
 
-const planned = (detail: string) =>
-  `Not implemented yet. ${detail} There is no API, worker job or driver path for it, so this ` +
-  'entry cannot send anything to the device.';
 
 export const CONFIG_ENTRIES: readonly ConfigEntry[] = [
   {
@@ -148,8 +169,15 @@ export const CONFIG_ENTRIES: readonly ConfigEntry[] = [
     id: 'no-domain-lookup',
     section: 'global',
     label: 'Domain lookup',
-    available: false,
-    reason: planned('It is a global toggle rather than a value, so it needs a boolean change shape.'),
+    available: true,
+    kind: 'global-choice',
+    changeType: 'domain_lookup',
+    valueLabel: 'Name resolution',
+    choices: [
+      { value: 'off', label: 'off -- a typo at the prompt fails immediately' },
+      { value: 'on', label: 'on -- the device resolves hostnames' },
+    ],
+    hint: 'Off is the usual lab setting: with it on, a mistyped command becomes a DNS lookup that blocks the session until it times out. Rollback restores whichever the device reports now.',
   },
   {
     id: 'vlan-database',
@@ -177,6 +205,16 @@ export const CONFIG_ENTRIES: readonly ConfigEntry[] = [
     available: true,
     changeType: 'interface_trunk_vlans',
     targetsInterface: true,
+  },
+  {
+    // First in the section on purpose: every form under it asks the operator
+    // to name a prefix or a process they otherwise had to go find in a
+    // terminal first.
+    id: 'routing-inventory',
+    section: 'routing',
+    label: 'Configured routing',
+    available: true,
+    kind: 'routing-inventory',
   },
   {
     id: 'routing-static',

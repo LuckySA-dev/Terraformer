@@ -569,3 +569,37 @@ describe('TopologyPage read-only projection', () => {
     });
   });
 });
+
+it('folds a registered device back in when it advertises a different address', () => {
+  // Real lab data: SW3 is reachable on .65 but tells its neighbours .97.
+  // Matching on address alone drew it a second time as an observed node.
+  const elements = buildTopologyElements(
+    [device],
+    [{
+      deviceId: 'other-device-id',
+      neighbors: [{
+        ...neighbor,
+        remote_device_name: `${device.facts.hostname ?? ""}.cisco`,
+        management_address: '192.0.2.199',
+      }],
+    }],
+  );
+
+  const nodes = elements.filter((element) => element.group === 'nodes');
+  expect(nodes).toHaveLength(1);
+  expect(nodes[0]?.data.kind).toBe('registered');
+  const link = elements.find((element) => element.group === 'edges');
+  expect(link?.data.target).toBe(`device:${device.id}`);
+  expect(link?.data.verified).toBe(true);
+});
+
+it('still shows a genuinely unknown neighbour as observed', () => {
+  const elements = buildTopologyElements(
+    [device],
+    [{ deviceId: device.id, neighbors: [{ ...neighbor, remote_device_name: 'DESKTOP-O33JTS7', management_address: null }] }],
+  );
+
+  expect(
+    elements.filter((element) => element.group === 'nodes' && element.data.kind === 'observed'),
+  ).toHaveLength(1);
+});

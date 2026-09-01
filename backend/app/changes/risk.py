@@ -36,6 +36,12 @@ def classify_risk(
     # unrelated `current_*` arguments happen to hold.
     if change_type is ChangeType.HOSTNAME:
         return ChangeRisk.LOW
+    # Name resolution is a convenience at the prompt; no traffic rides on it.
+    # Checked here for the same reason hostname is: a global change carries no
+    # interface state and must not inherit a verdict from the unrelated
+    # `current_*` arguments below.
+    if change_type is ChangeType.DOMAIN_LOOKUP:
+        return ChangeRisk.LOW
     # Renaming a VLAN is a label change in the VLAN database: it moves no
     # port and drops no frame, so it stays LOW even on a busy switch. Note
     # this covers naming an existing or new VLAN only -- there is no delete.

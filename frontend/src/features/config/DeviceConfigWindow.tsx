@@ -9,6 +9,7 @@ import { InputField, SelectField } from '../../components/ui/FormField';
 import type { ChangePlan, ChangePlanStatus, Device, Job } from '../../types/api';
 import { ChangePlanCard } from '../inventory/ChangePlanCard';
 import { InterfaceEditor, type StagedChange } from './InterfaceEditor';
+import { RoutingInventory } from './RoutingInventory';
 import { BgpNeighborForm, RouterNetworkForm } from './RoutingForms';
 import {
   CONFIG_SECTIONS,
@@ -140,23 +141,47 @@ export function DeviceConfigWindow({
     queryFn: () => api.interfaces(device.id),
     retry: false,
   });
-  // Apply is queued to the worker, so the status a plan lands on arrives after
-  // the request that queued it. Without this the window said "Apply queued"
-  // and then never mentioned the change again -- the operator had no way to
-  // learn from here whether the device took it.
+  // Apply is a queued job, so between the POST returning and the worker
+  // picking the plan up its status is still 'draft'. Polling only while
+  // something is 'applying' therefore never armed in that window, and the
+  // pane sat on SENDING forever. Poll until the plan we submitted reaches a
+  // terminal status instead.
+  const [submittedPlanId, setSubmittedPlanId] = useState<string | null>(null);
   const history = useQuery({
     queryKey: ['change-plans', device.id],
     queryFn: () => api.listChangePlans(device.id),
     retry: false,
-    refetchInterval: (query) =>
-      query.state.data?.some((item) => item.status === 'applying') === true ? 1_000 : false,
+    refetchInterval: (query) => {
+      const rows = query.state.data;
+      if (rows === undefined) return false;
+      if (rows.some((item) => item.status === 'applying')) return 1_000;
+      const submitted = rows.find((item) => item.id === submittedPlanId);
+      return submitted?.status === 'draft' ? 1_000 : false;
+    },
   });
   const apply = useMutation<Job, Error, string>({
     mutationFn: (planId: string) => api.applyChangePlan(planId),
+    onMutate: (planId: string) => setSubmittedPlanId(planId),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['change-plans', device.id] });
     },
   });
+
+  // The worker stores the interfaces it read back during the post-check, so
+  // once the plan lands on 'applied' the server has the new values and the
+  // screens showing them are stale. Keyed on the id so this fires once per
+  // apply rather than on every poll that returns the same applied row.
+  const [refreshedForPlanId, setRefreshedForPlanId] = useState<string | null>(null);
+  const appliedPlanId = history.data?.find(
+    (item) => item.id === submittedPlanId && item.status === 'applied',
+  )?.id;
+  if (appliedPlanId !== undefined && appliedPlanId !== refreshedForPlanId) {
+    setRefreshedForPlanId(appliedPlanId);
+    // One call: the key is a prefix, so this already covers this device's
+    // interfaces and routing. Invalidating those separately as well refetched
+    // each of them twice.
+    void queryClient.invalidateQueries({ queryKey: ['devices'] });
+  }
   // Both mutations name their generics: inference collapsed TError to `never`
   // once these two started referring to each other, which hid the very errors
   // these forms exist to show.
@@ -181,7 +206,9 @@ export function DeviceConfigWindow({
     // Both the generic target/value form and the global one-value form go
     // through here; the interface editor and save action stage their own.
     if (!entry.available) return;
-    if (entry.kind !== undefined && entry.kind !== 'global-text') return;
+    if (entry.kind !== undefined && entry.kind !== 'global-text' && entry.kind !== 'global-choice') {
+      return;
+    }
     preview.mutate({ changeType: entry.changeType, target, desiredValue });
   };
   const saveConfig = useMutation({
@@ -317,6 +344,55 @@ export function DeviceConfigWindow({
           onDirty={resetPlan}
           submitLabel={submitLabel}
         />
+      );
+    }
+    if (entry.kind === 'routing-inventory') {
+      return (
+        <div className="config-window__form">
+          <RoutingInventory deviceId={device.id} />
+        </div>
+      );
+    }
+    if (entry.kind === 'global-choice') {
+      return (
+        <div className="config-window__form">
+          <SelectField
+            label={entry.valueLabel}
+            value={desiredValue}
+            onChange={(event) => {
+              setDesiredValue(event.target.value);
+              resetPlan();
+            }}
+            hint={entry.hint}
+          >
+            <option value="">Select</option>
+            {entry.choices.map((choice) => (
+              <option key={choice.value} value={choice.value}>
+                {choice.label}
+              </option>
+            ))}
+          </SelectField>
+          <Button
+            size="small"
+            onClick={previewSimple}
+            busy={preview.isPending}
+            disabled={desiredValue === ''}
+          >
+            <Settings2 size={14} /> {submitLabel}
+          </Button>
+          {preview.error === null ? null : (
+            <div className="form-error" role="alert">{preview.error.message}</div>
+          )}
+          {plan === null ? null : (
+            <ChangePlanCard
+              plan={staged ?? plan}
+              onApply={(planId) => apply.mutate(planId)}
+              applyBusy={apply.isPending}
+              applyError={apply.error?.message}
+              applySuccess={apply.isSuccess}
+            />
+          )}
+        </div>
       );
     }
     if (entry.kind === 'global-text') {

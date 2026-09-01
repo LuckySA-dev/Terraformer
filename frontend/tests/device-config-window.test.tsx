@@ -24,6 +24,7 @@ vi.mock('../src/features/inventory/TerminalPanel', () => ({
 vi.mock('../src/api/network', () => ({
   api: {
     interfaces: vi.fn(),
+    routing: vi.fn(),
     previewChange: vi.fn(),
     applyChangePlan: vi.fn(),
     listChangePlans: vi.fn(),
@@ -116,6 +117,7 @@ const escapeLabel = (label: string) => label.replaceAll(/[.*+?^${}()|[\]\\]/g, S
 describe('Packet Tracer-style device config window', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(api.routing).mockResolvedValue({ static_routes: [], processes: [] });
     vi.mocked(api.listChangePlans).mockResolvedValue([]);
     vi.mocked(api.interfaces).mockResolvedValue([
       {
@@ -510,6 +512,14 @@ describe('Packet Tracer-style device config window', () => {
         expect(await screen.findByRole('button', { name: /Edit/ })).toBeVisible();
         continue;
       }
+      if (entry.kind === 'routing-inventory') {
+        // The one read-only entry: it shows what the device is running so the
+        // forms below it can be filled in, and has nothing of its own to send.
+        // It still has to render rather than sit blank.
+        expect(await screen.findByText(/Static routes|Reading the device|No routing/)).toBeVisible();
+        expect(screen.queryByRole('button', { name: /^(Apply|Preview)/ })).not.toBeInTheDocument();
+        continue;
+      }
       expect(
         screen.getAllByRole('button', { name: /^(Apply|Preview|Write to startup-config)/ }).length,
         entry.label,
@@ -631,6 +641,7 @@ describe('Packet Tracer-style device config window', () => {
 describe('Interface table', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(api.routing).mockResolvedValue({ static_routes: [], processes: [] });
     vi.mocked(api.listChangePlans).mockResolvedValue([]);
     vi.mocked(api.interfaces).mockResolvedValue([
       {
@@ -739,6 +750,7 @@ describe('Interface table', () => {
 describe('Global configuration', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(api.routing).mockResolvedValue({ static_routes: [], processes: [] });
     vi.mocked(api.listChangePlans).mockResolvedValue([]);
     vi.mocked(api.interfaces).mockResolvedValue([]);
   });
@@ -811,4 +823,70 @@ describe('Global configuration', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('did not confirm');
     expect(screen.queryByText('The device confirmed the save.')).not.toBeInTheDocument();
   });
+});
+
+it('turns domain lookup off as a choice, not free text', async () => {
+  const user = userEvent.setup();
+  vi.mocked(api.interfaces).mockResolvedValue([]);
+  vi.mocked(api.previewChange).mockResolvedValue({
+    ...plan,
+    steps: [{
+      ...at(plan.steps, 0),
+      change_type: 'domain_lookup',
+      target: '',
+      desired_value: 'off',
+      rendered_commands: 'no ip domain-lookup',
+      inverse_commands: 'ip domain-lookup',
+    }],
+  });
+  renderWindow();
+
+  await user.click(screen.getByRole('button', { name: /Domain lookup/ }));
+  // A global toggle has no target to pick and only two legal values, so it
+  // must not offer a text box that can hold anything else.
+  expect(screen.queryByLabelText('Interface')).not.toBeInTheDocument();
+  await user.selectOptions(screen.getByLabelText('Name resolution'), 'off');
+  await user.click(screen.getByRole('button', { name: /Apply|Preview/ }));
+
+  await waitFor(() =>
+    expect(api.previewChange).toHaveBeenCalledWith({
+      device_id: device.id,
+      change_type: 'domain_lookup',
+      target: '',
+      desired_value: 'off',
+    }),
+  );
+});
+
+it('reloads the interface table once the change is on the device', async () => {
+  const user = userEvent.setup();
+  const before = {
+    id: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d',
+    device_id: device.id,
+    name: 'GigabitEthernet0/1',
+    description: 'old',
+    admin_up: true,
+    oper_up: true,
+    mac_address: null,
+    speed_mbps: null,
+    ipv4_addresses: [],
+    created_at: '2026-08-27T01:00:00Z',
+    updated_at: '2026-08-27T01:00:00Z',
+  };
+  vi.mocked(api.interfaces).mockResolvedValue([before]);
+  vi.mocked(api.previewChange).mockResolvedValue(plan);
+  vi.mocked(api.applyChangePlan).mockResolvedValue({ id: 'job-1' } as never);
+  // The worker stored what the post-check read, so the server now has the
+  // new value. Nothing in the UI asks for it again unless apply says so.
+  vi.mocked(api.listChangePlans).mockResolvedValue([{ ...plan, status: 'applied' }]);
+  renderWindow();
+
+  await user.click(screen.getByRole('button', { name: /Interfaces/ }));
+  await user.click(await screen.findByRole('button', { name: /Edit/ }));
+  await user.clear(screen.getByLabelText('Description'));
+  await user.type(screen.getByLabelText('Description'), 'new-uplink');
+  vi.mocked(api.interfaces).mockResolvedValue([{ ...before, description: 'new-uplink' }]);
+  await user.click(at(screen.getAllByRole('button', { name: /Preview|Apply/ }), 0));
+
+  await waitFor(() => expect(api.interfaces).toHaveBeenCalledTimes(2));
 });

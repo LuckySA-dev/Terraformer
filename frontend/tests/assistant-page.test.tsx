@@ -70,13 +70,13 @@ it('shows a clear message instead of a raw error when the gateway is disabled', 
   expect(screen.queryByRole('button', { name: /new profile/i })).not.toBeInTheDocument();
 });
 
-it('opens straight into a chat rather than a settings screen', async () => {
+it('is the key screen, and says where the chat actually is', async () => {
   renderAssistant();
 
-  // The tab named after the assistant used to be the one place you could not
-  // talk to it.
-  expect(await screen.findByLabelText('Message')).toBeVisible();
-  expect(screen.getByRole('button', { name: /send/i })).toBeInTheDocument();
+  // The chat moved to the right-hand sidebar, so this page must not look like
+  // somewhere you can type at the model.
+  expect(await screen.findByText('Where the assistant appears')).toBeVisible();
+  expect(screen.queryByLabelText('Message')).not.toBeInTheDocument();
 });
 
 it('lists saved provider profiles in the keys dialog', async () => {
